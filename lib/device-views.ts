@@ -11,7 +11,9 @@ export function classifyDeviceKind(model: string, name: string) {
   const known = ["light", "lamp", "aircondition", "acpartner", "airpurifier", "vacuum", "fan", "lock", "curtain", "humidifier", "plug", "switch", "camera", "sensor"];
   const kind = known.find(candidate => value.includes(candidate));
   if (lightingName.test(name) && !controllerName.test(name)) return "light";
+  if (controllerName.test(name)) return "switch";
   if (kind) return kind;
+  if (/(?:^|[._-])(?:gateway|panel|central|screen|controller|remote|hub)(?:[._-]|$)/.test(value)) return "switch";
   return controllerName.test(name) ? "switch" : "sensor";
 }
 
@@ -25,7 +27,7 @@ export function isControlDevice(device: ViewDevice) {
 
 export function isIndependentSmartDevice(device: ViewDevice) {
   if (!device.did) return false;
-  if ((device.topology?.relation === "mapped" || device.topology?.relation === "subdevice") && device.parentId) return false;
+  if (device.topology?.relation === "mapped" && device.parentId) return false;
   const model = (device.detail ?? device.model ?? "").toLowerCase();
   if (lightingName.test(device.name) && /(switch|relay|channel|gang|virtual)/.test(model) && !/(light|lamp|strip|bulb)/.test(model)) return false;
   return true;
@@ -37,10 +39,8 @@ export function selectDeviceView<T extends ViewDevice>(devices: T[], view: "hard
   for (const device of devices) for (const channel of device.topology?.channels ?? []) for (const target of channel.targets) if (ids.has(target.id)) controlledIds.add(target.id);
 
   if (view === "hardware") return devices.filter(device => {
-    if (!isControlDevice(device)) return false;
+    if (!isControlDevice(device)) return (device.kind === "light" || device.kind === "lamp") && isIndependentSmartDevice(device);
     if (device.topology?.role === "secondary-panel") return true;
-    if (device.did && controlledIds.has(device.did)) return false;
-    if (device.topology?.controlledBy.some(source => ids.has(source.sourceId))) return false;
     if (device.topology?.relation === "mapped" && device.parentId && ids.has(device.parentId)) return false;
     return true;
   });

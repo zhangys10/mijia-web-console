@@ -3,6 +3,7 @@ import test from "node:test";
 import { buildDeviceTopology } from "../lib/device-topology.ts";
 import { classifyDeviceKind, groupControlledDevices, isIndependentSmartDevice, selectDeviceView } from "../lib/device-views.ts";
 import { normalizeMiotSpecification } from "../lib/miot-spec.ts";
+import { analyzeSwitchBindingCapabilities, buildBindingActionParameters, listSwitchBindingTargets, listVisibleControlSources } from "../lib/switch-bindings.ts";
 import { collectXiaomiHomes } from "../lib/xiaomi-cloud.ts";
 
 test("preserves both owned and shared Xiaomi homes without duplicates", () => {
@@ -58,6 +59,95 @@ test("retains readable status and precise choice and range metadata", () => {
   assert.deepEqual(result.groups[0].properties[1].range, { min: 1, max: 60, step: 1 });
   assert.equal(result.groups[0].properties[2].label, "已绑定按键");
   assert.equal(result.groups[0].properties[2].writable, false);
+});
+
+test("does not treat a wireless-mode toggle as a writable light-binding interface", () => {
+  const specification = normalizeMiotSpecification("vendor.switch.mode-only", "urn:example", {
+    type: "urn:example",
+    services: [{ iid: 2, type: "urn:miot-spec-v2:service:switch:00000001:vendor:1", properties: [
+      { iid: 1, type: "urn:miot-spec-v2:property:on:00000001:vendor:1", format: "bool", access: ["read", "write"] },
+      { iid: 2, type: "urn:miot-spec-v2:property:wireless-mode:00000001:vendor:1", format: "bool", access: ["read", "write"] },
+    ] }],
+  });
+
+  const capability = analyzeSwitchBindingCapabilities(specification.model, specification.groups);
+  assert.equal(capability.status, "unsupported");
+  assert.equal(capability.mode, "unsupported");
+  assert.deepEqual(capability.targetActions, []);
+});
+
+test("keeps published binding information read-only when the actual model has no write operation", () => {
+  const specification = normalizeMiotSpecification("vendor.switch.readonly", "urn:example", {
+    type: "urn:example",
+    services: [{ iid: 5, type: "urn:miot-spec-v2:service:switch-panel:00000001:vendor:1", properties: [
+      { iid: 1, type: "urn:miot-spec-v2:property:bound-keys:00000001:vendor:1", format: "string", access: ["read"] },
+      { iid: 2, type: "urn:miot-spec-v2:property:max-key-count:00000001:vendor:1", format: "uint8", access: ["read"] },
+    ] }],
+  });
+
+  const capability = analyzeSwitchBindingCapabilities(specification.model, specification.groups);
+  assert.equal(capability.status, "readonly");
+  assert.equal(capability.mode, "readonly");
+  assert.deepEqual(capability.properties.map(property => property.name), ["bound-keys", "max-key-count"]);
+  assert.deepEqual(capability.writableProperties, []);
+});
+
+test("uses only real published source-key, target-device and target-channel action parameters", () => {
+  const specification = normalizeMiotSpecification("vendor.switch.bindable", "urn:example", {
+    type: "urn:example",
+    services: [{ iid: 7, type: "urn:miot-spec-v2:service:switch-panel:00000001:vendor:1", properties: [
+      { iid: 1, type: "urn:miot-spec-v2:property:source-key:00000001:vendor:1", format: "uint8", access: ["write"] },
+      { iid: 2, type: "urn:miot-spec-v2:property:target-did:00000001:vendor:1", format: "string", access: ["write"] },
+      { iid: 3, type: "urn:miot-spec-v2:property:target-channel:00000001:vendor:1", format: "uint8", access: ["write"] },
+    ], actions: [{ iid: 1, type: "urn:miot-spec-v2:action:bind-device:00000001:vendor:1", in: [1, 2, 3] }] }],
+  });
+
+  const capability = analyzeSwitchBindingCapabilities(specification.model, specification.groups);
+  assert.equal(capability.status, "writable");
+  assert.equal(capability.mode, "target-action");
+  assert.equal(capability.targetActions[0].sourceKeySelectable, true);
+  assert.equal(capability.targetActions[0].targetChannelSelectable, true);
+  assert.deepEqual(buildBindingActionParameters(capability.targetActions[0], {
+    key: "light-1", name: "主卧灯带", room: "主卧", did: "wired-panel-1", deviceDid: "mapped-light-1",
+    channelIndex: 3, channelSiid: 4, controllerName: "主卧中控", kind: "wired-circuit",
+  }, 2), [2, "wired-panel-1", 3]);
+});
+
+test("never invents target selection when a vendor action contains an opaque private parameter", () => {
+  const specification = normalizeMiotSpecification("vendor.switch.private", "urn:example", {
+    type: "urn:example",
+    services: [{ iid: 7, type: "urn:miot-spec-v2:service:switch-panel:00000001:vendor:1", properties: [
+      { iid: 1, type: "urn:miot-spec-v2:property:target-did:00000001:vendor:1", format: "string", access: ["read"] },
+      { iid: 2, type: "urn:miot-spec-v2:property:private-payload:00000001:vendor:1", format: "string", access: ["write"] },
+    ], actions: [{ iid: 1, type: "urn:miot-spec-v2:action:bind-device:00000001:vendor:1", in: [1, 2] }] }],
+  });
+
+  const capability = analyzeSwitchBindingCapabilities(specification.model, specification.groups);
+  assert.equal(capability.mode, "pairing");
+  assert.equal(capability.targetActions.length, 0);
+  assert.equal(capability.actions[0].parameters[1].semantic, "unknown");
+});
+
+test("lists ordinary lamps through their real wired switch and excludes unrelated hardware", () => {
+  const raw = [
+    { did: "source-1", name: "床头无线开关", model: "vendor.switch.remote", roomName: "主卧" },
+    { did: "wired-1", name: "客厅三开", model: "vendor.switch.triple", roomName: "客厅" },
+    { did: "mapped-1", name: "玄关柜灯带", model: "vendor.switch.virtual", roomName: "玄关", extra: { parent_did: "wired-1", channel_index: 2, parent_siid: 3 } },
+    { did: "smart-1", name: "客厅智能吸顶灯", model: "yeelink.light.ceiling", roomName: "客厅" },
+    { did: "vacuum-1", name: "扫地机器人", model: "vendor.vacuum.cleaner", roomName: "客厅" },
+  ];
+  const topology = buildDeviceTopology(raw);
+  const devices = raw.map(device => ({ ...device, room: device.roomName, homeId: "home-1", kind: classifyDeviceKind(device.model, device.name), parentId: topology.get(device.did).parentId, topology: topology.get(device.did) }));
+  const targets = listSwitchBindingTargets(devices[0], devices);
+
+  assert.equal(targets.length, 2);
+  const ordinary = targets.find(target => target.name === "玄关柜灯带");
+  assert.equal(ordinary.kind, "wired-circuit");
+  assert.equal(ordinary.did, "wired-1");
+  assert.equal(ordinary.channelIndex, 2);
+  assert.equal(ordinary.channelSiid, 3);
+  assert.equal(targets.find(target => target.name === "客厅智能吸顶灯").kind, "smart-device");
+  assert.equal(targets.some(target => target.name === "扫地机器人"), false);
 });
 
 test("links a mapped entrance light to its actual three-gang primary button", () => {
@@ -249,16 +339,53 @@ test("does not merge identical load names across different rooms or homes", () =
   assert.equal(groupControlledDevices(devices).length, 3);
 });
 
-test("switch view exposes only physical switches and central control panels", () => {
+test("hardware view exposes real switches, central panels and independent smart lights only", () => {
   const raw = [
     { did: "center-100", name: "主卧中控", model: "vendor.gateway.screen", roomName: "主卧" },
     { did: "bed-200", name: "床头开关", model: "vendor.switch.double", roomName: "主卧" },
     { did: "light-300", name: "主卧灯带", model: "vendor.switch.virtual", roomName: "主卧" },
     { did: "vacuum-400", name: "扫拖机器人", model: "vendor.vacuum.cleaner", roomName: "主卧" },
+    { did: "smart-500", name: "主卧智能灯", model: "vendor.light.ceiling", roomName: "主卧" },
   ];
   const topology = buildDeviceTopology(raw);
   const devices = raw.map(device => ({ ...device, kind: classifyDeviceKind(device.model, device.name), topology: topology.get(device.did) }));
 
   assert.equal(classifyDeviceKind("vendor.gateway.screen", "主卧中控"), "switch");
-  assert.deepEqual(selectDeviceView(devices, "hardware").map(device => device.name), ["主卧中控", "床头开关"]);
+  assert.deepEqual(selectDeviceView(devices, "hardware").map(device => device.name), ["主卧中控", "床头开关", "主卧智能灯"]);
+});
+
+test("keeps smart lights behind a real gateway visible as independent hardware", () => {
+  const raw = [
+    { did: "gateway-1", name: "客厅中控", model: "vendor.gateway.screen", roomName: "客厅" },
+    { did: "mesh-light-2", name: "客厅智能灯具", model: "vendor.light.mesh", roomName: "客厅", extra: { parent_did: "gateway-1" } },
+    { did: "mapped-light-3", name: "客厅普通筒灯", model: "vendor.switch.virtual", roomName: "客厅", extra: { parent_did: "gateway-1", channel_index: 1 } },
+  ];
+  const topology = buildDeviceTopology(raw);
+  const devices = raw.map(device => ({ ...device, kind: classifyDeviceKind(device.model, device.name), parentId: topology.get(device.did).parentId, topology: topology.get(device.did) }));
+
+  assert.equal(topology.get("mesh-light-2").relation, "subdevice");
+  assert.equal(isIndependentSmartDevice(devices[1]), true);
+  assert.equal(isIndependentSmartDevice(devices[2]), false);
+  assert.deepEqual(selectDeviceView(devices, "hardware").map(device => device.name), ["客厅中控", "客厅智能灯具"]);
+});
+
+test("expands every binding even when several keys belong to the same physical switch", () => {
+  const raw = [
+    { did: "wired-1", name: "主卧中控", model: "vendor.switch.triple", roomName: "主卧" },
+    { did: "load-1", name: "主卧中间筒灯", model: "vendor.switch.virtual", roomName: "主卧", extra: { parent_did: "wired-1", channel_index: 1 } },
+    { did: "remote-2", name: "床头开关", model: "vendor.switch.double", roomName: "主卧", extra: { wireless_mode: true, channels: [
+      { channel_index: 1, target_dids: ["load-1"] },
+      { channel_index: 2, target_dids: ["load-1"] },
+    ] } },
+  ];
+  const topology = buildDeviceTopology(raw);
+  const sources = listVisibleControlSources(topology.get("load-1").controlledBy);
+
+  assert.equal(topology.get("load-1").controlledBy.length, 3);
+  assert.equal(sources.length, 3);
+  assert.deepEqual(sources.map(source => [source.sourceName, source.channelIndex, source.connectionType]), [
+    ["主卧中控", 1, "wired"],
+    ["床头开关", 1, "wireless"],
+    ["床头开关", 2, "wireless"],
+  ]);
 });

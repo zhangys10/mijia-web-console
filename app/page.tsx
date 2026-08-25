@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DeviceControlChannel, DeviceControlSource, DeviceTopology } from "../lib/device-topology";
-import { classifyDeviceKind, groupControlledDevices, isIndependentSmartDevice, selectDeviceView } from "../lib/device-views";
+import { classifyDeviceKind, groupControlledDevices, isControlDevice, isIndependentSmartDevice, selectDeviceView } from "../lib/device-views";
+import { buildBindingActionParameters, listSwitchBindingTargets, listVisibleControlSources, type BindingAction, type SwitchBindingCapability, type SwitchBindingTarget } from "../lib/switch-bindings";
 
 type Device = { id:number;did?:string;name:string;home:string;homeId:string;room:string;kind:string;icon:string;on:boolean;status:string;detail:string;color:string;online?:boolean;parentId?:string|null;urn?:string|null;topology?:DeviceTopology|null;virtual?:boolean;members?:Device[] };
 type XiaomiHome = { id:string;name:string };
@@ -12,7 +13,7 @@ type SpecProperty = { key:string;name:string;label:string;siid:number;piid:numbe
 type SpecAction = { key:string;name:string;label:string;siid:number;aiid:number;inputs:number[] };
 type SpecEvent = { key:string;name:string;label:string;siid:number;eiid:number;arguments:number[] };
 type SpecGroup = { key:string;name:string;label:string;siid:number;properties:SpecProperty[];actions:SpecAction[];events:SpecEvent[] };
-type DeviceSpecification = { loading:boolean;groups:SpecGroup[];urn?:string;error?:string };
+type DeviceSpecification = { loading:boolean;groups:SpecGroup[];urn?:string;error?:string;binding?:SwitchBindingCapability };
 type Connection = { loading:boolean;connected:boolean;region?:string;userId?:string;error?:string };
 type Qr = { loading:boolean;imageUrl?:string;loginUrl?:string;error?:string;expired?:boolean;expiresAt?:number };
 
@@ -30,7 +31,7 @@ const demo:Device[]=[
 const regionLabels:Record<string,string>={cn:"中国大陆",sg:"新加坡",de:"欧洲",us:"美国",ru:"俄罗斯",i2:"印度"};
 
 export default function Home(){
-  const [devices,setDevices]=useState(demo),[homes,setHomes]=useState<XiaomiHome[]>([{id:"demo",name:"我的家"}]),[selectedHome,setSelectedHome]=useState("demo"),[room,setRoom]=useState("全屋"),[tab,setTab]=useState("首页"),[toast,setToast]=useState(""),[authOpen,setAuthOpen]=useState(false),[region,setRegion]=useState("cn"),[connection,setConnection]=useState<Connection>({loading:true,connected:false}),[qr,setQr]=useState<Qr>({loading:false}),[syncing,setSyncing]=useState(false),[qrSeconds,setQrSeconds]=useState(0),[selectedDevice,setSelectedDevice]=useState<Device|null>(null),[settingValues,setSettingValues]=useState<Record<string,SettingValue>>({}),[operating,setOperating]=useState(""),[deviceSpec,setDeviceSpec]=useState<DeviceSpecification>({loading:false,groups:[]}),[deviceView,setDeviceView]=useState<"hardware"|"controlled">("hardware"),[focusedMapping,setFocusedMapping]=useState<Device|null>(null),[bindingDevice,setBindingDevice]=useState<Device|null>(null),[bindingView,setBindingView]=useState<"hardware"|"controlled">("controlled");
+  const [devices,setDevices]=useState(demo),[homes,setHomes]=useState<XiaomiHome[]>([{id:"demo",name:"我的家"}]),[selectedHome,setSelectedHome]=useState("demo"),[room,setRoom]=useState("全屋"),[tab,setTab]=useState("首页"),[toast,setToast]=useState(""),[authOpen,setAuthOpen]=useState(false),[region,setRegion]=useState("cn"),[connection,setConnection]=useState<Connection>({loading:true,connected:false}),[qr,setQr]=useState<Qr>({loading:false}),[syncing,setSyncing]=useState(false),[qrSeconds,setQrSeconds]=useState(0),[selectedDevice,setSelectedDevice]=useState<Device|null>(null),[settingValues,setSettingValues]=useState<Record<string,SettingValue>>({}),[operating,setOperating]=useState(""),[deviceSpec,setDeviceSpec]=useState<DeviceSpecification>({loading:false,groups:[]}),[deviceView,setDeviceView]=useState<"hardware"|"controlled">("hardware"),[focusedMapping,setFocusedMapping]=useState<Device|null>(null),[bindingDevice,setBindingDevice]=useState<Device|null>(null);
   const polling=useRef(false),specRequest=useRef(0);
   const homeDevices=useMemo(()=>devices.filter(device=>device.homeId===selectedHome),[devices,selectedHome]);
   const actualDevices=useMemo(()=>groupControlledDevices(selectDeviceView(homeDevices,"controlled")),[homeDevices]);
@@ -38,11 +39,11 @@ export default function Home(){
   const rooms=useMemo(()=>["全屋",...Array.from(new Set(homeDevices.map(d=>d.room)))],[homeDevices]);
   const shown=useMemo(()=>room==="全屋"?viewDevices:viewDevices.filter(d=>d.room===room),[viewDevices,room]);
   const groupedRooms=useMemo(()=>Array.from(new Set(shown.map(device=>device.room))).map(name=>({name,devices:shown.filter(device=>device.room===name)})),[shown]);
-  const topologySummary=useMemo(()=>({panels:selectDeviceView(homeDevices,"hardware").length,targets:actualDevices.filter(device=>Boolean(device.topology?.controlledBy.length)).length,secondary:homeDevices.filter(device=>device.topology?.role==="secondary-panel").length,wired:homeDevices.reduce((total,device)=>total+(device.topology?.channels??[]).filter(channel=>channel.connectionType==="wired"||channel.connectionType==="mixed").length,0),wireless:homeDevices.reduce((total,device)=>total+(device.topology?.channels??[]).filter(channel=>channel.connectionType==="wireless"||channel.connectionType==="mixed").length,0),fanout:homeDevices.reduce((total,device)=>total+(device.topology?.channels??[]).filter(channel=>channel.targets.length>1).length,0)}),[actualDevices,homeDevices]);
+  const topologySummary=useMemo(()=>({panels:selectDeviceView(homeDevices,"hardware").filter(isControlDevice).length,targets:actualDevices.filter(device=>Boolean(device.topology?.controlledBy.length)).length,secondary:homeDevices.filter(device=>device.topology?.role==="secondary-panel").length,wired:homeDevices.reduce((total,device)=>total+(device.topology?.channels??[]).filter(channel=>channel.connectionType==="wired"||channel.connectionType==="mixed").length,0),wireless:homeDevices.reduce((total,device)=>total+(device.topology?.channels??[]).filter(channel=>channel.connectionType==="wireless"||channel.connectionType==="mixed").length,0),fanout:homeDevices.reduce((total,device)=>total+(device.topology?.channels??[]).filter(channel=>channel.targets.length>1).length,0)}),[actualDevices,homeDevices]);
 
   const message=(text:string)=>{setToast(text);window.setTimeout(()=>setToast(""),2600)};
 
-  async function loadDevices(notify=false){
+  async function loadDevices(notify=false,preserveRoom=false){
     const response=await fetch("/api/xiaomi/devices");
     const data=await response.json();
     if(!response.ok)throw new Error(data.error||"XIAOMI_DEVICE_SYNC_FAILED");
@@ -51,7 +52,7 @@ export default function Home(){
     const nextHomes:XiaomiHome[]=Array.isArray(data.homes)&&data.homes.length?data.homes.map((home:{id:string;name:string})=>({id:String(home.id),name:home.name})):Array.from(new Map(mapped.map(device=>[device.homeId,{id:device.homeId,name:device.home}])).values());
     setHomes(nextHomes);
     setSelectedHome(current=>nextHomes.some(home=>home.id===current)?current:(nextHomes[0]?.id||"default"));
-    setRoom("全屋");
+    if(!preserveRoom)setRoom("全屋");
     setDevices(mapped);
     if(notify)message(`已同步 ${nextHomes.length} 个家庭、${mapped.length} 台米家设备`);
   }
@@ -116,6 +117,21 @@ export default function Home(){
     finally{setOperating("")}
   }
 
+  async function applySwitchBinding(device:Device,action:BindingAction,target:SwitchBindingTarget,sourceKey:number){
+    if(!device.online){message("设备当前离线，无法修改绑定");return}
+    if(!device.did){message("请先连接真实米家账号和设备");return}
+    setOperating(`${device.id}:binding:${action.key}`);
+    try{
+      const params=buildBindingActionParameters(action,target,sourceKey);
+      const response=await fetch("/api/xiaomi/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({did:device.did,action:true,siid:action.siid,aiid:action.aiid,params})});
+      const result=await response.json();
+      if(!response.ok||!result.ok)throw new Error(result.error);
+      message(`${device.name}：按键 ${sourceKey} 已绑定 ${target.name}`);
+      try{await loadDevices(false,true)}catch{message("绑定已提交，稍后同步设备以查看最新关系")}
+    }catch(error){message(`绑定失败：${friendlyError(error instanceof Error?error.message:"UNKNOWN_ERROR")}`)}
+    finally{setOperating("")}
+  }
+
   async function openDevice(device:Device,mappedDevice?:Device){
     const requestId=++specRequest.current;
     setSelectedDevice(device);setFocusedMapping(mappedDevice??null);setSettingValues({power:device.on});setDeviceSpec({loading:Boolean(device.did),groups:[]});
@@ -126,7 +142,7 @@ export default function Home(){
       if(!response.ok||!result.ok)throw new Error(result.error);
       if(requestId!==specRequest.current)return;
       const groups=Array.isArray(result.groups)?result.groups as SpecGroup[]:[];
-      setDeviceSpec({loading:false,groups,urn:result.urn});
+      setDeviceSpec({loading:false,groups,urn:result.urn,binding:result.binding&&typeof result.binding==="object"?result.binding as SwitchBindingCapability:undefined});
       if(!device.online)return;
       const readable=groups.flatMap(group=>group.properties.filter(property=>property.readable)).sort((a,b)=>Number(b.writable)-Number(a.writable)).slice(0,40);
       if(!readable.length)return;
@@ -159,7 +175,7 @@ export default function Home(){
   }
 
   function openDeviceCard(device:Device){
-    setBindingView(deviceView);
+    if(deviceView==="hardware"){void openDevice(device);return}
     setBindingDevice(device);
   }
 
@@ -172,12 +188,6 @@ export default function Home(){
   function chooseConcreteMember(member:Device){
     setBindingDevice(null);
     openMappedDevice(member);
-  }
-
-  function chooseControllerSelf(){
-    const controller=bindingDevice;
-    setBindingDevice(null);
-    if(controller)void openDevice(controller);
   }
 
   function runScene(name:string){message(`${name} 已执行`);if(name==="离家")setDevices(list=>list.map(d=>["light","lamp","aircondition","airpurifier","fan"].includes(d.kind)?{...d,on:false,status:"已关闭"}:d))}
@@ -195,14 +205,14 @@ export default function Home(){
       <Title title={tab==="设备"?"家庭与设备":"我的设备"} sub={`${homeDevices.filter(d=>d.online!==false).length} 台在线 · ${homeDevices.filter(d=>d.online===false).length} 台离线`} action={`${homes.length} 个家庭`}/>
       <div className="home-tabs">{homes.map(home=><button key={home.id} className={selectedHome===home.id?"active":""} onClick={()=>{setSelectedHome(home.id);setRoom("全屋")}}><span>⌂</span><strong>{home.name}</strong><small>{devices.filter(device=>device.homeId===home.id).length} 台设备</small></button>)}</div>
       <div className="rooms">{rooms.map(item=><button key={item} className={room===item?"active":""} onClick={()=>setRoom(item)}>{item}</button>)}</div>
-      <div className="topology-toolbar"><div className="device-view-switch"><button className={deviceView==="hardware"?"active":""} onClick={()=>setDeviceView("hardware")}>⌘ 开关与硬件</button><button className={deviceView==="controlled"?"active":""} onClick={()=>setDeviceView("controlled")}>◉ 实际受控设备</button></div><small>{deviceView==="hardware"?"物理面板 → 按键 → 一个或多个受控设备":"受控设备 → 有线主控 + 所有无线副控"}</small></div>
+      <div className="topology-toolbar"><div className="device-view-switch"><button className={deviceView==="hardware"?"active":""} onClick={()=>setDeviceView("hardware")}>⌘ 开关与硬件</button><button className={deviceView==="controlled"?"active":""} onClick={()=>setDeviceView("controlled")}>◉ 实际受控设备</button></div><small>{deviceView==="hardware"?"物理面板 → 按键 → 一个或多个受控设备；独立智能灯直接展示":"受控设备 → 有线主控 + 所有无线副控"}</small></div>
       {connection.connected&&(topologySummary.targets>0||topologySummary.secondary>0)&&<div className="topology-summary"><span><b>{topologySummary.panels}</b> 台物理开关</span><span><b>{topologySummary.targets}</b> 个受控目标</span>{topologySummary.wired>0&&<span className="wired-summary"><b>{topologySummary.wired}</b> 条有线回路</span>}{topologySummary.wireless>0&&<span className="wireless-summary"><b>{topologySummary.wireless}</b> 条无线绑定</span>}{topologySummary.fanout>0&&<span className="fanout-summary"><b>{topologySummary.fanout}</b> 个一控多路按键</span>}</div>}
       {groupedRooms.map(group=><section className="room-group" key={`${selectedHome}:${deviceView}:${group.name}`}><div className="room-heading"><strong>{group.name}</strong><span>{group.devices.length} {deviceView==="hardware"?"台实体设备":"个实际目标"}</span></div><section className="devices">{group.devices.map(device=>{
         const channels=deviceView==="hardware"?device.topology?.channels??[]:[];
-        const role=device.topology?.role,sources=device.topology?.controlledBy??[],memberCount=device.members?.length??1,targetCount=channels.reduce((total,channel)=>total+channel.targets.length,0);
-        return <article key={deviceView==="controlled"?`${device.homeId}:${device.room}:${device.name}`:device.id} className={`device-card virtual-device-card ${device.online===false?"offline":""} ${role==="primary"?"primary-device":role==="secondary-panel"?"secondary-panel":""}`} role="button" tabIndex={0} onClick={()=>openDeviceCard(device)} onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();openDeviceCard(device)}}}>
-          <div className="device-top"><span className={device.color}>{device.icon}</span><span className="virtual-badge">{deviceView==="controlled"?"虚拟灯具":"虚拟开关"}</span></div>
-          <div className="device-title-row"><h3>{device.name}</h3>{deviceView==="controlled"?<span className="topology-badge controlled-load">按实际设备</span>:<span className={`topology-badge ${role||"primary"}`}>按开关</span>}</div>{deviceView==="controlled"?<><p>{memberCount} 个设备实体 · {sources.length} 个控制来源</p><div className="detail">{device.room} · 点击展开绑定设备<b>›</b></div></>:<><p>{channels.length} 个按键 · {targetCount} 个受控目标</p><div className="detail">{device.room} · 点击展开受控设备<b>›</b></div></>}
+        const role=device.topology?.role,sources=device.topology?.controlledBy??[],memberCount=device.members?.length??1,targetCount=channels.reduce((total,channel)=>total+channel.targets.length,0),controller=isControlDevice(device);
+        return <article key={deviceView==="controlled"?`${device.homeId}:${device.room}:${device.name}`:device.id} className={`device-card ${deviceView==="controlled"?"virtual-device-card":"hardware-device-card"} ${device.online===false?"offline":""} ${role==="primary"?"primary-device":role==="secondary-panel"?"secondary-panel":""}`} role="button" tabIndex={0} onClick={()=>openDeviceCard(device)} onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();openDeviceCard(device)}}}>
+          <div className="device-top"><span className={device.color}>{device.icon}</span>{deviceView==="controlled"&&<span className="virtual-badge">受控灯具</span>}</div>
+          <div className="device-title-row"><h3>{device.name}</h3>{deviceView==="controlled"?<span className="topology-badge controlled-load">按实际设备</span>:<span className={`topology-badge ${controller?role||"primary":"controlled-load"}`}>{controller?"实体开关":"智能灯具"}</span>}</div>{deviceView==="controlled"?<><p>{memberCount} 个设备实体 · {sources.length} 个控制来源</p><div className="detail">{device.room} · 点击展开绑定设备<b>›</b></div></>:controller?<><p>{channels.length} 个按键 · {targetCount} 个受控目标</p><div className="detail">{device.room} · 点击查看按键与灯具<b>›</b></div></>:<><p>{device.status} · 独立智能设备</p><div className="detail">{device.room} · 点击设置智能灯具<b>›</b></div></>}
           {deviceView==="controlled"&&<div className="card-binding-summary"><span>{sources.filter(source=>source.connectionType==="wired").length} 有线</span><span>{sources.filter(source=>source.connectionType==="wireless").length} 无线</span><small>查看具体设备卡片</small></div>}
           {deviceView==="hardware"&&channels.length>0&&<div className="card-binding-summary"><span>{channels.length} 个按键</span><span>{channels.reduce((total,channel)=>total+channel.targets.length,0)} 个绑定</span><small>点击查看详情</small></div>}
           {deviceView==="hardware"&&role==="secondary-panel"&&!channels.length&&<div className="card-binding-summary"><small>点击查看无线副控设置</small></div>}
@@ -212,13 +222,14 @@ export default function Home(){
 
     <aside className="rightbar"><div className={`api ${connection.connected?"cloud-live":""}`}><div className="api-title"><span>⌁</span><div><strong>米家云</strong><small>{connection.connected?`${regionLabels[connection.region||"cn"]} · 已连接`:"扫码授权 · 直接连接"}</small></div></div><p>{connection.error?`最近同步失败：${friendlyError(connection.error)}`:connection.connected?`已连接小米账号 ${connection.userId}，可以同步家庭、房间与设备。`:"使用米家 App 扫描官方账号二维码登录，无需 Home Assistant，也无需输入账号密码。"}</p><button disabled={syncing} onClick={connection.connected?()=>void syncDevices():openLogin}>{syncing?"正在同步设备…":connection.connected?"立即同步设备":"扫码连接米家"} <b>→</b></button></div><Title title="最近动态" sub="家庭设备实时记录" action="···"/><div className="timeline"><Activity icon="⌂" tone="orange" title="执行「回家」场景" text="3 台设备已响应" time="2 分钟前"/><Activity icon="✓" tone="green" title="智能门锁已上锁" text="通过指纹 · 家庭成员" time="18 分钟前"/><Activity icon="↗" tone="blue" title="空调已调至 24°C" text="自动化 · 舒适温度" time="1 小时前"/><Activity icon="◎" tone="violet" title="扫拖机器人完成清洁" text="清洁 42㎡ · 用时 38 分钟" time="3 小时前"/></div><button className="all">查看全部动态</button><div className="home-status"><div><strong>家庭状态</strong><span>{connection.connected?"米家云在线":"演示数据"}</span></div><section><Status icon="◈" n={String(devices.length)} label="设备总数"/><Status icon="ϟ" n={String(devices.filter(d=>d.on).length)} label="运行中"/><Status icon="⌁" n={String(rooms.length-1)} label="房间"/></section></div></aside>
 
-    {bindingDevice&&<div className="modal-bg" onMouseDown={()=>setBindingDevice(null)}><div className="modal binding-modal" onMouseDown={event=>event.stopPropagation()}><button className="close" onClick={()=>setBindingDevice(null)}>×</button><div className="device-modal-head"><span className={bindingDevice.color}>{bindingDevice.icon}</span><div><h2>{bindingDevice.name}</h2><p>{bindingDevice.home} · {bindingDevice.room} · {bindingView==="hardware"?"按开关展示":"按实际设备展示"}</p></div></div><div className="binding-selector-title"><strong>{bindingView==="hardware"?"选择开关本体或受控设备":"选择绑定到的开关或中控"}</strong><small>具体设备卡片</small></div><ConcreteDeviceCards mode={bindingView} group={bindingDevice} devices={homeDevices} onController={chooseBoundController} onMember={chooseConcreteMember} onSelf={chooseControllerSelf}/><p className="capability-note">{bindingView==="controlled"?"普通灯只展示它绑定的开关或中控；只有独立接入米家的智能灯才提供灯具详情。":"普通灯具回路只显示名称；可独立控制的智能设备才提供详情入口。"}</p></div></div>}
+    {bindingDevice&&<div className="modal-bg" onMouseDown={()=>setBindingDevice(null)}><div className="modal binding-modal" onMouseDown={event=>event.stopPropagation()}><button className="close" onClick={()=>setBindingDevice(null)}>×</button><div className="device-modal-head"><span className={bindingDevice.color}>{bindingDevice.icon}</span><div><h2>{bindingDevice.name}</h2><p>{bindingDevice.home} · {bindingDevice.room} · 按实际设备展示</p></div></div><div className="binding-selector-title"><strong>选择绑定到的开关或中控</strong><small>{bindingDevice.topology?.controlledBy.length?`${listVisibleControlSources(bindingDevice.topology.controlledBy).length} 个按键绑定`:"具体设备卡片"}</small></div><ConcreteDeviceCards group={bindingDevice} devices={homeDevices} onController={chooseBoundController} onMember={chooseConcreteMember}/><p className="capability-note">普通灯只展示它绑定的开关或中控；只有独立接入米家的智能灯才提供灯具详情。</p></div></div>}
     {selectedDevice&&<div className="modal-bg" onMouseDown={()=>{specRequest.current++;setSelectedDevice(null)}}><div className="modal device-modal" onMouseDown={event=>event.stopPropagation()}>
       <button className="close" onClick={()=>{specRequest.current++;setSelectedDevice(null)}}>×</button>
       <div className="device-modal-head"><span className={selectedDevice.color}>{selectedDevice.icon}</span><div><h2>{selectedDevice.name}</h2><p>{selectedDevice.home} · {selectedDevice.room} · {selectedDevice.online?"在线":"离线"}</p></div></div>
       <div className="device-identity"><div><small>设备类型</small><strong>{deviceKindLabel(selectedDevice.kind)}</strong></div><div><small>设备型号</small><strong>{selectedDevice.detail}</strong></div>{selectedDevice.did&&<div><small>设备 ID</small><strong>{selectedDevice.did}</strong></div>}</div>
       {(focusedMapping||selectedDevice.topology&&selectedDevice.topology.role!=="independent"||Boolean(selectedDevice.topology?.controlledBy.length))&&<div className="modal-topology"><div><strong>设备控制拓扑</strong>{selectedDevice.topology?.role&&selectedDevice.topology.role!=="independent"&&<TopologyBadge role={selectedDevice.topology.role} connectionType={selectedDevice.topology.connectionType}/>}</div>{focusedMapping&&<p><b>{selectedDevice.name}</b><span>›</span><b>{focusedMapping.topology?.channelLabel||"关联按键"}</b><span>›</span><b>{focusedMapping.name}</b></p>}{selectedDevice.topology?.parentName&&!focusedMapping&&<p><b>{selectedDevice.topology.parentName}</b><span>›</span><b>{selectedDevice.topology.channelLabel||"关联按键"}</b><span>›</span><b>{selectedDevice.name}</b></p>}{focusedMapping&&Boolean(focusedMapping.topology?.controlledBy.length)&&<ControlSources sources={focusedMapping.topology!.controlledBy} devices={homeDevices} onOpen={item=>void openDevice(item)}/>} {!focusedMapping&&Boolean(selectedDevice.topology?.controlledBy.length)&&<ControlSources sources={selectedDevice.topology!.controlledBy} devices={homeDevices} onOpen={item=>void openDevice(item)}/>}</div>}
       {Boolean(selectedDevice.topology?.channels.length)&&<div className="modal-control-tree"><div className="settings-heading"><strong>已绑定的具体设备</strong><span>{selectedDevice.topology!.channels.reduce((count,channel)=>count+channel.targets.length,0)} 个</span></div><TopologyTree channels={selectedDevice.topology!.channels} devices={homeDevices} onOpen={item=>openMappedDevice(item)}/></div>}
+      {selectedDevice.kind==="switch"&&deviceSpec.binding&&!deviceSpec.loading&&<SwitchBindingPanel key={selectedDevice.did??selectedDevice.id} device={selectedDevice} specification={deviceSpec} devices={homeDevices} values={settingValues} operating={operating} onBind={(action,target,sourceKey)=>void applySwitchBinding(selectedDevice,action,target,sourceKey)} onProperty={(property,target)=>void applySetting(selectedDevice,{key:property.key,label:`绑定 ${target.name}`,type:"text",siid:property.siid,piid:property.piid,format:property.format},target.did)} onPair={action=>void applySetting(selectedDevice,{key:action.key,label:action.label,type:"action",siid:action.siid,aiid:action.aiid,inputs:action.inputs})}/>}
       <div className="settings-heading"><strong>型号实际支持的设置</strong><span>{deviceSpec.loading?"读取中…":`${deviceSpec.groups.length?deviceSpec.groups.reduce((count,group)=>count+group.properties.filter(property=>property.writable).length+group.actions.length,0):deviceSettings(selectedDevice).length} 项`}</span></div>
       {deviceSpec.loading?<div className="spec-loading"><span/>正在解析设备公开规格和按键功能</div>:deviceSpec.groups.length?<div className="spec-groups">{deviceSpec.groups.map(group=>{
         const settings=groupSettings(group),readonly=group.properties.filter(property=>property.readable&&!property.writable),mapped=groupRelatedDevices(selectedDevice,group,deviceSpec.groups,homeDevices),bindings=groupBindings(selectedDevice,group,deviceSpec.groups);
@@ -238,6 +249,48 @@ export default function Home(){
   </main>
 }
 
+function SwitchBindingPanel({device,specification,devices,values,operating,onBind,onProperty,onPair}:{device:Device;specification:DeviceSpecification;devices:Device[];values:Record<string,SettingValue>;operating:string;onBind:(action:BindingAction,target:SwitchBindingTarget,sourceKey:number)=>void;onProperty:(property:SpecProperty,target:SwitchBindingTarget)=>void;onPair:(action:BindingAction)=>void}){
+  const [sourceKey,setSourceKey]=useState(1),[targetKey,setTargetKey]=useState("");
+  const capability=specification.binding;
+  if(!capability)return null;
+  const switchGroups=specification.groups.filter(group=>group.name==="switch");
+  const buttons=switchGroups.length?switchGroups.map((group,index)=>({value:index+1,label:group.label,siid:group.siid})):(device.topology?.channels??[]).map((channel,index)=>({value:channel.channelIndex??index+1,label:channel.label,siid:channel.channelSiid??undefined}));
+  const selectedButton=buttons.find(button=>button.value===sourceKey)??buttons[0];
+  const activeKey=selectedButton?.value??sourceKey;
+  const targetCandidates=listSwitchBindingTargets(device,devices);
+  const suitableAction=(target:SwitchBindingTarget)=>capability.targetActions.find(action=>{
+    if(target.kind==="wired-circuit"&&!action.targetChannelSelectable)return false;
+    if(target.kind==="smart-device"&&action.targetChannelSelectable)return false;
+    if(action.sourceKeySelectable||buttons.length<=1)return true;
+    return action.groupName==="switch"&&Boolean(selectedButton)&&action.groupSiid===selectedButton?.siid;
+  });
+  const availableTargets=targetCandidates.filter(target=>Boolean(suitableAction(target))||target.kind==="smart-device"&&capability.targetProperties.length>0);
+  const selectedTarget=availableTargets.find(target=>target.key===targetKey)??availableTargets[0];
+  const selectedAction=selectedTarget?suitableAction(selectedTarget):undefined;
+  const selectedProperty=selectedTarget?.kind==="smart-device"&&!selectedAction?capability.targetProperties[0]:undefined;
+  const readonly=capability.properties.filter(property=>property.readable);
+  const existing=(device.topology?.channels??[]).flatMap(channel=>channel.targets.map(target=>({key:`${channel.key}:${target.id}`,channel:channel.label,name:target.name,room:target.room,wireless:channel.connectionType==="wireless"})));
+  const disabled=!device.online||Boolean(operating);
+  const state=capability.status==="writable"?"可配置":capability.status==="readonly"?"仅可查看":"型号未开放";
+  const description=capability.status==="unsupported"?"该型号未公开按键绑定属性或动作，无法通过米家云新建绑定。":capability.status==="readonly"?"该型号只公开可读取的绑定信息，没有可写绑定接口。":capability.mode==="target-action"?"根据该型号实际公开的动作参数，选择无线按键和它控制的灯具。":capability.mode==="target-property"?"该型号公开目标设备属性，仅支持绑定具有独立设备 ID 的智能灯。":"该型号公开学习配对或绑定设置；仅展示厂商允许的真实操作。";
+
+  return <section className={`switch-binding-panel ${capability.status}`}>
+    <div className="binding-panel-heading"><div><strong>按键与灯具绑定</strong><small>{capability.model}</small></div><span>{state}</span></div>
+    <p className="binding-description">{description}</p>
+    {existing.length>0&&<div className="binding-existing"><small>当前已识别的真实绑定</small>{existing.map(item=><div key={item.key}><span>{item.channel}</span><b>→</b><strong>{item.name}</strong><em>{item.wireless?"无线":"有线"}</em></div>)}</div>}
+    {readonly.length>0&&<div className="binding-readonly">{readonly.map(property=><div key={property.key}><span>{property.label}</span><strong>{formatPropertyValue(property,values[property.key])}</strong></div>)}</div>}
+    {(capability.mode==="target-action"||capability.mode==="target-property")&&availableTargets.length>0&&<div className="binding-editor">
+      {buttons.length>1&&<label><span>来源按键</span><select disabled={disabled} value={String(activeKey)} onChange={event=>setSourceKey(Number(event.target.value))}>{buttons.map(button=><option key={`${button.value}:${button.siid}`} value={String(button.value)}>{button.label}</option>)}</select></label>}
+      <label><span>控制的灯具</span><select disabled={disabled} value={selectedTarget?.key??""} onChange={event=>setTargetKey(event.target.value)}>{availableTargets.map(target=><option key={target.key} value={target.key}>{target.room} · {target.name}{target.controllerName?` · ${target.controllerName}按键 ${target.channelIndex??target.channelSiid}`:" · 独立智能灯"}</option>)}</select></label>
+      {selectedTarget&&<p className="binding-target-hint">{selectedTarget.kind==="wired-circuit"?`普通灯实际绑定 ${selectedTarget.controllerName} 的有线回路 ${selectedTarget.channelIndex??selectedTarget.channelSiid}。`:"独立智能灯通过它真实的米家设备 ID 绑定。"}</p>}
+      <button className="setting-action binding-save" disabled={disabled||!selectedTarget||!selectedAction&&!selectedProperty} onClick={()=>{if(!selectedTarget)return;if(selectedAction)onBind(selectedAction,selectedTarget,activeKey);else if(selectedProperty)onProperty(selectedProperty,selectedTarget)}}>{operating?"处理中…":"保存真实绑定"}</button>
+    </div>}
+    {(capability.mode==="target-action"||capability.mode==="target-property")&&availableTargets.length===0&&<p className="binding-limitation">{targetCandidates.length?"该型号没有同时公开安全选择来源按键、目标设备和目标回路所需的参数，因此不提供不可用的绑定按钮。":"当前家庭没有找到该型号可绑定的独立智能灯或已识别有线回路。"}</p>}
+    {capability.mode==="pairing"&&capability.pairingActions.length>0&&<div className="binding-pair-actions">{capability.pairingActions.map(action=><button key={action.key} className="setting-action" disabled={disabled} onClick={()=>onPair(action)}>{action.label}</button>)}</div>}
+    {capability.mode==="pairing"&&capability.pairingActions.length===0&&<p className="binding-limitation">{capability.actions.length?"绑定动作需要厂商私有参数，不能安全生成指定灯具的绑定；公开属性可在下方型号设置中查看。":"该型号只公开绑定开关或相关状态，没有公开选择具体灯具的动作。"}</p>}
+  </section>
+}
+
 function Metric(p:{icon:string;tone:string;label:string;value:string;unit:string;note:string}){return <article><span className={p.tone}>{p.icon}</span><div><small>{p.label}</small><strong>{p.value}<em>{p.unit}</em></strong><p>{p.note}</p></div></article>}
 function Title(p:{title:string;sub:string;action:string}){return <div className="title"><div><h2>{p.title}</h2><p>{p.sub}</p></div><button>{p.action}</button></div>}
 function Activity(p:{icon:string;tone:string;title:string;text:string;time:string}){return <div className="activity"><span className={p.tone}>{p.icon}</span><div><strong>{p.title}</strong><p>{p.text}</p><small>{p.time}</small></div></div>}
@@ -252,19 +305,12 @@ function ControlSources({sources,devices,onOpen}:{sources:DeviceControlSource[];
     return <button key={`${source.sourceId}:${source.channelIndex}:${source.channelSiid}`} className="control-source-row" type="button" onClick={event=>{event.stopPropagation();if(device&&onOpen)onOpen(device)}} disabled={!device||!onOpen}><span className={`source-role ${source.sourceRole} ${source.connectionType}`}>{source.connectionType==="wired"?"有线主控":"无线副控"}</span><span className="source-identity"><strong>{source.sourceName}</strong>{source.viaName&&<small>经 {source.viaName}</small>}</span><span className="source-channel"><strong>{source.channelIndex!==null?`按键 ${source.channelIndex===0?1:source.channelIndex}`:source.channelSiid!==null?`服务 ${source.channelSiid}`:source.sourceRoom}</strong>{source.targetCount>1&&<small>同时控制 {source.targetCount} 台</small>}</span></button>
   })}</div>
 }
-function ConcreteDeviceCards({mode,group,devices,onController,onMember,onSelf}:{mode:"hardware"|"controlled";group:Device;devices:Device[];onController:(device:Device)=>void;onMember:(device:Device)=>void;onSelf:()=>void}){
-  if(mode==="controlled"){
-    const sourceGroups=new Map<string,{source:DeviceControlSource;sources:DeviceControlSource[]}>();
-    for(const source of group.topology?.controlledBy??[]){const existing=sourceGroups.get(source.sourceId);if(existing)existing.sources.push(source);else sourceGroups.set(source.sourceId,{source,sources:[source]})}
-    if(sourceGroups.size)return <div className="concrete-device-list">{[...sourceGroups.values()].map(({source,sources})=>{const device=devices.find(item=>item.did===source.sourceId);const types=Array.from(new Set(sources.map(item=>item.connectionType)));return <ConcreteDeviceCard key={source.sourceId} device={device} name={source.sourceName} icon="ϟ" tone={types.includes("wired")?"orange":"violet"} label={types.includes("wired")&&types.includes("wireless")?"有线 + 无线":types.includes("wired")?"有线主控":"无线副控"} note={`${source.sourceRoom} · ${sources.length} 个关联按键`} onOpen={device?()=>onController(device):undefined}/>})}</div>;
-    const members=(group.members?.length?group.members:[group]).filter(isIndependentSmartDevice);
-    if(!members.length)return <div className="unresolved-binding"><strong>暂未识别到绑定的开关或中控</strong><small>普通灯不显示灯本体；同步结果中出现控制来源后，会在这里列出对应设备卡片。</small></div>;
-    return <div className="concrete-device-list">{members.map(member=><ConcreteDeviceCard key={member.did??member.id} device={member} name={member.name} icon={member.icon} tone={member.color} label="智能设备" note={`${member.status} · ${member.detail}`} onOpen={()=>onMember(member)}/>)}</div>;
-  }
-
-  const targetGroups=new Map<string,{target:DeviceControlChannel["targets"][number];channels:DeviceControlChannel[]}>();
-  for(const channel of group.topology?.channels??[])for(const target of channel.targets){const existing=targetGroups.get(target.id);if(existing)existing.channels.push(channel);else targetGroups.set(target.id,{target,channels:[channel]})}
-  return <div className="concrete-sections"><section><small className="concrete-section-label">开关或中控本体</small><div className="concrete-device-list"><ConcreteDeviceCard device={group} name={group.name} icon={group.icon} tone={group.color} label="本体设置" note={`${group.status} · ${group.detail}`} onOpen={onSelf}/></div></section>{targetGroups.size>0&&<section><small className="concrete-section-label">按键绑定的受控设备</small><div className="concrete-device-list">{[...targetGroups.values()].map(({target,channels})=>{const device=devices.find(item=>item.did===target.id);const note=`${target.room} · ${channels.map(channel=>channel.label).join("、")}`;return device&&isIndependentSmartDevice(device)?<ConcreteDeviceCard key={target.id} device={device} name={target.name} icon={device.icon} tone={device.color} label="智能设备" note={note} onOpen={()=>onMember(device)}/>:<div className="plain-load-name" key={target.id}><span>↳</span><div><strong>{target.name}</strong><small>{note}</small></div><em>普通灯具</em></div>})}</div></section>}</div>;
+function ConcreteDeviceCards({group,devices,onController,onMember}:{group:Device;devices:Device[];onController:(device:Device)=>void;onMember:(device:Device)=>void}){
+  const sources=listVisibleControlSources(group.topology?.controlledBy??[]);
+  if(sources.length)return <div className="concrete-device-list">{sources.map(source=>{const device=devices.find(item=>item.did===source.sourceId);const channel=source.channelIndex!==null?`按键 ${source.channelIndex===0?1:source.channelIndex}`:source.channelSiid!==null?`服务 ${source.channelSiid}`:"关联按键";return <ConcreteDeviceCard key={`${source.sourceId}:${source.channelIndex}:${source.channelSiid}:${source.connectionType}`} device={device} name={source.sourceName} icon="ϟ" tone={source.connectionType==="wired"?"orange":"violet"} label={source.connectionType==="wired"?"有线主控":"无线副控"} note={`${source.sourceRoom} · ${channel}${source.viaName?` · 经 ${source.viaName}`:""}`} onOpen={device?()=>onController(device):undefined}/>})}</div>;
+  const members=(group.members?.length?group.members:[group]).filter(isIndependentSmartDevice);
+  if(!members.length)return <div className="unresolved-binding"><strong>暂未识别到绑定的开关或中控</strong><small>普通灯不显示灯本体；同步结果中出现控制来源后，会在这里列出对应设备卡片。</small></div>;
+  return <div className="concrete-device-list">{members.map(member=><ConcreteDeviceCard key={member.did??member.id} device={member} name={member.name} icon={member.icon} tone={member.color} label="智能设备" note={`${member.status} · ${member.detail}`} onOpen={()=>onMember(member)}/>)}</div>;
 }
 function ConcreteDeviceCard({device,name,icon,tone,label,note,onOpen}:{device?:Device;name:string;icon:string;tone:string;label:string;note:string;onOpen?:()=>void}){
   return <button type="button" className="concrete-device-card" disabled={!onOpen} onClick={event=>{event.stopPropagation();onOpen?.()}}><span className={tone}>{icon}</span><div><strong>{name}</strong><small>{note}</small></div><em>{label}</em>{device&&onOpen&&<b>›</b>}</button>
@@ -304,4 +350,4 @@ function deviceSettings(device:Device):Setting[]{
   if(["plug","switch"].includes(device.kind))return[power];
   return[];
 }
-function friendlyError(error:string){if(error==="SESSION_SECRET_NOT_CONFIGURED")return"网站会话加密尚未配置";if(error==="XIAOMI_QR_UNAVAILABLE")return"小米暂未返回登录二维码";if(error==="XIAOMI_QR_EXPIRED")return"二维码已过期，请重新获取";if(error==="XIAOMI_SERVICE_TOKEN_MISSING")return"登录成功，但未能取得米家服务令牌";if(error==="XIAOMI_NOT_CONNECTED")return"登录状态已失效，请重新扫码";if(error==="XIAOMI_CLOUD_TIMEOUT")return"米家云响应超时，请确认服务器区域后重试";if(error==="XIAOMI_CLOUD_RESPONSE_INVALID"||error==="XIAOMI_DEVICE_RESPONSE_INVALID")return"米家云返回的数据无法识别";if(error==="MIOT_SPEC_MODEL_NOT_FOUND")return"该型号尚未公开 MIoT 设备规格";if(error==="MIOT_SPEC_RESPONSE_INVALID"||error==="MIOT_SPEC_UNAVAILABLE")return"设备规格服务暂不可用";if(error==="INVALID_ACTION_PARAMETERS")return"请按要求输入正确数量的 JSON 参数";if(error==="XIAOMI_CLOUD_HTTP_401")return"米家登录已失效，请重新扫码登录";if(error==="XIAOMI_CLOUD_HTTP_403")return"米家云拒绝访问，请重新登录并确认所在区域";if(error.startsWith("XIAOMI_PROPERTY_CODE_"))return`设备未接受该设置，错误码 ${error.slice("XIAOMI_PROPERTY_CODE_".length)}`;if(error.startsWith("MIOT_SPEC_HTTP_"))return`设备规格服务返回 HTTP ${error.split("_").pop()}`;if(error.startsWith("XIAOMI_CLOUD_HTTP_"))return`米家云返回 HTTP ${error.split("_").pop()}`;if(error.startsWith("XIAOMI_CLOUD_CODE_"))return`米家云错误 ${error.split("_").pop()}，请确认服务器区域`;return`连接米家云失败：${error||"未知错误"}`}
+function friendlyError(error:string){if(error==="SESSION_SECRET_NOT_CONFIGURED")return"网站会话加密尚未配置";if(error==="XIAOMI_QR_UNAVAILABLE")return"小米暂未返回登录二维码";if(error==="XIAOMI_QR_EXPIRED")return"二维码已过期，请重新获取";if(error==="XIAOMI_SERVICE_TOKEN_MISSING")return"登录成功，但未能取得米家服务令牌";if(error==="XIAOMI_NOT_CONNECTED")return"登录状态已失效，请重新扫码";if(error==="XIAOMI_CLOUD_TIMEOUT")return"米家云响应超时，请确认服务器区域后重试";if(error==="XIAOMI_CLOUD_RESPONSE_INVALID"||error==="XIAOMI_DEVICE_RESPONSE_INVALID")return"米家云返回的数据无法识别";if(error==="MIOT_SPEC_MODEL_NOT_FOUND")return"该型号尚未公开 MIoT 设备规格";if(error==="MIOT_SPEC_RESPONSE_INVALID"||error==="MIOT_SPEC_UNAVAILABLE")return"设备规格服务暂不可用";if(error==="INVALID_ACTION_PARAMETERS")return"请按要求输入正确数量的 JSON 参数";if(error==="BINDING_ACTION_TARGET_UNSUPPORTED")return"该型号没有公开可写目标设备参数";if(error==="BINDING_ACTION_CHANNEL_UNSUPPORTED"||error==="BINDING_ACTION_CHANNEL_MISSING")return"该型号未公开普通灯所需的有线回路参数";if(error==="BINDING_ACTION_PARAMETERS_UNKNOWN")return"绑定动作包含未公开含义的厂商参数";if(error==="XIAOMI_CLOUD_HTTP_401")return"米家登录已失效，请重新扫码登录";if(error==="XIAOMI_CLOUD_HTTP_403")return"米家云拒绝访问，请重新登录并确认所在区域";if(error.startsWith("XIAOMI_PROPERTY_CODE_"))return`设备未接受该设置，错误码 ${error.slice("XIAOMI_PROPERTY_CODE_".length)}`;if(error.startsWith("MIOT_SPEC_HTTP_"))return`设备规格服务返回 HTTP ${error.split("_").pop()}`;if(error.startsWith("XIAOMI_CLOUD_HTTP_"))return`米家云返回 HTTP ${error.split("_").pop()}`;if(error.startsWith("XIAOMI_CLOUD_CODE_"))return`米家云错误 ${error.split("_").pop()}，请确认服务器区域`;return`连接米家云失败：${error||"未知错误"}`}

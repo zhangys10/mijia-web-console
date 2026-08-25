@@ -35,6 +35,8 @@ test("renders the Xiaomi smart home dashboard", async () => {
   assert.match(html, /客厅三开/);
   assert.match(html, /主卧中控/);
   assert.doesNotMatch(html, /客厅吸顶灯/, "switch view should not display controlled lights as peer cards");
+  assert.doesNotMatch(html, /虚拟开关/, "physical switch cards must never be labelled as virtual");
+  assert.match(html, /实体开关/);
   assert.match(html, /开关与硬件/);
   assert.match(html, /实际受控设备/);
   assert.match(html, /物理面板/);
