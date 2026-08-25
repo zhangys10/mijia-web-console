@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildDeviceTopology } from "../lib/device-topology.ts";
-import { classifyDeviceKind, selectDeviceView } from "../lib/device-views.ts";
+import { classifyDeviceKind, groupControlledDevices, selectDeviceView } from "../lib/device-views.ts";
 import { normalizeMiotSpecification } from "../lib/miot-spec.ts";
 import { collectXiaomiHomes } from "../lib/xiaomi-cloud.ts";
 
@@ -210,4 +210,45 @@ test("classifies separate wired and wireless keys on the same physical panel", (
   assert.equal(topology.get("panel-100").connectionType, "mixed");
   assert.deepEqual(topology.get("panel-100").channels.map(channel => channel.connectionType), ["wired", "wireless"]);
   assert.equal(topology.get("lamp-300").controlledBy[0].sourceRole, "secondary");
+});
+
+test("merges repeated light cards and preserves every bound wired and wireless controller", () => {
+  const raw = [
+    { did: "center-100", name: "主卧中控", model: "vendor.switch.triple", roomName: "主卧" },
+    { did: "wired-200", name: "主卧中间筒灯", model: "vendor.switch.virtual", roomName: "主卧", extra: { parent_did: "center-100", channel_index: 2 } },
+    { did: "wireless-201", name: "主卧中间筒灯", model: "vendor.switch.virtual", roomName: "主卧" },
+    { did: "bed-300", name: "床头开关", model: "vendor.switch.double", roomName: "主卧", extra: { wireless_mode: true, channels: [{ channel_index: 1, target_dids: ["wireless-201"] }] } },
+  ];
+  const topology = buildDeviceTopology(raw);
+  const devices = raw.map(device => ({ ...device, room: device.roomName, homeId: "home-1", kind: classifyDeviceKind(device.model, device.name), parentId: topology.get(device.did).parentId, topology: topology.get(device.did) }));
+  const actual = groupControlledDevices(selectDeviceView(devices, "controlled"));
+
+  assert.equal(actual.length, 1);
+  assert.equal(actual[0].name, "主卧中间筒灯");
+  assert.equal(actual[0].members.length, 2);
+  assert.deepEqual(actual[0].topology.controlledBy.map(source => [source.sourceName, source.connectionType]), [["主卧中控", "wired"], ["床头开关", "wireless"]]);
+});
+
+test("does not merge identical load names across different rooms or homes", () => {
+  const devices = [
+    { did: "light-1", name: "灯带", kind: "light", room: "主卧", homeId: "home-1" },
+    { did: "light-2", name: "灯带", kind: "light", room: "客厅", homeId: "home-1" },
+    { did: "light-3", name: "灯带", kind: "light", room: "主卧", homeId: "home-2" },
+  ];
+
+  assert.equal(groupControlledDevices(devices).length, 3);
+});
+
+test("switch view exposes only physical switches and central control panels", () => {
+  const raw = [
+    { did: "center-100", name: "主卧中控", model: "vendor.gateway.screen", roomName: "主卧" },
+    { did: "bed-200", name: "床头开关", model: "vendor.switch.double", roomName: "主卧" },
+    { did: "light-300", name: "主卧灯带", model: "vendor.switch.virtual", roomName: "主卧" },
+    { did: "vacuum-400", name: "扫拖机器人", model: "vendor.vacuum.cleaner", roomName: "主卧" },
+  ];
+  const topology = buildDeviceTopology(raw);
+  const devices = raw.map(device => ({ ...device, kind: classifyDeviceKind(device.model, device.name), topology: topology.get(device.did) }));
+
+  assert.equal(classifyDeviceKind("vendor.gateway.screen", "主卧中控"), "switch");
+  assert.deepEqual(selectDeviceView(devices, "hardware").map(device => device.name), ["主卧中控", "床头开关"]);
 });
