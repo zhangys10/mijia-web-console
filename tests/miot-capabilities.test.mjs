@@ -71,6 +71,7 @@ test("links a mapped entrance light to its actual three-gang primary button", ()
   assert.equal(topology.get("virtual-200").parentName, "客厅三开");
   assert.equal(topology.get("virtual-200").channelLabel, "按键 2");
   assert.deepEqual(topology.get("virtual-200").controlledBy.map(item => item.sourceName), ["客厅三开"]);
+  assert.deepEqual(topology.get("switch-100").channels.map(channel => ({ label: channel.label, targets: channel.targets.map(target => target.name) })), [{ label: "按键 2", targets: ["玄关柜灯带"] }]);
 });
 
 test("maps one wireless secondary button to multiple independently controlled devices", () => {
@@ -84,6 +85,9 @@ test("maps one wireless secondary button to multiple independently controlled de
   assert.deepEqual(topology.get("wireless-100").bindings.map(binding => binding.targetName), ["玄关柜灯带", "客厅灯带"]);
   assert.deepEqual(topology.get("light-201").controlledBy.map(item => item.sourceRole), ["secondary"]);
   assert.deepEqual(topology.get("light-202").controlledBy.map(item => item.sourceName), ["床头副控面板"]);
+  assert.equal(topology.get("wireless-100").channels.length, 1);
+  assert.equal(topology.get("wireless-100").channels[0].targets.length, 2);
+  assert.equal(topology.get("light-201").controlledBy[0].targetCount, 2);
 });
 
 test("discovers child-to-parent control mappings exposed only on the main device", () => {
@@ -95,4 +99,41 @@ test("discovers child-to-parent control mappings exposed only on the main device
   assert.equal(topology.get("mapped-2").parentId, "switch-100");
   assert.equal(topology.get("mapped-2").channelSiid, 3);
   assert.equal(topology.get("switch-100").role, "primary");
+});
+
+test("resolves wireless binding to a primary switch button into the actual mapped light", () => {
+  const topology = buildDeviceTopology([
+    { did: "switch-100", name: "客厅三开", model: "vendor.switch.triple", roomName: "客厅" },
+    { did: "mapped-2", name: "玄关柜灯带", model: "vendor.switch.virtual", roomName: "玄关", extra: { parent_did: "switch-100", channel_index: 2, parent_siid: 3 } },
+    { did: "remote-300", name: "餐厅副控", model: "vendor.switch.double", roomName: "餐厅", extra: { wireless_mode: true, keys: [{ channel_index: 1, targets: [{ did: "switch-100", channel_index: 2, siid: 3 }] }] } },
+  ]);
+
+  assert.deepEqual(topology.get("remote-300").bindings.map(item => ({ name: item.targetName, via: item.viaName })), [{ name: "玄关柜灯带", via: "客厅三开" }]);
+  assert.deepEqual(topology.get("mapped-2").controlledBy.map(item => item.sourceName), ["客厅三开", "餐厅副控"]);
+  assert.equal(topology.get("mapped-2").controlledBy[1].sourceRole, "secondary");
+  assert.equal(topology.get("remote-300").channels[0].targets[0].controllerCount, 2);
+});
+
+test("keeps a wired switch primary when it exposes bound loads without a wireless marker", () => {
+  const topology = buildDeviceTopology([
+    { did: "switch-100", name: "客厅三开", model: "vendor.switch.triple", roomName: "客厅", extra: { channels: [{ channel_index: 2, target_dids: ["light-201", "light-202"] }] } },
+    { did: "light-201", name: "玄关柜灯带", model: "vendor.light.strip", roomName: "玄关" },
+    { did: "light-202", name: "过道灯带", model: "vendor.light.strip", roomName: "过道" },
+  ]);
+
+  assert.equal(topology.get("switch-100").role, "primary");
+  assert.equal(topology.get("switch-100").channels[0].role, "primary");
+  assert.equal(topology.get("switch-100").channels[0].targets.length, 2);
+  assert.deepEqual(topology.get("light-201").controlledBy.map(item => item.sourceRole), ["primary"]);
+});
+
+test("does not fabricate a target when a wireless-only switch does not publish bindings", () => {
+  const topology = buildDeviceTopology([
+    { did: "remote-300", name: "全屋副控", model: "vendor.switch.triple", roomName: "卧室", extra: { wireless_mode: true } },
+    { did: "light-201", name: "玄关柜灯带", model: "vendor.light.strip", roomName: "玄关" },
+  ]);
+
+  assert.equal(topology.get("remote-300").role, "secondary-panel");
+  assert.deepEqual(topology.get("remote-300").channels, []);
+  assert.deepEqual(topology.get("light-201").controlledBy, []);
 });
