@@ -160,18 +160,6 @@ export function selectDeviceView<T extends ViewDevice>(devices: T[], view: "hard
 
 function normalizedDeviceName(name: string) { return name.trim().replace(/[\s\u3000·•_\-]+/g, "").toLocaleLowerCase(); }
 
-function sharesControlIdentity(left: ViewDevice, right: ViewDevice) {
-  const leftIds = [left.did, left.parentId, left.topology?.parentId, ...(left.topology?.controlledBy ?? []).map(source => source.sourceId)].filter((id): id is string => Boolean(id));
-  const rightIds = [right.did, right.parentId, right.topology?.parentId, ...(right.topology?.controlledBy ?? []).map(source => source.sourceId)].filter((id): id is string => Boolean(id));
-  return leftIds.some(leftId => rightIds.some(rightId => samePhysicalDevice(leftId, rightId)));
-}
-
-function relatedControlledDevices(left: ViewDevice, right: ViewDevice) {
-  if (left.homeId !== right.homeId || normalizedDeviceName(left.name) !== normalizedDeviceName(right.name)) return false;
-  if (left.room === right.room || sharesControlIdentity(left, right)) return true;
-  return !isIndependentSmartDevice(left) || !isIndependentSmartDevice(right);
-}
-
 function controlledDeviceRank(device: ViewDevice) {
   let score = 0;
   if (device.topology?.controlledBy.some(source => source.connectionType === "wired")) score += 8;
@@ -182,22 +170,14 @@ function controlledDeviceRank(device: ViewDevice) {
 }
 
 export function groupControlledDevices<T extends ViewDevice>(devices: T[], allDevices: T[] = devices): Array<ControlledDeviceGroup<T>> {
-  const groups = new Map<string, T[][]>();
+  const groups = new Map<string, T[]>();
   for (const device of devices) {
-    const key = `${device.homeId ?? ""}:${normalizedDeviceName(device.name)}`;
-    const buckets = groups.get(key) ?? [];
-    const matches = buckets.filter(items => items.some(item => relatedControlledDevices(item, device)));
-    if (!matches.length) buckets.push([device]);
-    else {
-      matches[0].push(device);
-      for (const matched of matches.slice(1)) {
-        matches[0].push(...matched);
-        buckets.splice(buckets.indexOf(matched), 1);
-      }
-    }
-    groups.set(key, buckets);
+    const key = `${device.homeId ?? ""}:${device.room ?? "未分配"}:${normalizedDeviceName(device.name)}`;
+    const members = groups.get(key) ?? [];
+    members.push(device);
+    groups.set(key, members);
   }
-  return [...groups.values()].flat().map(members => {
+  return [...groups.values()].map(members => {
     const ranked = [...members].sort((left, right) => controlledDeviceRank(right) - controlledDeviceRank(left));
     const primary = ranked[0];
     const topology = ranked.map(device => device.topology).find(Boolean) ?? null;

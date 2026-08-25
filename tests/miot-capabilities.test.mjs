@@ -495,7 +495,7 @@ test("groups controlled loads by name and preserves every associated device ID",
   assert.deepEqual(groups.find(group => group.name === "中间筒灯").members.map(member => member.did), ["center-1", "bedside-left-2", "bedside-right-3"]);
 });
 
-test("finds the same controlled load and all controlling hardware across rooms", () => {
+test("groups controlled loads by name and room while finding controllers across rooms", () => {
   const raw = [
     { did: "living-panel.1", name: "客厅中控", model: "xiaomi.controller.oh4w", roomName: "客厅" },
     { did: "bedroom-load.1", name: "主卧中间筒灯", model: "vendor.switch.virtual", roomName: "主卧", extra: { parent_did: "living-panel.1", channel_index: 1 } },
@@ -506,10 +506,12 @@ test("finds the same controlled load and all controlling hardware across rooms",
   const devices = raw.map(device => ({ ...device, room: device.roomName, homeId: "home-1", kind: classifyDeviceKind(device.model, device.name), parentId: topology.get(device.did).parentId, topology: topology.get(device.did) }));
 
   const actual = groupControlledDevices(selectDeviceView(devices, "controlled"), devices);
-  assert.equal(actual.length, 1);
-  assert.equal(actual[0].room, "主卧");
-  assert.deepEqual(actual[0].members.map(member => member.did), ["bedroom-load.1", "remote-panel.2"]);
-  assert.deepEqual(actual[0].topology.controlledBy.map(source => [source.sourceName, source.sourceRoom, source.connectionType]), [
+  assert.equal(actual.length, 2);
+  const bedroom = actual.find(group => group.room === "主卧");
+  const hallway = actual.find(group => group.room === "走廊");
+  assert.deepEqual(bedroom.members.map(member => member.did), ["bedroom-load.1"]);
+  assert.deepEqual(hallway.members.map(member => member.did), ["remote-panel.2"]);
+  assert.deepEqual(bedroom.topology.controlledBy.map(source => [source.sourceName, source.sourceRoom, source.connectionType]), [
     ["客厅中控", "客厅", "wired"],
     ["走廊无线开关", "走廊", "wireless"],
   ]);
