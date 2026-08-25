@@ -1,6 +1,7 @@
 import type { DeviceControlChannel, DeviceTopology } from "./device-topology";
 
-type ViewDevice = { did?: string; name: string; kind: string; room?: string; homeId?: string; parentId?: string | null; detail?: string; model?: string; topology?: DeviceTopology | null };
+export type HardwareRole = "controller" | "switch" | "device";
+type ViewDevice = { did?: string; name: string; kind: string; icon?: string; room?: string; homeId?: string; parentId?: string | null; detail?: string; model?: string; logicalType?: string; hardwareRole?: HardwareRole; topology?: DeviceTopology | null };
 export type ControlledDeviceGroup<T extends ViewDevice> = Omit<T, "did" | "parentId"> & { did?: undefined; parentId: null; virtual: true; members: T[] };
 export type SwitchChannelTarget<T extends ViewDevice> = { id: string; name: string; room: string; device?: T; smart: boolean };
 
@@ -11,15 +12,36 @@ const lightingModel = /(?:^|[._-])(?:light|lamp|bulb|strip|ceiling|downlight|spo
 const mappedModel = /(?:^|[._-])(?:switch|relay|channel|gang|virtual|split)(?:[._-]|$)/;
 const centralControllerModel = /^(?:controller\w*|gateway\w*|central\w*|screen\w*|hub\w*)$/;
 const switchModel = /^(?:switch\w*|panel\w*|remote\w*|relay\w*|key\w*|button\w*)$/;
-const modelKinds: Record<string, string> = { light: "light", lamp: "lamp", bulb: "light", strip: "light", ceiling: "light", downlight: "light", spotlight: "light", lighting: "light", lightstrip: "light", aircondition: "aircondition", acpartner: "acpartner", airpurifier: "airpurifier", vacuum: "vacuum", fan: "fan", lock: "lock", curtain: "curtain", humidifier: "humidifier", plug: "plug", camera: "camera", sensor: "sensor" };
+const modelKinds: Record<string, string> = { light: "light", lamp: "lamp", bulb: "light", strip: "light", ceiling: "light", downlight: "light", spotlight: "light", lighting: "light", lightstrip: "light", aircondition: "aircondition", acpartner: "acpartner", airpurifier: "airpurifier", vacuum: "vacuum", fan: "fan", lock: "lock", curtain: "curtain", humidifier: "humidifier", plug: "plug", camera: "camera", sensor: "sensor", switch: "switch", panel: "switch", remote: "switch", relay: "switch", button: "switch", key: "switch", controller: "switch", gateway: "switch", screen: "switch", hub: "switch" };
 
-export function classifyDeviceKind(model: string, name: string) {
-  const value = model.trim().toLowerCase();
-  const segments = value.split(".").filter(Boolean);
-  const category = segments.length > 1 ? segments[1] : segments[0] ?? "";
-  const tokens = value.split(/[._-]/).filter(Boolean);
+function modelParts(value: string) {
+  const normalized = value.trim().toLowerCase();
+  const segments = normalized.split(".").filter(Boolean);
+  return { value: normalized, category: segments.length > 1 ? segments[1] : segments[0] ?? "", tokens: normalized.split(/[._:\-]/).filter(Boolean) };
+}
 
-  if (centralControllerModel.test(category)) return "controller";
+export function inferHardwareRole(model: string, name = ""): HardwareRole {
+  const { category, tokens } = modelParts(model);
+  if (centralControllerModel.test(category) || tokens.slice(1).some(token => centralControllerModel.test(token)) || centralControllerName.test(name)) return "controller";
+  if (tokens.some(token => /^(?:virtual|split|channel)$/.test(token)) && lightingName.test(name) && !controllerName.test(name)) return "device";
+  if (switchModel.test(category) || tokens.slice(1).some(token => switchModel.test(token)) || controllerName.test(name)) return "switch";
+  return "device";
+}
+
+export function classifyDeviceKind(model: string, name: string, logicalType = "") {
+  const reported = modelParts(logicalType);
+  const reportedKind = reported.tokens.find(token => Boolean(modelKinds[token]));
+  if (reportedKind) return modelKinds[reportedKind];
+
+  const { category, tokens } = modelParts(model);
+  const modelKind = modelKinds[category] ?? modelKinds[tokens.slice(1).find(token => Boolean(modelKinds[token])) ?? ""];
+  if (inferHardwareRole(model) === "device" && modelKind) return modelKind;
+
+  // Names and the cloud-reported logical type describe the controllable load.
+  // The model is used separately for grouping the physical piece of hardware.
+  if (lightingName.test(name) && !controllerName.test(name)) return "light";
+  if (controllerName.test(name)) return "switch";
+
   if (modelKinds[category]) return modelKinds[category];
   if (switchModel.test(category)) {
     if (tokens.some(token => /^(?:virtual|split|channel)$/.test(token)) && lightingName.test(name) && !controllerName.test(name)) return "light";
@@ -27,35 +49,30 @@ export function classifyDeviceKind(model: string, name: string) {
   }
 
   const centralToken = tokens.slice(1).find(token => centralControllerModel.test(token));
-  if (centralToken) return "controller";
+  if (centralToken) return "switch";
   const knownToken = tokens.slice(1).find(token => Boolean(modelKinds[token]));
   if (knownToken) return modelKinds[knownToken];
   const switchToken = tokens.slice(1).find(token => switchModel.test(token));
   if (switchToken) return "switch";
 
-  if (centralControllerName.test(name)) return "controller";
-  if (controllerName.test(name)) return "switch";
-  if (lightingName.test(name)) return "light";
   return "sensor";
 }
 
 export function isControlDevice(device: ViewDevice) {
   const model = device.detail ?? device.model ?? "";
-  if (model) {
-    const kind = classifyDeviceKind(model, device.name);
-    if (kind === "controller") return true;
-    if (kind === "light" || kind === "lamp") return false;
-    if (kind === "switch") return !(device.topology?.relation === "mapped" && device.parentId);
-  }
+  const hardwareRole = device.hardwareRole ?? inferHardwareRole(model, device.name);
+  if (hardwareRole === "controller") return true;
+  if (hardwareRole === "switch") return !(device.topology?.relation === "mapped" && device.parentId);
   if (device.topology?.role === "primary" || device.topology?.role === "secondary-panel") return true;
   if (controllerName.test(device.name) && !lightingName.test(device.name)) return true;
-  if (device.kind !== "switch" && device.kind !== "controller") return false;
+  if (device.kind !== "switch") return false;
   if (lightingName.test(device.name) && !controllerName.test(device.name)) return false;
   return !device.topology?.controlledBy.length;
 }
 
 export function isIndependentSmartDevice(device: ViewDevice) {
   const model = (device.detail ?? device.model ?? "").toLowerCase();
+  if (inferHardwareRole(model, device.name) !== "device") return false;
   if (!device.did && !(lightingModel.test(model) && !mappedModel.test(model))) return false;
   if (device.topology?.relation === "mapped" && device.parentId) return false;
   if (lightingName.test(device.name) && mappedModel.test(model)) return false;
@@ -79,21 +96,38 @@ export function selectDeviceView<T extends ViewDevice>(devices: T[], view: "hard
   for (const device of devices) for (const channel of device.topology?.channels ?? []) for (const target of channel.targets) if (ids.has(target.id)) controlledIds.add(target.id);
 
   if (view === "hardware") {
-    const seen = new Set<string>();
-    return devices.filter(device => {
-      const model = device.detail ?? device.model ?? "";
-      const kind = model ? classifyDeviceKind(model, device.name) : device.kind;
-      if (!isControlDevice(device) && !((kind === "light" || kind === "lamp") && isIndependentSmartDevice(device))) return false;
-      if (kind !== "controller" && device.topology?.relation === "mapped" && device.parentId && ids.has(device.parentId)) return false;
-      if (!device.did) return true;
-      const identity = `${device.homeId ?? ""}:${device.did}`;
-      if (seen.has(identity)) return false;
-      seen.add(identity);
-      return true;
+    const groups = new Map<string, T[]>();
+    devices.forEach((device, index) => {
+      const hardwareRole = device.hardwareRole ?? inferHardwareRole(device.detail ?? device.model ?? "", device.name);
+      const independentLight = (device.kind === "light" || device.kind === "lamp") && isIndependentSmartDevice(device);
+      if (!isControlDevice(device) && !independentLight) return;
+      if (hardwareRole === "device" && device.topology?.relation === "mapped" && device.parentId && ids.has(device.parentId)) return;
+      const identity = device.did ? `${device.homeId ?? ""}:${device.did}` : `${device.homeId ?? ""}:anonymous:${index}`;
+      const members = groups.get(identity) ?? [];
+      members.push(device);
+      groups.set(identity, members);
+    });
+
+    return [...groups.values()].map(members => {
+      const first = members[0];
+      const model = first.detail ?? first.model ?? "";
+      const hardwareRole = members.map(device => device.hardwareRole ?? inferHardwareRole(device.detail ?? device.model ?? "", device.name)).find(role => role !== "device") ?? "device";
+      const namedHardware = members.find(device => hardwareRole === "controller" ? centralControllerName.test(device.name) : hardwareRole === "switch" ? controllerName.test(device.name) : true) ?? first;
+      const room = namedHardware.room ?? first.room ?? "";
+      const name = hardwareRole === "controller" && !centralControllerName.test(namedHardware.name) ? `${room && room !== "未分配" ? room : ""}中控屏` : namedHardware.name;
+      return {
+        ...namedHardware,
+        name,
+        icon: hardwareRole === "controller" ? "▤" : namedHardware.icon,
+        hardwareRole,
+        members,
+        detail: namedHardware.detail ?? namedHardware.model ?? model,
+      };
     });
   }
 
   return devices.filter(device => {
+    if ((device.kind === "light" || device.kind === "lamp" || lightingName.test(device.name)) && !controllerName.test(device.name)) return true;
     if (isControlDevice(device)) return false;
     if (device.did && controlledIds.has(device.did)) return true;
     if (device.topology?.controlledBy.length || device.topology?.relation === "mapped") return true;

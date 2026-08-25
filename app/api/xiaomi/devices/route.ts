@@ -14,6 +14,7 @@ export async function GET() {
       online: Boolean(device.isOnline ?? device.is_online ?? device.online), room: String(device.roomName ?? "未分配"),
       homeId: String(device.homeId ?? "default"), home: String(device.homeName ?? "我的家"), roomId: String(device.room_id ?? ""),
       icon: device.icon ?? null, parentId: topology.get(String(device.did))?.parentId ?? null,
+      logicalType: typeof device.type === "string" ? device.type : typeof device.device_type === "string" ? device.device_type : typeof device.deviceType === "string" ? device.deviceType : typeof device.category === "string" ? device.category : "",
       urn: typeof device.urn === "string" ? device.urn : typeof device.spec_type === "string" ? device.spec_type : typeof device.miot_type === "string" ? device.miot_type : null,
       topology: topology.get(String(device.did)) ?? null,
     }));

@@ -230,6 +230,14 @@ export function collectXiaomiHomes(result: Record<string, unknown> | undefined) 
   return homes;
 }
 
+export function mergeXiaomiDeviceRecords(legacyDevices: Array<Record<string, unknown>>, primaryDevices: Array<Record<string, unknown>>) {
+  const records = new Map<string, Record<string, unknown>>();
+  const key = (device: Record<string, unknown>) => `${String(device.homeId ?? device.home_id ?? "default")}:${String(device.did ?? "")}:${String(device.name ?? device.model ?? "")}`;
+  for (const device of legacyDevices) records.set(key(device), device);
+  for (const device of primaryDevices) records.set(key(device), device);
+  return [...records.values()];
+}
+
 export async function listDevices(session: XiaomiSession) {
   let firstError: Error | undefined;
   let homes: Array<Record<string, unknown>> = [];
@@ -290,10 +298,7 @@ export async function listDevices(session: XiaomiSession) {
     const fallbackHome = homes[0];
     return { ...device, homeId: String(device.home_id ?? assignment?.id ?? fallbackHome?.home_id ?? fallbackHome?.id ?? "default"), homeName: device.home_name ?? assignment?.name ?? candidate?.name ?? candidate?.home_name ?? fallbackHome?.name ?? "我的家", roomName: device.room_name ?? assignment?.room ?? "未分配" };
   });
-  const devicesById = new Map<string, Record<string, unknown>>();
-  for (const device of legacyDevices) devicesById.set(String(device.did), device);
-  for (const device of primaryDevices) devicesById.set(String(device.did), device);
-  const devices = [...devicesById.values()];
+  const devices = mergeXiaomiDeviceRecords(legacyDevices, primaryDevices);
   const homeMap = new Map<string, { id: string; name: string }>();
   for (const home of homes) homeMap.set(String(home.home_id ?? home.id ?? ""), { id: String(home.home_id ?? home.id ?? ""), name: String(home.name ?? home.home_name ?? "我的家") });
   for (const device of devices) homeMap.set(String(device.homeId), { id: String(device.homeId), name: String(device.homeName) });

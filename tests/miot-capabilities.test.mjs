@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildDeviceTopology } from "../lib/device-topology.ts";
-import { classifyDeviceKind, groupControlledDevices, isControlDevice, isIndependentSmartDevice, listSwitchChannelTargets, selectDeviceView } from "../lib/device-views.ts";
+import { classifyDeviceKind, groupControlledDevices, inferHardwareRole, isControlDevice, isIndependentSmartDevice, listSwitchChannelTargets, selectDeviceView } from "../lib/device-views.ts";
 import { normalizeMiotSpecification } from "../lib/miot-spec.ts";
 import { analyzeSwitchBindingCapabilities, buildBindingActionParameters, listSwitchBindingTargets, listVisibleControlSources } from "../lib/switch-bindings.ts";
-import { collectXiaomiHomes } from "../lib/xiaomi-cloud.ts";
+import { collectXiaomiHomes, mergeXiaomiDeviceRecords } from "../lib/xiaomi-cloud.ts";
 
 test("preserves both owned and shared Xiaomi homes without duplicates", () => {
   const homes = collectXiaomiHomes({
@@ -14,6 +14,18 @@ test("preserves both owned and shared Xiaomi homes without duplicates", () => {
   });
 
   assert.deepEqual(homes.map(home => String(home.home_id ?? home.id)), ["1001", "2002"]);
+});
+
+test("preserves different logical load names that share one physical device ID", () => {
+  const devices = mergeXiaomiDeviceRecords(
+    [{ did: "center-1", homeId: "home-1", name: "中间筒灯" }],
+    [
+      { did: "center-1", homeId: "home-1", name: "中间筒灯", model: "xiaomi.controller.oh4w" },
+      { did: "center-1", homeId: "home-1", name: "床头筒灯", model: "xiaomi.controller.oh4w" },
+    ],
+  );
+
+  assert.deepEqual(devices.map(device => device.name), ["中间筒灯", "床头筒灯"]);
 });
 
 test("maps a real three-gang specification into independent buttons and vendor features", () => {
@@ -350,7 +362,7 @@ test("hardware view exposes real switches, central panels and independent smart 
   const topology = buildDeviceTopology(raw);
   const devices = raw.map(device => ({ ...device, kind: classifyDeviceKind(device.model, device.name), topology: topology.get(device.did) }));
 
-  assert.equal(classifyDeviceKind("vendor.gateway.screen", "主卧中控"), "controller");
+  assert.equal(classifyDeviceKind("vendor.gateway.screen", "主卧中控"), "switch");
   assert.deepEqual(selectDeviceView(devices, "hardware").map(device => device.name), ["主卧中控", "床头开关", "主卧智能灯"]);
 });
 
@@ -387,19 +399,22 @@ test("shows every living-room central panel, switch and smart light behind a swi
 });
 
 test("recognizes actual home screens, gateways and vendor-specific light names", () => {
-  assert.equal(classifyDeviceKind("vendor.gateway2.mcn001", "客厅设备"), "controller");
-  assert.equal(classifyDeviceKind("vendor.custom.mesh", "客厅家庭屏"), "controller");
+  assert.equal(classifyDeviceKind("vendor.gateway2.mcn001", "客厅设备"), "switch");
+  assert.equal(classifyDeviceKind("vendor.custom.mesh", "客厅家庭屏"), "switch");
   assert.equal(classifyDeviceKind("vendor.custom.mesh", "客厅智能灯具"), "light");
+  assert.equal(inferHardwareRole("vendor.gateway2.mcn001", "客厅设备"), "controller");
   assert.equal(isIndependentSmartDevice({ name: "客厅吸顶灯", kind: "light", detail: "yeelink.light.demo" }), true);
 });
 
-test("infers the real hardware category from the model before controlled-device names", () => {
-  assert.equal(classifyDeviceKind("xiaomi.controller.oh4w", "客厅中控"), "controller");
-  assert.equal(classifyDeviceKind("xiaomi.controller.oh4w", "主卧中间筒灯"), "controller");
-  assert.equal(classifyDeviceKind("xiaomi.controller.oh4w", "玄关柜灯带"), "controller");
-  assert.equal(classifyDeviceKind("xiaomi.switch.triple", "客厅灯具"), "switch");
+test("keeps logical load type separate from the physical hardware role", () => {
+  assert.equal(classifyDeviceKind("xiaomi.controller.oh4w", "客厅中控"), "switch");
+  assert.equal(classifyDeviceKind("xiaomi.controller.oh4w", "主卧中间筒灯"), "light");
+  assert.equal(classifyDeviceKind("xiaomi.controller.oh4w", "玄关柜灯带"), "light");
+  assert.equal(classifyDeviceKind("xiaomi.switch.triple", "客厅灯具"), "light");
   assert.equal(classifyDeviceKind("yeelink.light.ceiling", "客厅中控"), "light");
   assert.equal(classifyDeviceKind("vendor.switch.virtual", "主卧中间筒灯"), "light");
+  assert.equal(classifyDeviceKind("xiaomi.controller.oh4w", "未命名", "light"), "light");
+  assert.equal(inferHardwareRole("xiaomi.controller.oh4w", "主卧中间筒灯"), "controller");
 });
 
 test("keeps a Xiaomi controller in hardware view even when its reported target type is light", () => {
@@ -411,11 +426,11 @@ test("keeps a Xiaomi controller in hardware view even when its reported target t
   const topology = buildDeviceTopology(raw);
   const devices = raw.map(device => ({ ...device, homeId: "home-1", room: device.roomName, kind: classifyDeviceKind(device.model, device.name), parentId: topology.get(device.did).parentId, topology: topology.get(device.did) }));
 
-  assert.equal(devices[0].kind, "controller");
+  assert.equal(devices[0].kind, "light");
   assert.equal(isControlDevice(devices[0]), true);
   assert.equal(topology.get("controller-100").role, "primary");
-  assert.deepEqual(selectDeviceView(devices, "hardware").map(device => [device.did, device.kind]), [["controller-100", "controller"], ["smart-300", "light"]]);
-  assert.deepEqual(selectDeviceView(devices, "controlled").map(device => device.did), ["mapped-200", "smart-300"]);
+  assert.deepEqual(selectDeviceView(devices, "hardware").map(device => [device.did, device.kind]), [["controller-100", "light"], ["smart-300", "light"]]);
+  assert.deepEqual(selectDeviceView(devices, "controlled").map(device => device.did), ["controller-100", "mapped-200", "smart-300"]);
 });
 
 test("uses each home and real device ID to keep one controller hardware card", () => {
@@ -429,7 +444,32 @@ test("uses each home and real device ID to keep one controller hardware card", (
     ["home-1", "controller-100"],
     ["home-2", "controller-100"],
   ]);
-  assert.deepEqual(selectDeviceView(duplicated, "controlled"), []);
+  assert.deepEqual(selectDeviceView(duplicated, "controlled").map(device => device.name), ["客厅灯带"]);
+});
+
+test("shows one controller by physical ID but two logical lamps in the controlled view", () => {
+  const devices = [
+    { id: 1, did: "bedroom-center-1", homeId: "home-1", room: "主卧", name: "中间筒灯", model: "xiaomi.controller.oh4w", kind: "light" },
+    { id: 2, did: "bedroom-center-1", homeId: "home-1", room: "主卧", name: "床头筒灯", model: "xiaomi.controller.oh4w", kind: "light" },
+  ];
+
+  const hardware = selectDeviceView(devices, "hardware");
+  assert.equal(hardware.length, 1);
+  assert.deepEqual([hardware[0].did, hardware[0].name, hardware[0].kind, hardware[0].hardwareRole, hardware[0].members.length], ["bedroom-center-1", "主卧中控屏", "light", "controller", 2]);
+  assert.deepEqual(selectDeviceView(devices, "controlled").map(device => device.name), ["中间筒灯", "床头筒灯"]);
+});
+
+test("groups controlled loads by name and preserves every associated device ID", () => {
+  const devices = [
+    { did: "center-1", homeId: "home-1", room: "主卧", name: "中间筒灯", kind: "light" },
+    { did: "bedside-left-2", homeId: "home-1", room: "主卧", name: "中间筒灯", kind: "light" },
+    { did: "bedside-right-3", homeId: "home-1", room: "主卧", name: "中间筒灯", kind: "light" },
+    { did: "bedside-light-4", homeId: "home-1", room: "主卧", name: "床头筒灯", kind: "light" },
+  ];
+
+  const groups = groupControlledDevices(devices);
+  assert.equal(groups.length, 2);
+  assert.deepEqual(groups.find(group => group.name === "中间筒灯").members.map(member => member.did), ["center-1", "bedside-left-2", "bedside-right-3"]);
 });
 
 test("shows each button's ordinary-light names and separately opens real smart lights", () => {
