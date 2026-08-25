@@ -1,6 +1,7 @@
 import type { DeviceTopology } from "./device-topology";
 
-type ViewDevice = { did?: string; name: string; kind: string; room?: string; homeId?: string; parentId?: string | null; topology?: DeviceTopology | null };
+type ViewDevice = { did?: string; name: string; kind: string; room?: string; homeId?: string; parentId?: string | null; detail?: string; model?: string; topology?: DeviceTopology | null };
+export type ControlledDeviceGroup<T extends ViewDevice> = Omit<T, "did" | "parentId"> & { did?: undefined; parentId: null; virtual: true; members: T[] };
 
 const lightingName = /灯带|灯光|吸顶灯|吊灯|筒灯|射灯|壁灯|台灯|床头灯|柜灯|夜灯|氛围灯|照明|灯$/;
 const controllerName = /开关|面板|副控|主控|中控|中枢|控制屏|触控屏|遥控|控制器|[单双三四五六]开/;
@@ -20,6 +21,14 @@ export function isControlDevice(device: ViewDevice) {
   if (device.kind !== "switch") return false;
   if (lightingName.test(device.name) && !controllerName.test(device.name)) return false;
   return !device.topology?.controlledBy.length;
+}
+
+export function isIndependentSmartDevice(device: ViewDevice) {
+  if (!device.did) return false;
+  if ((device.topology?.relation === "mapped" || device.topology?.relation === "subdevice") && device.parentId) return false;
+  const model = (device.detail ?? device.model ?? "").toLowerCase();
+  if (lightingName.test(device.name) && /(switch|relay|channel|gang|virtual)/.test(model) && !/(light|lamp|strip|bulb)/.test(model)) return false;
+  return true;
 }
 
 export function selectDeviceView<T extends ViewDevice>(devices: T[], view: "hardware" | "controlled") {
@@ -46,7 +55,7 @@ export function selectDeviceView<T extends ViewDevice>(devices: T[], view: "hard
 
 function normalizedDeviceName(name: string) { return name.trim().replace(/[\s\u3000·•_\-]+/g, "").toLocaleLowerCase(); }
 
-export function groupControlledDevices<T extends ViewDevice>(devices: T[]): Array<T & { members: T[] }> {
+export function groupControlledDevices<T extends ViewDevice>(devices: T[]): Array<ControlledDeviceGroup<T>> {
   const groups = new Map<string, T[]>();
   for (const device of devices) {
     const key = `${device.homeId ?? ""}:${device.room ?? ""}:${normalizedDeviceName(device.name)}`;
@@ -58,9 +67,9 @@ export function groupControlledDevices<T extends ViewDevice>(devices: T[]): Arra
     const ranked = [...members].sort((left, right) => Number(Boolean(right.topology?.controlledBy.some(source => source.connectionType === "wired"))) - Number(Boolean(left.topology?.controlledBy.some(source => source.connectionType === "wired"))));
     const primary = ranked[0];
     const topology = ranked.map(device => device.topology).find(Boolean) ?? null;
-    if (!topology) return { ...primary, members };
+    if (!topology) return { ...primary, did: undefined, parentId: null, virtual: true, members } as ControlledDeviceGroup<T>;
     const unique = new Map<string, DeviceTopology["controlledBy"][number]>();
     for (const member of ranked) for (const source of member.topology?.controlledBy ?? []) unique.set(`${source.sourceId}:${source.channelIndex}:${source.channelSiid}:${source.connectionType}`, source);
-    return { ...primary, topology: { ...topology, controlledBy: [...unique.values()] }, members };
+    return { ...primary, did: undefined, parentId: null, virtual: true, topology: { ...topology, controlledBy: [...unique.values()] }, members } as ControlledDeviceGroup<T>;
   });
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildDeviceTopology } from "../lib/device-topology.ts";
-import { classifyDeviceKind, groupControlledDevices, selectDeviceView } from "../lib/device-views.ts";
+import { classifyDeviceKind, groupControlledDevices, isIndependentSmartDevice, selectDeviceView } from "../lib/device-views.ts";
 import { normalizeMiotSpecification } from "../lib/miot-spec.ts";
 import { collectXiaomiHomes } from "../lib/xiaomi-cloud.ts";
 
@@ -225,8 +225,18 @@ test("merges repeated light cards and preserves every bound wired and wireless c
 
   assert.equal(actual.length, 1);
   assert.equal(actual[0].name, "主卧中间筒灯");
+  assert.equal(actual[0].virtual, true);
+  assert.equal(actual[0].did, undefined);
   assert.equal(actual[0].members.length, 2);
   assert.deepEqual(actual[0].topology.controlledBy.map(source => [source.sourceName, source.connectionType]), [["主卧中控", "wired"], ["床头开关", "wireless"]]);
+});
+
+test("only independent smart lights open from a switch binding", () => {
+  const wiredCircuit = { did: "circuit-1", name: "玄关柜灯带", kind: "light", detail: "vendor.switch.virtual", parentId: "switch-1", topology: { relation: "mapped" } };
+  const smartStrip = { did: "strip-1", name: "卧室灯带", kind: "light", detail: "yeelink.light.strip", parentId: null, topology: { relation: "none" } };
+
+  assert.equal(isIndependentSmartDevice(wiredCircuit), false);
+  assert.equal(isIndependentSmartDevice(smartStrip), true);
 });
 
 test("does not merge identical load names across different rooms or homes", () => {
