@@ -14,6 +14,8 @@ export async function GET() {
     }));
     return NextResponse.json({ homes: result.homes, devices });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "UNKNOWN_ERROR" }, { status: 502 });
+    const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
+    console.error("[xiaomi-devices]", JSON.stringify({ error: message }));
+    return NextResponse.json({ error: message }, { status: 502 });
   }
 }

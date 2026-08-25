@@ -172,7 +172,13 @@ export async function xiaomiRequest(session: XiaomiSession, path: string, data: 
   for (const [name, value] of Object.entries(plain)) encrypted[name] = encryptRc4(signed, value);
   const signature = await encSignature(path, signed, encrypted);
   const fields = new URLSearchParams({ ...encrypted, signature, ssecurity: session.ssecurity, _nonce: nonceValue });
-  const response = await fetch(`${base}${path}?${fields.toString()}`, { method: "POST", headers: { "User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded", "Accept-Encoding": "identity", "x-xiaomi-protocal-flag-cli": "PROTOCAL-HTTP2", "MIOT-ENCRYPT-ALGORITHM": "ENCRYPT-RC4", Cookie: `userId=${session.userId}; serviceToken=${session.serviceToken}; yetAnotherServiceToken=${session.serviceToken}; locale=zh_CN; channel=MI_APP_STORE` }, signal: AbortSignal.timeout(15000) });
+  let response: Response;
+  try {
+    response = await fetch(`${base}${path}?${fields.toString()}`, { method: "POST", headers: { "User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded", "Accept-Encoding": "identity", "x-xiaomi-protocal-flag-cli": "PROTOCAL-HTTP2", "MIOT-ENCRYPT-ALGORITHM": "ENCRYPT-RC4", Cookie: `userId=${session.userId}; serviceToken=${session.serviceToken}; yetAnotherServiceToken=${session.serviceToken}; locale=zh_CN; timezone=GMT%2B08%3A00; is_daylight=0; dst_offset=0; channel=MI_APP_STORE` }, signal: AbortSignal.timeout(9000) });
+  } catch (error) {
+    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) throw new Error("XIAOMI_CLOUD_TIMEOUT");
+    throw error;
+  }
   if (!response.ok) throw new Error(`XIAOMI_CLOUD_HTTP_${response.status}`);
   const text = await response.text();
   let result: Record<string, unknown>;
@@ -181,16 +187,69 @@ export async function xiaomiRequest(session: XiaomiSession, path: string, data: 
   return result;
 }
 
-export async function listDevices(session: XiaomiSession) {
-  const homesResponse = await xiaomiRequest(session, "/app/v2/homeroom/gethome", { fg: true, fetch_share: true, fetch_share_dev: true, limit: 300, app_ver: 7 });
-  const result = homesResponse.result as Record<string, unknown> | undefined;
-  const homes = (result?.homelist ?? result?.list ?? []) as Array<Record<string, unknown>>;
-  const devices: Array<Record<string, unknown>> = [];
-  for (const home of homes.slice(0, 10)) {
-    const response = await xiaomiRequest(session, "/app/v2/home/home_device_list", { home_owner: home.home_owner, home_id: home.home_id, limit: 200, get_split_device: true, support_smart_home: true });
-    const payload = response.result as Record<string, unknown> | undefined;
-    const entries = (payload?.device_info ?? payload?.list ?? []) as Array<Record<string, unknown>>;
-    for (const device of entries) devices.push({ ...device, homeName: home.name ?? home.home_name ?? "我的家", roomName: device.room_name ?? "未分配" });
+async function signedXiaomiRequest(session: XiaomiSession, path: string, data: Record<string, unknown>) {
+  const region = session.region === "cn" ? "" : `${session.region}.`;
+  const nonceValue = nonce();
+  const signed = await signedNonce(session.ssecurity, nonceValue);
+  const payload = JSON.stringify(data);
+  const canonicalPath = path.replace(/^\/app\//, "/");
+  const source = `${canonicalPath}&${signed}&${nonceValue}&data=${payload}`;
+  const key = await crypto.subtle.importKey("raw", base64ToBytes(signed) as BufferSource, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = bytesToBase64(new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(source))));
+  let response: Response;
+  try {
+    response = await fetch(`https://${region}api.io.mi.com${path}`, {
+      method: "POST",
+      headers: { "User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded", Cookie: `userId=${session.userId}; serviceToken=${session.serviceToken}; locale=zh_CN; timezone=GMT%2B08%3A00` },
+      body: new URLSearchParams({ data: payload, _nonce: nonceValue, signature }),
+      signal: AbortSignal.timeout(9000),
+    });
+  } catch (error) {
+    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) throw new Error("XIAOMI_CLOUD_TIMEOUT");
+    throw error;
   }
-  return { homes: homes.map((home) => ({ id: home.home_id, name: home.name ?? home.home_name ?? "我的家" })), devices };
+  if (!response.ok) throw new Error(`XIAOMI_CLOUD_HTTP_${response.status}`);
+  const result = parseXiaomiJson(await response.text()) as Record<string, unknown>;
+  if (typeof result.code === "number" && result.code !== 0) throw new Error(`XIAOMI_CLOUD_CODE_${result.code}`);
+  return result;
+}
+
+export async function listDevices(session: XiaomiSession) {
+  let firstError: Error | undefined;
+  try {
+    const homesResponse = await xiaomiRequest(session, "/app/v2/homeroom/gethome", { fg: true, fetch_share: true, fetch_share_dev: true, limit: 300, app_ver: 7 });
+    const result = homesResponse.result as Record<string, unknown> | undefined;
+    const homes = (result?.homelist ?? result?.list ?? []) as Array<Record<string, unknown>>;
+    if (homes.length > 0) {
+      const devices: Array<Record<string, unknown>> = [];
+      for (const home of homes.slice(0, 10)) {
+        const response = await xiaomiRequest(session, "/app/v2/home/home_device_list", { home_owner: home.home_owner, home_id: home.home_id, limit: 200, get_split_device: true, support_smart_home: true });
+        const payload = response.result as Record<string, unknown> | undefined;
+        const entries = (payload?.device_info ?? payload?.list ?? []) as Array<Record<string, unknown>>;
+        for (const device of entries) devices.push({ ...device, homeName: home.name ?? home.home_name ?? "我的家", roomName: device.room_name ?? "未分配" });
+      }
+      return { homes: homes.map((home) => ({ id: home.home_id, name: home.name ?? home.home_name ?? "我的家" })), devices };
+    }
+  } catch (error) {
+    firstError = error instanceof Error ? error : new Error("XIAOMI_DEVICE_SYNC_FAILED");
+  }
+
+  const path = "/app/home/device_list";
+  const payload = { getVirtualModel: false, getHuamiDevices: 0, get_split_device: true, support_smart_home: true };
+  let response: Record<string, unknown>;
+  try {
+    response = await xiaomiRequest(session, path, payload);
+  } catch (encryptedError) {
+    try {
+      response = await signedXiaomiRequest(session, path, payload);
+    } catch (signedError) {
+      const finalError = signedError instanceof Error ? signedError : firstError;
+      console.error("[xiaomi-cloud-sync]", JSON.stringify({ region: session.region, primaryError: firstError?.message, legacyEncryptedError: encryptedError instanceof Error ? encryptedError.message : "UNKNOWN_ERROR", legacySignedError: finalError?.message }));
+      throw finalError ?? firstError ?? new Error("XIAOMI_DEVICE_SYNC_FAILED");
+    }
+  }
+  const result = response.result as Record<string, unknown> | Array<Record<string, unknown>> | undefined;
+  const entries = Array.isArray(result) ? result : ((result?.list ?? result?.device_info ?? []) as Array<Record<string, unknown>>);
+  const devices: Array<Record<string, unknown>> = entries.map((device) => ({ ...device, homeName: device.home_name ?? "我的家", roomName: device.room_name ?? "未分配" }));
+  return { homes: [], devices };
 }

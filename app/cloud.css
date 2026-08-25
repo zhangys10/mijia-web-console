@@ -10,6 +10,7 @@
 .qr-loading small,.qr-error strong{font-size:11px;color:#76818d;font-weight:500}
 .qr-error button{border:0;background:#ff6b2c;color:#fff;border-radius:8px;padding:8px 13px;font-size:10px;cursor:pointer}
 .scan-tip{text-align:center!important;font-size:11px!important;margin:0 0 7px!important;color:#77818c!important}
+.qr-countdown{text-align:center!important;font-size:11px!important;font-variant-numeric:tabular-nums;margin:0 0 7px!important;color:#51606f!important}.qr-countdown.expiring{color:#eb6336!important;font-weight:600}.actions button:disabled,.api>button:disabled{opacity:.7;cursor:wait}
 .qr-link{display:block;text-align:center;font-size:10px;color:#f36b34;text-decoration:none;margin:9px 0}
 .security-note{font-size:9px;color:#88929d;background:#f7f8fa;border-radius:9px;padding:10px 12px;margin-top:14px;text-align:center}
 .connected-info{display:flex;align-items:center;gap:12px;background:#effaf5;border-radius:12px;padding:15px;margin:18px 0}.connected-info>span{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#d7f3e4;color:#25a469}.connected-info strong,.connected-info small{display:block}.connected-info strong{font-size:11px}.connected-info small{font-size:9px;color:#7f8b94;margin-top:4px}
