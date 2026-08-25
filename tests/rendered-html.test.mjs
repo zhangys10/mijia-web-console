@@ -33,14 +33,16 @@ test("renders the Xiaomi smart home dashboard", async () => {
   assert.match(html, /客厅/);
   assert.match(html, /主卧/);
   assert.match(html, /客厅三开/);
+  assert.match(html, /客厅中控/);
   assert.match(html, /主卧中控/);
-  assert.doesNotMatch(html, /客厅吸顶灯/, "switch view should not display controlled lights as peer cards");
+  assert.match(html, /客厅吸顶灯/, "independent smart lights must remain visible beside real living-room hardware");
   assert.doesNotMatch(html, /虚拟开关/, "physical switch cards must never be labelled as virtual");
   assert.match(html, /实体开关/);
+  assert.match(html, /中控屏/);
+  assert.match(html, /智能灯具/);
   assert.match(html, /开关与硬件/);
   assert.match(html, /实际受控设备/);
-  assert.match(html, /物理面板/);
-  assert.match(html, /一个或多个受控设备/);
+  assert.match(html, /按键直接显示绑定灯具/);
   assert.ok(html.indexOf('class="rooms"') < html.indexOf('class="topology-toolbar"'), "room selection should remain above the view switch");
 });
 

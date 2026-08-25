@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildDeviceTopology } from "../lib/device-topology.ts";
-import { classifyDeviceKind, groupControlledDevices, isIndependentSmartDevice, selectDeviceView } from "../lib/device-views.ts";
+import { classifyDeviceKind, groupControlledDevices, isControlDevice, isIndependentSmartDevice, listSwitchChannelTargets, selectDeviceView } from "../lib/device-views.ts";
 import { normalizeMiotSpecification } from "../lib/miot-spec.ts";
 import { analyzeSwitchBindingCapabilities, buildBindingActionParameters, listSwitchBindingTargets, listVisibleControlSources } from "../lib/switch-bindings.ts";
 import { collectXiaomiHomes } from "../lib/xiaomi-cloud.ts";
@@ -350,7 +350,7 @@ test("hardware view exposes real switches, central panels and independent smart 
   const topology = buildDeviceTopology(raw);
   const devices = raw.map(device => ({ ...device, kind: classifyDeviceKind(device.model, device.name), topology: topology.get(device.did) }));
 
-  assert.equal(classifyDeviceKind("vendor.gateway.screen", "主卧中控"), "switch");
+  assert.equal(classifyDeviceKind("vendor.gateway.screen", "主卧中控"), "controller");
   assert.deepEqual(selectDeviceView(devices, "hardware").map(device => device.name), ["主卧中控", "床头开关", "主卧智能灯"]);
 });
 
@@ -367,6 +367,86 @@ test("keeps smart lights behind a real gateway visible as independent hardware",
   assert.equal(isIndependentSmartDevice(devices[1]), true);
   assert.equal(isIndependentSmartDevice(devices[2]), false);
   assert.deepEqual(selectDeviceView(devices, "hardware").map(device => device.name), ["客厅中控", "客厅智能灯具"]);
+});
+
+test("shows every living-room central panel, switch and smart light behind a switch-model panel", () => {
+  const raw = [
+    { did: "center-1", name: "客厅中控", model: "vendor.switch.panel", roomName: "客厅" },
+    { did: "switch-2", name: "客厅三开", model: "vendor.switch.triple", roomName: "客厅" },
+    { did: "smart-3", name: "客厅智能灯具", model: "yeelink.light.mesh", roomName: "客厅", extra: { parent_did: "center-1" } },
+    { did: "load-4", name: "玄关柜灯带", model: "vendor.switch.virtual", roomName: "客厅", extra: { parent_did: "switch-2", channel_index: 1 } },
+  ];
+  const topology = buildDeviceTopology(raw);
+  const devices = raw.map(device => ({ ...device, kind: classifyDeviceKind(device.model, device.name), parentId: topology.get(device.did).parentId, topology: topology.get(device.did) }));
+
+  assert.equal(topology.get("smart-3").relation, "subdevice");
+  assert.equal(topology.get("load-4").relation, "mapped");
+  assert.deepEqual(selectDeviceView(devices, "hardware").map(device => device.name), ["客厅中控", "客厅三开", "客厅智能灯具"]);
+  assert.equal(isIndependentSmartDevice(devices[2]), true);
+  assert.equal(isIndependentSmartDevice(devices[3]), false);
+});
+
+test("recognizes actual home screens, gateways and vendor-specific light names", () => {
+  assert.equal(classifyDeviceKind("vendor.gateway2.mcn001", "客厅设备"), "controller");
+  assert.equal(classifyDeviceKind("vendor.custom.mesh", "客厅家庭屏"), "controller");
+  assert.equal(classifyDeviceKind("vendor.custom.mesh", "客厅智能灯具"), "light");
+  assert.equal(isIndependentSmartDevice({ name: "客厅吸顶灯", kind: "light", detail: "yeelink.light.demo" }), true);
+});
+
+test("infers the real hardware category from the model before controlled-device names", () => {
+  assert.equal(classifyDeviceKind("xiaomi.controller.oh4w", "客厅中控"), "controller");
+  assert.equal(classifyDeviceKind("xiaomi.controller.oh4w", "主卧中间筒灯"), "controller");
+  assert.equal(classifyDeviceKind("xiaomi.controller.oh4w", "玄关柜灯带"), "controller");
+  assert.equal(classifyDeviceKind("xiaomi.switch.triple", "客厅灯具"), "switch");
+  assert.equal(classifyDeviceKind("yeelink.light.ceiling", "客厅中控"), "light");
+  assert.equal(classifyDeviceKind("vendor.switch.virtual", "主卧中间筒灯"), "light");
+});
+
+test("keeps a Xiaomi controller in hardware view even when its reported target type is light", () => {
+  const raw = [
+    { did: "controller-100", name: "主卧中间筒灯", model: "xiaomi.controller.oh4w", type: "light", roomName: "客厅" },
+    { did: "mapped-200", name: "主卧中间筒灯", model: "vendor.switch.virtual", type: "light", roomName: "主卧", extra: { parent_did: "controller-100", channel_index: 2, parent_siid: 3 } },
+    { did: "smart-300", name: "客厅智能灯", model: "yeelink.light.ceiling", type: "light", roomName: "客厅" },
+  ];
+  const topology = buildDeviceTopology(raw);
+  const devices = raw.map(device => ({ ...device, homeId: "home-1", room: device.roomName, kind: classifyDeviceKind(device.model, device.name), parentId: topology.get(device.did).parentId, topology: topology.get(device.did) }));
+
+  assert.equal(devices[0].kind, "controller");
+  assert.equal(isControlDevice(devices[0]), true);
+  assert.equal(topology.get("controller-100").role, "primary");
+  assert.deepEqual(selectDeviceView(devices, "hardware").map(device => [device.did, device.kind]), [["controller-100", "controller"], ["smart-300", "light"]]);
+  assert.deepEqual(selectDeviceView(devices, "controlled").map(device => device.did), ["mapped-200", "smart-300"]);
+});
+
+test("uses each home and real device ID to keep one controller hardware card", () => {
+  const duplicated = [
+    { did: "controller-100", homeId: "home-1", name: "客厅中控", model: "xiaomi.controller.oh4w", kind: "light" },
+    { did: "controller-100", homeId: "home-1", name: "客厅灯带", model: "xiaomi.controller.oh4w", kind: "light" },
+    { did: "controller-100", homeId: "home-2", name: "客厅中控", model: "xiaomi.controller.oh4w", kind: "light" },
+  ];
+
+  assert.deepEqual(selectDeviceView(duplicated, "hardware").map(device => [device.homeId, device.did]), [
+    ["home-1", "controller-100"],
+    ["home-2", "controller-100"],
+  ]);
+  assert.deepEqual(selectDeviceView(duplicated, "controlled"), []);
+});
+
+test("shows each button's ordinary-light names and separately opens real smart lights", () => {
+  const raw = [
+    { did: "panel-1", name: "客厅三开", model: "vendor.switch.triple", roomName: "客厅", extra: { channels: [{ channel_index: 1, target_dids: ["load-2", "smart-3", "smart-3"] }] } },
+    { did: "load-2", name: "玄关柜灯带", model: "vendor.switch.virtual", roomName: "客厅", extra: { parent_did: "panel-1", channel_index: 1 } },
+    { did: "smart-3", name: "客厅智能吸顶灯", model: "yeelink.light.ceiling", roomName: "客厅" },
+  ];
+  const topology = buildDeviceTopology(raw);
+  const devices = raw.map(device => ({ ...device, kind: classifyDeviceKind(device.model, device.name), parentId: topology.get(device.did).parentId, topology: topology.get(device.did) }));
+  const targets = listSwitchChannelTargets(topology.get("panel-1").channels[0], devices);
+
+  assert.deepEqual(targets.map(target => [target.name, target.smart]), [
+    ["玄关柜灯带", false],
+    ["客厅智能吸顶灯", true],
+  ]);
+  assert.equal(targets.filter(target => target.id === "smart-3").length, 1);
 });
 
 test("expands every binding even when several keys belong to the same physical switch", () => {

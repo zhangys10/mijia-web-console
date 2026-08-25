@@ -141,8 +141,11 @@ export function buildDeviceTopology(rawDevices: RawDevice[]) {
 
     const index = numberValue(values, channelKeys), siid = numberValue(values, serviceKeys);
     const parent = parentId ? devices.get(parentId) : undefined;
-    const isSwitch = /switch|panel|remote|key/i.test(String(device.model ?? ""));
-    const parentSwitch = /switch|panel|relay/i.test(String(parent?.model ?? ""));
+    const model = String(device.model ?? "").toLowerCase();
+    const isSwitch = /(?:^|[._-])(?:switch|panel|remote|key|button|controller|gateway\w*|central|screen|hub)(?:[._-]|$)/i.test(model);
+    const parentSwitch = /(?:^|[._-])(?:switch|panel|relay|controller|gateway\w*|central|screen|hub)(?:[._-]|$)/i.test(String(parent?.model ?? ""));
+    const independentLighting = /(?:^|[._-])(?:light|lamp|bulb|strip|ceiling|downlight|spotlight|lighting|lightstrip)(?:[._-]|$)/.test(model)
+      && !/(?:^|[._-])(?:switch|relay|channel|gang|virtual|split)(?:[._-]|$)/.test(model);
     const wireless = wirelessMarker(values);
     const bindings: DeviceBinding[] = [];
     const bindingIds = new Set<string>();
@@ -176,7 +179,7 @@ export function buildDeviceTopology(rawDevices: RawDevice[]) {
       }
     }
 
-    const relation = parentId ? (parentSwitch || wireless || index !== null || siid !== null ? "mapped" : "subdevice") : "none";
+    const relation = parentId ? (!independentLighting && (parentSwitch || wireless || index !== null || siid !== null) ? "mapped" : "subdevice") : "none";
     const entirePanel = isSwitch && (wireless && (index === null || !parentId) || bindings.length > 0 && !parentId && wireless);
     const role = entirePanel ? "secondary-panel" : parentId && relation === "mapped" ? "secondary" : "independent";
     const connectionType = isSwitch ? connectionMarker(values) ?? (wireless ? "wireless" : "wired") : "unknown";
