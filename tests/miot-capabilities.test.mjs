@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { buildDeviceTopology } from "../lib/device-topology.ts";
 import { normalizeMiotSpecification } from "../lib/miot-spec.ts";
 import { collectXiaomiHomes } from "../lib/xiaomi-cloud.ts";
 
@@ -56,4 +57,42 @@ test("retains readable status and precise choice and range metadata", () => {
   assert.deepEqual(result.groups[0].properties[1].range, { min: 1, max: 60, step: 1 });
   assert.equal(result.groups[0].properties[2].label, "已绑定按键");
   assert.equal(result.groups[0].properties[2].writable, false);
+});
+
+test("links a mapped entrance light to its actual three-gang primary button", () => {
+  const topology = buildDeviceTopology([
+    { did: "switch-100", name: "客厅三开", model: "vendor.switch.triple", roomName: "客厅" },
+    { did: "virtual-200", name: "玄关柜灯带", model: "vendor.light.virtual", roomName: "玄关", extra: { parent_did: "switch-100", channel_index: 2, parent_siid: 3 } },
+  ]);
+
+  assert.equal(topology.get("switch-100").role, "primary");
+  assert.equal(topology.get("switch-100").secondaryCount, 1);
+  assert.equal(topology.get("virtual-200").role, "secondary");
+  assert.equal(topology.get("virtual-200").parentName, "客厅三开");
+  assert.equal(topology.get("virtual-200").channelLabel, "按键 2");
+  assert.deepEqual(topology.get("virtual-200").controlledBy.map(item => item.sourceName), ["客厅三开"]);
+});
+
+test("maps one wireless secondary button to multiple independently controlled devices", () => {
+  const topology = buildDeviceTopology([
+    { did: "wireless-100", name: "床头副控面板", model: "vendor.switch.double", roomName: "主卧", extra: { wireless_mode: true, channels: [{ channel_index: 1, target_dids: ["light-201", "light-202"] }] } },
+    { did: "light-201", name: "玄关柜灯带", model: "vendor.light.strip", roomName: "玄关" },
+    { did: "light-202", name: "客厅灯带", model: "vendor.light.strip", roomName: "客厅" },
+  ]);
+
+  assert.equal(topology.get("wireless-100").role, "secondary-panel");
+  assert.deepEqual(topology.get("wireless-100").bindings.map(binding => binding.targetName), ["玄关柜灯带", "客厅灯带"]);
+  assert.deepEqual(topology.get("light-201").controlledBy.map(item => item.sourceRole), ["secondary"]);
+  assert.deepEqual(topology.get("light-202").controlledBy.map(item => item.sourceName), ["床头副控面板"]);
+});
+
+test("discovers child-to-parent control mappings exposed only on the main device", () => {
+  const topology = buildDeviceTopology([
+    { did: "switch-100", name: "客厅三开", model: "vendor.switch.triple", roomName: "客厅", extra: { split_devices: [{ did: "mapped-2", channel_index: 2, siid: 3 }] } },
+    { did: "mapped-2", name: "玄关柜灯带", model: "vendor.light.virtual", roomName: "玄关" },
+  ]);
+
+  assert.equal(topology.get("mapped-2").parentId, "switch-100");
+  assert.equal(topology.get("mapped-2").channelSiid, 3);
+  assert.equal(topology.get("switch-100").role, "primary");
 });

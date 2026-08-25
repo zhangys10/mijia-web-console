@@ -33,6 +33,8 @@ test("renders the Xiaomi smart home dashboard", async () => {
   assert.match(html, /客厅/);
   assert.match(html, /主卧/);
   assert.match(html, /只读/);
+  assert.match(html, /开关与硬件/);
+  assert.match(html, /实际受控设备/);
 });
 
 test("reading or changing device settings requires an authenticated Xiaomi session", async () => {
