@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildDeviceTopology } from "../lib/device-topology.ts";
-import { classifyDeviceKind, groupControlledDevices, inferHardwareRole, isControlDevice, isIndependentSmartDevice, listSwitchChannelTargets, selectDeviceView } from "../lib/device-views.ts";
+import { classifyDeviceKind, findPhysicalDevice, groupControlledDevices, inferHardwareRole, isControlDevice, isIndependentSmartDevice, listSwitchChannelTargets, physicalDeviceId, selectDeviceView } from "../lib/device-views.ts";
 import { normalizeMiotSpecification } from "../lib/miot-spec.ts";
 import { analyzeSwitchBindingCapabilities, buildBindingActionParameters, listSwitchBindingTargets, listVisibleControlSources } from "../lib/switch-bindings.ts";
 import { collectXiaomiHomes, mergeXiaomiDeviceRecords } from "../lib/xiaomi-cloud.ts";
@@ -447,6 +447,29 @@ test("uses each home and real device ID to keep one controller hardware card", (
   assert.deepEqual(selectDeviceView(duplicated, "controlled").map(device => device.name), ["客厅灯带"]);
 });
 
+test("normalizes split-device suffixes without merging complete Xiaomi protocol IDs", () => {
+  assert.equal(physicalDeviceId("93485761.1"), "93485761");
+  assert.equal(physicalDeviceId("93485761.2"), "93485761");
+  assert.equal(physicalDeviceId("lumi.158d0001.2"), "lumi.158d0001");
+  assert.equal(physicalDeviceId("lumi.158d0001"), "lumi.158d0001");
+  assert.equal(physicalDeviceId("blt.3.12345678"), "blt.3.12345678");
+});
+
+test("merges hardware IDs that differ only in the final dot suffix", () => {
+  const devices = [
+    { id: 1, did: "93485761.1", homeId: "home-1", room: "主卧", name: "中间筒灯", model: "xiaomi.controller.oh4w", kind: "light" },
+    { id: 2, did: "93485761.2", homeId: "home-1", room: "主卧", name: "床头筒灯", model: "xiaomi.controller.oh4w", kind: "light" },
+    { id: 3, did: "93485762.1", homeId: "home-1", room: "主卧", name: "衣柜灯带", model: "xiaomi.controller.oh4w", kind: "light" },
+    { id: 4, did: "93485761.3", homeId: "home-2", room: "主卧", name: "走廊筒灯", model: "xiaomi.controller.oh4w", kind: "light" },
+  ];
+
+  const hardware = selectDeviceView(devices, "hardware");
+  assert.equal(hardware.length, 3);
+  assert.deepEqual(hardware.find(device => device.homeId === "home-1" && device.did === "93485761.1").members.map(member => member.did), ["93485761.1", "93485761.2"]);
+  assert.equal(findPhysicalDevice(hardware.filter(device => device.homeId === "home-1"), "93485761.2").did, "93485761.1");
+  assert.deepEqual(selectDeviceView(devices.filter(device => device.homeId === "home-1"), "controlled").map(device => device.name), ["中间筒灯", "床头筒灯", "衣柜灯带"]);
+});
+
 test("shows one controller by physical ID but two logical lamps in the controlled view", () => {
   const devices = [
     { id: 1, did: "bedroom-center-1", homeId: "home-1", room: "主卧", name: "中间筒灯", model: "xiaomi.controller.oh4w", kind: "light" },
@@ -470,6 +493,27 @@ test("groups controlled loads by name and preserves every associated device ID",
   const groups = groupControlledDevices(devices);
   assert.equal(groups.length, 2);
   assert.deepEqual(groups.find(group => group.name === "中间筒灯").members.map(member => member.did), ["center-1", "bedside-left-2", "bedside-right-3"]);
+});
+
+test("finds the same controlled load and all controlling hardware across rooms", () => {
+  const raw = [
+    { did: "living-panel.1", name: "客厅中控", model: "xiaomi.controller.oh4w", roomName: "客厅" },
+    { did: "bedroom-load.1", name: "主卧中间筒灯", model: "vendor.switch.virtual", roomName: "主卧", extra: { parent_did: "living-panel.1", channel_index: 1 } },
+    { did: "remote-panel.1", name: "走廊无线开关", model: "vendor.switch.remote", roomName: "走廊", extra: { wireless_mode: true, channels: [{ channel_index: 2, target_dids: ["bedroom-load.1"] }] } },
+    { did: "remote-panel.2", name: "主卧中间筒灯", model: "vendor.switch.remote", roomName: "走廊" },
+  ];
+  const topology = buildDeviceTopology(raw);
+  const devices = raw.map(device => ({ ...device, room: device.roomName, homeId: "home-1", kind: classifyDeviceKind(device.model, device.name), parentId: topology.get(device.did).parentId, topology: topology.get(device.did) }));
+
+  const actual = groupControlledDevices(selectDeviceView(devices, "controlled"), devices);
+  assert.equal(actual.length, 1);
+  assert.equal(actual[0].room, "主卧");
+  assert.deepEqual(actual[0].members.map(member => member.did), ["bedroom-load.1", "remote-panel.2"]);
+  assert.deepEqual(actual[0].topology.controlledBy.map(source => [source.sourceName, source.sourceRoom, source.connectionType]), [
+    ["客厅中控", "客厅", "wired"],
+    ["走廊无线开关", "走廊", "wireless"],
+  ]);
+  assert.equal(selectDeviceView(devices, "hardware").filter(device => physicalDeviceId(device.did) === "remote-panel").length, 1);
 });
 
 test("shows each button's ordinary-light names and separately opens real smart lights", () => {

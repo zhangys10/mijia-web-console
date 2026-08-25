@@ -14,6 +14,28 @@ const centralControllerModel = /^(?:controller\w*|gateway\w*|central\w*|screen\w
 const switchModel = /^(?:switch\w*|panel\w*|remote\w*|relay\w*|key\w*|button\w*)$/;
 const modelKinds: Record<string, string> = { light: "light", lamp: "lamp", bulb: "light", strip: "light", ceiling: "light", downlight: "light", spotlight: "light", lighting: "light", lightstrip: "light", aircondition: "aircondition", acpartner: "acpartner", airpurifier: "airpurifier", vacuum: "vacuum", fan: "fan", lock: "lock", curtain: "curtain", humidifier: "humidifier", plug: "plug", camera: "camera", sensor: "sensor", switch: "switch", panel: "switch", remote: "switch", relay: "switch", button: "switch", key: "switch", controller: "switch", gateway: "switch", screen: "switch", hub: "switch" };
 
+export function physicalDeviceId(did: string | null | undefined) {
+  const value = did?.trim() ?? "";
+  const separator = value.lastIndexOf(".");
+  if (separator <= 0 || separator === value.length - 1) return value;
+  const prefix = value.slice(0, separator);
+  const segments = value.split(".");
+  // `lumi.<id>` and `blt.<version>.<id>` are complete protocol IDs, not
+  // split-device suffixes. Their own `.1` / `.2` descendants are normalized.
+  if (segments.length === 2 && /^[a-z]+$/i.test(prefix)) return value;
+  if (segments.length === 3 && /^blt$/i.test(segments[0]) && /^\d+$/.test(segments[1])) return value;
+  return prefix;
+}
+
+export function samePhysicalDevice(left: string | null | undefined, right: string | null | undefined) {
+  return Boolean(left && right && physicalDeviceId(left) === physicalDeviceId(right));
+}
+
+export function findPhysicalDevice<T extends ViewDevice>(devices: T[], did: string | null | undefined) {
+  if (!did) return;
+  return devices.find(device => device.did === did) ?? devices.find(device => samePhysicalDevice(device.did, did));
+}
+
 function modelParts(value: string) {
   const normalized = value.trim().toLowerCase();
   const segments = normalized.split(".").filter(Boolean);
@@ -84,7 +106,7 @@ export function listSwitchChannelTargets<T extends ViewDevice>(channel: DeviceCo
   const targets = new Map<string, SwitchChannelTarget<T>>();
   for (const target of channel.targets) {
     if (targets.has(target.id)) continue;
-    const device = devices.find(candidate => candidate.did === target.id);
+    const device = findPhysicalDevice(devices, target.id);
     targets.set(target.id, { id: target.id, name: target.name, room: target.room, device, smart: Boolean(device && isIndependentSmartDevice(device)) });
   }
   return [...targets.values()];
@@ -102,7 +124,7 @@ export function selectDeviceView<T extends ViewDevice>(devices: T[], view: "hard
       const independentLight = (device.kind === "light" || device.kind === "lamp") && isIndependentSmartDevice(device);
       if (!isControlDevice(device) && !independentLight) return;
       if (hardwareRole === "device" && device.topology?.relation === "mapped" && device.parentId && ids.has(device.parentId)) return;
-      const identity = device.did ? `${device.homeId ?? ""}:${device.did}` : `${device.homeId ?? ""}:anonymous:${index}`;
+      const identity = device.did ? `${device.homeId ?? ""}:${physicalDeviceId(device.did)}` : `${device.homeId ?? ""}:anonymous:${index}`;
       const members = groups.get(identity) ?? [];
       members.push(device);
       groups.set(identity, members);
@@ -138,21 +160,60 @@ export function selectDeviceView<T extends ViewDevice>(devices: T[], view: "hard
 
 function normalizedDeviceName(name: string) { return name.trim().replace(/[\s\u3000·•_\-]+/g, "").toLocaleLowerCase(); }
 
-export function groupControlledDevices<T extends ViewDevice>(devices: T[]): Array<ControlledDeviceGroup<T>> {
-  const groups = new Map<string, T[]>();
+function sharesControlIdentity(left: ViewDevice, right: ViewDevice) {
+  const leftIds = [left.did, left.parentId, left.topology?.parentId, ...(left.topology?.controlledBy ?? []).map(source => source.sourceId)].filter((id): id is string => Boolean(id));
+  const rightIds = [right.did, right.parentId, right.topology?.parentId, ...(right.topology?.controlledBy ?? []).map(source => source.sourceId)].filter((id): id is string => Boolean(id));
+  return leftIds.some(leftId => rightIds.some(rightId => samePhysicalDevice(leftId, rightId)));
+}
+
+function relatedControlledDevices(left: ViewDevice, right: ViewDevice) {
+  if (left.homeId !== right.homeId || normalizedDeviceName(left.name) !== normalizedDeviceName(right.name)) return false;
+  if (left.room === right.room || sharesControlIdentity(left, right)) return true;
+  return !isIndependentSmartDevice(left) || !isIndependentSmartDevice(right);
+}
+
+function controlledDeviceRank(device: ViewDevice) {
+  let score = 0;
+  if (device.topology?.controlledBy.some(source => source.connectionType === "wired")) score += 8;
+  if (isIndependentSmartDevice(device)) score += 4;
+  if (device.topology?.relation === "mapped") score += 2;
+  if (device.room && normalizedDeviceName(device.name).includes(normalizedDeviceName(device.room))) score += 1;
+  return score;
+}
+
+export function groupControlledDevices<T extends ViewDevice>(devices: T[], allDevices: T[] = devices): Array<ControlledDeviceGroup<T>> {
+  const groups = new Map<string, T[][]>();
   for (const device of devices) {
-    const key = `${device.homeId ?? ""}:${device.room ?? ""}:${normalizedDeviceName(device.name)}`;
-    const items = groups.get(key) ?? [];
-    items.push(device);
-    groups.set(key, items);
+    const key = `${device.homeId ?? ""}:${normalizedDeviceName(device.name)}`;
+    const buckets = groups.get(key) ?? [];
+    const matches = buckets.filter(items => items.some(item => relatedControlledDevices(item, device)));
+    if (!matches.length) buckets.push([device]);
+    else {
+      matches[0].push(device);
+      for (const matched of matches.slice(1)) {
+        matches[0].push(...matched);
+        buckets.splice(buckets.indexOf(matched), 1);
+      }
+    }
+    groups.set(key, buckets);
   }
-  return [...groups.values()].map(members => {
-    const ranked = [...members].sort((left, right) => Number(Boolean(right.topology?.controlledBy.some(source => source.connectionType === "wired"))) - Number(Boolean(left.topology?.controlledBy.some(source => source.connectionType === "wired"))));
+  return [...groups.values()].flat().map(members => {
+    const ranked = [...members].sort((left, right) => controlledDeviceRank(right) - controlledDeviceRank(left));
     const primary = ranked[0];
     const topology = ranked.map(device => device.topology).find(Boolean) ?? null;
-    if (!topology) return { ...primary, did: undefined, parentId: null, virtual: true, members } as ControlledDeviceGroup<T>;
     const unique = new Map<string, DeviceTopology["controlledBy"][number]>();
     for (const member of ranked) for (const source of member.topology?.controlledBy ?? []) unique.set(`${source.sourceId}:${source.channelIndex}:${source.channelSiid}:${source.connectionType}`, source);
+    for (const controller of allDevices) {
+      if (!controller.did || controller.homeId !== primary.homeId || !isControlDevice(controller)) continue;
+      for (const channel of controller.topology?.channels ?? []) {
+        const matched = channel.targets.some(target => members.some(member => target.id === member.did || samePhysicalDevice(target.id, member.did) && normalizedDeviceName(target.name) === normalizedDeviceName(primary.name)));
+        if (!matched) continue;
+        const connectionType = channel.connectionType === "mixed" ? channel.role === "secondary" ? "wireless" : "wired" : channel.connectionType;
+        const source = { sourceId: controller.did, sourceName: controller.name, sourceRoom: controller.room ?? "未分配", sourceRole: channel.role, channelIndex: channel.channelIndex, channelSiid: channel.channelSiid, viaId: null, viaName: null, targetCount: channel.targets.length, connectionType };
+        unique.set(`${source.sourceId}:${source.channelIndex}:${source.channelSiid}:${source.connectionType}`, source);
+      }
+    }
+    if (!topology) return { ...primary, did: undefined, parentId: null, virtual: true, members } as ControlledDeviceGroup<T>;
     return { ...primary, did: undefined, parentId: null, virtual: true, topology: { ...topology, controlledBy: [...unique.values()] }, members } as ControlledDeviceGroup<T>;
   });
 }

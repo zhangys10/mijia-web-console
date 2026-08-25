@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DeviceControlSource, DeviceTopology } from "../lib/device-topology";
-import { classifyDeviceKind, groupControlledDevices, inferHardwareRole, isControlDevice, isIndependentSmartDevice, listSwitchChannelTargets, selectDeviceView, type HardwareRole, type SwitchChannelTarget } from "../lib/device-views";
+import { classifyDeviceKind, findPhysicalDevice, groupControlledDevices, inferHardwareRole, isControlDevice, isIndependentSmartDevice, listSwitchChannelTargets, samePhysicalDevice, selectDeviceView, type HardwareRole, type SwitchChannelTarget } from "../lib/device-views";
 import { buildBindingActionParameters, listSwitchBindingTargets, listVisibleControlSources, type BindingAction, type SwitchBindingCapability, type SwitchBindingTarget } from "../lib/switch-bindings";
 
 type Device = { id:number;did?:string;name:string;home:string;homeId:string;room:string;kind:string;icon:string;on:boolean;status:string;detail:string;color:string;online?:boolean;parentId?:string|null;urn?:string|null;logicalType?:string;hardwareRole?:HardwareRole;topology?:DeviceTopology|null;virtual?:boolean;members?:Device[] };
@@ -37,7 +37,7 @@ export default function Home(){
   const polling=useRef(false),specRequest=useRef(0);
   const homeDevices=useMemo(()=>devices.filter(device=>device.homeId===selectedHome),[devices,selectedHome]);
   const hardwareDevices=useMemo(()=>selectDeviceView(homeDevices,"hardware"),[homeDevices]);
-  const actualDevices=useMemo(()=>groupControlledDevices(selectDeviceView(homeDevices,"controlled")),[homeDevices]);
+  const actualDevices=useMemo(()=>groupControlledDevices(selectDeviceView(homeDevices,"controlled"),homeDevices),[homeDevices]);
   const viewDevices=useMemo(()=>deviceView==="controlled"?actualDevices:hardwareDevices,[actualDevices,deviceView,hardwareDevices]);
   const rooms=useMemo(()=>["全屋",...Array.from(new Set(homeDevices.map(d=>d.room)))],[homeDevices]);
   const shown=useMemo(()=>room==="全屋"?viewDevices:viewDevices.filter(d=>d.room===room),[viewDevices,room]);
@@ -174,7 +174,7 @@ export default function Home(){
 
   function openMappedDevice(device:Device){
     const parentId=device.parentId??device.topology?.parentId;
-    const parent=device.topology?.relation==="mapped"&&parentId?hardwareDevices.find(item=>item.did===parentId)??homeDevices.find(item=>item.did===parentId):undefined;
+    const parent=device.topology?.relation==="mapped"&&parentId?findPhysicalDevice(hardwareDevices,parentId)??findPhysicalDevice(homeDevices,parentId):undefined;
     if(parent)void openDevice(parent,device);else void openDevice(device);
   }
 
@@ -183,12 +183,12 @@ export default function Home(){
     for(const member of group.members?.length?group.members:[group]){
       if(!member.did)continue;
       const parentId=member.parentId??member.topology?.parentId;
-      const device=hardwareDevices.find(item=>item.did===member.did)??(parentId?hardwareDevices.find(item=>item.did===parentId):undefined)??homeDevices.find(item=>item.did===member.did);
+      const device=findPhysicalDevice(hardwareDevices,member.did)??findPhysicalDevice(hardwareDevices,parentId)??findPhysicalDevice(homeDevices,member.did);
       links.set(member.did,{did:member.did,device,member});
     }
     for(const source of group.topology?.controlledBy??[]){
       if(links.has(source.sourceId))continue;
-      const device=hardwareDevices.find(item=>item.did===source.sourceId)??homeDevices.find(item=>item.did===source.sourceId);
+      const device=findPhysicalDevice(hardwareDevices,source.sourceId)??findPhysicalDevice(homeDevices,source.sourceId);
       links.set(source.sourceId,{did:source.sourceId,device});
     }
     return[...links.values()];
@@ -206,7 +206,7 @@ export default function Home(){
   }
 
   function chooseBoundController(controller:Device){
-    const target=bindingDevice?.members?.find(member=>member.topology?.controlledBy.some(source=>source.sourceId===controller.did))??bindingDevice?.members?.[0];
+    const target=bindingDevice?.members?.find(member=>member.topology?.controlledBy.some(source=>samePhysicalDevice(source.sourceId,controller.did)))??bindingDevice?.members?.[0];
     setBindingDevice(null);
     void openDevice(controller,target);
   }
@@ -231,7 +231,7 @@ export default function Home(){
       <Title title={tab==="设备"?"家庭与设备":"我的设备"} sub={`${homeDevices.filter(d=>d.online!==false).length} 台在线 · ${homeDevices.filter(d=>d.online===false).length} 台离线`} action={`${homes.length} 个家庭`}/>
       <div className="home-tabs">{homes.map(home=><button key={home.id} className={selectedHome===home.id?"active":""} onClick={()=>{setSelectedHome(home.id);setRoom("全屋")}}><span>⌂</span><strong>{home.name}</strong><small>{devices.filter(device=>device.homeId===home.id).length} 台设备</small></button>)}</div>
       <div className="rooms">{rooms.map(item=><button key={item} className={room===item?"active":""} onClick={()=>setRoom(item)}>{item}</button>)}</div>
-      <div className="topology-toolbar"><div className="device-view-switch"><button className={deviceView==="hardware"?"active":""} onClick={()=>setDeviceView("hardware")}>⌘ 开关与硬件</button><button className={deviceView==="controlled"?"active":""} onClick={()=>setDeviceView("controlled")}>◉ 实际受控设备</button></div><small>{deviceView==="hardware"?"实体开关、中控与智能灯具；按键直接显示绑定灯具":"受控设备 → 有线主控 + 所有无线副控"}</small></div>
+      <div className="topology-toolbar"><div className="device-view-switch"><button className={deviceView==="hardware"?"active":""} onClick={()=>setDeviceView("hardware")}>⌘ 开关与硬件</button><button className={deviceView==="controlled"?"active":""} onClick={()=>setDeviceView("controlled")}>◉ 实际受控设备</button></div><small>{deviceView==="hardware"?"同一物理 ID 的不同后缀合并；按键直接显示绑定灯具":"全屋查找关联设备，包含跨房间主控和无线副控"}</small></div>
       {connection.connected&&(topologySummary.targets>0||topologySummary.secondary>0)&&<div className="topology-summary"><span><b>{topologySummary.panels}</b> 台开关／中控</span><span><b>{topologySummary.targets}</b> 个受控目标</span>{topologySummary.wired>0&&<span className="wired-summary"><b>{topologySummary.wired}</b> 条有线回路</span>}{topologySummary.wireless>0&&<span className="wireless-summary"><b>{topologySummary.wireless}</b> 条无线绑定</span>}{topologySummary.fanout>0&&<span className="fanout-summary"><b>{topologySummary.fanout}</b> 个一控多路按键</span>}</div>}
       {groupedRooms.map(group=><section className="room-group" key={`${selectedHome}:${deviceView}:${group.name}`}><div className="room-heading"><strong>{group.name}</strong><span>{group.devices.length} {deviceView==="hardware"?"台实体设备":"个实际目标"}</span></div><section className="devices">{group.devices.map(device=>{
         const channels=deviceView==="hardware"?device.topology?.channels??[]:[];
@@ -239,7 +239,7 @@ export default function Home(){
         return <article key={deviceView==="controlled"?`${device.homeId}:${device.room}:${device.name}`:`${device.homeId}:${device.did??device.id}`} className={`device-card ${deviceView==="controlled"?"virtual-device-card":"hardware-device-card"} ${device.online===false?"offline":""} ${role==="primary"?"primary-device":role==="secondary-panel"?"secondary-panel":""}`} role="button" tabIndex={0} onClick={()=>openDeviceCard(device)} onKeyDown={event=>{if(event.currentTarget===event.target&&(event.key==="Enter"||event.key===" ")){event.preventDefault();openDeviceCard(device)}}}>
           <div className="device-top"><span className={device.color}>{device.icon}</span>{deviceView==="controlled"&&<span className="virtual-badge">受控灯具</span>}</div>
           <div className="device-title-row"><h3>{device.name}</h3>{deviceView==="controlled"?<span className="topology-badge controlled-load">按名称归类</span>:<span className={`topology-badge ${controller?role||"primary":"controlled-load"}`}>{controller?central?"中控屏":"实体开关":"智能灯具"}</span>}</div>{deviceView==="controlled"?<><p>{associated.length||device.members?.length||1} 个关联设备 ID · {sources.length} 个控制来源</p><div className="detail">{device.room} · 点击 ID 跳转到实体配置<b>›</b></div></>:controller?<><p>{channels.length} 个按键 · {targetCount} 个受控目标</p><div className="detail">{device.room} · 点击查看按键与灯具<b>›</b></div></>:<><p>{device.status} · 独立智能设备</p><div className="detail">{device.room} · 点击设置智能灯具<b>›</b></div></>}
-          {deviceView==="controlled"&&associated.length>0&&<div className="associated-device-ids">{associated.map(link=><button type="button" key={link.did} onClick={event=>{event.stopPropagation();openAssociatedDevice(link)}} title={`打开设备 ${link.did} 的配置`}><span>{link.device?.name??"关联设备"}</span><code>{link.did}</code><b>›</b></button>)}</div>}
+          {deviceView==="controlled"&&associated.length>0&&<div className="associated-device-ids">{associated.map(link=><button type="button" key={link.did} onClick={event=>{event.stopPropagation();openAssociatedDevice(link)}} title={`打开${link.device?.room?`${link.device.room}的`:""}设备 ${link.did} 配置`}><span>{link.device?`${link.device.room} · ${link.device.name}`:"关联设备"}</span><code>{link.did}</code><b>›</b></button>)}</div>}
           {deviceView==="controlled"&&<div className="card-binding-summary"><span>{sources.filter(source=>source.connectionType==="wired").length} 有线</span><span>{sources.filter(source=>source.connectionType==="wireless").length} 无线</span><small>查看具体设备卡片</small></div>}
           {deviceView==="hardware"&&channels.length>0&&<div className="card-binding-summary"><span>{channels.length} 个按键</span><span>{channels.reduce((total,channel)=>total+channel.targets.length,0)} 个绑定</span><small>点击查看详情</small></div>}
           {deviceView==="hardware"&&role==="secondary-panel"&&!channels.length&&<div className="card-binding-summary"><small>点击查看无线副控设置</small></div>}
@@ -327,7 +327,7 @@ function TopologyBadge({role,connectionType}:{role:DeviceTopology["role"];connec
 function ControlSources({sources,devices,onOpen}:{sources:DeviceControlSource[];devices?:Device[];onOpen?:(device:Device)=>void}){
   const ordered=[...sources].sort((left,right)=>Number(left.sourceRole!=="primary")-Number(right.sourceRole!=="primary"));
   return <div className="control-sources"><small>控制来源 · {sources.filter(source=>source.connectionType==="wired").length} 有线 / {sources.filter(source=>source.connectionType==="wireless").length} 无线</small>{ordered.map(source=>{
-    const device=devices?.find(item=>item.did===source.sourceId);
+    const device=devices?findPhysicalDevice(devices,source.sourceId):undefined;
     return <button key={`${source.sourceId}:${source.channelIndex}:${source.channelSiid}`} className="control-source-row" type="button" onClick={event=>{event.stopPropagation();if(device&&onOpen)onOpen(device)}} disabled={!device||!onOpen}><span className={`source-role ${source.sourceRole} ${source.connectionType}`}>{source.connectionType==="wired"?"有线主控":"无线副控"}</span><span className="source-identity"><strong>{source.sourceName}</strong>{source.viaName&&<small>经 {source.viaName}</small>}</span><span className="source-channel"><strong>{source.channelIndex!==null?`按键 ${source.channelIndex===0?1:source.channelIndex}`:source.channelSiid!==null?`服务 ${source.channelSiid}`:source.sourceRoom}</strong>{source.targetCount>1&&<small>同时控制 {source.targetCount} 台</small>}</span></button>
   })}</div>
 }
@@ -335,12 +335,12 @@ function ConcreteDeviceCards({group,devices,onController,onMember}:{group:Device
   const sources=listVisibleControlSources(group.topology?.controlledBy??[]);
   const cards=new Map<string,React.ReactNode>();
   for(const source of sources){
-    const device=devices.find(item=>item.did===source.sourceId),channel=source.channelIndex!==null?`按键 ${source.channelIndex===0?1:source.channelIndex}`:source.channelSiid!==null?`服务 ${source.channelSiid}`:"关联按键";
+    const device=findPhysicalDevice(devices,source.sourceId),channel=source.channelIndex!==null?`按键 ${source.channelIndex===0?1:source.channelIndex}`:source.channelSiid!==null?`服务 ${source.channelSiid}`:"关联按键";
     cards.set(source.sourceId,<ConcreteDeviceCard key={source.sourceId} device={device} name={device?.name??source.sourceName} icon="ϟ" tone={source.connectionType==="wired"?"orange":"violet"} label={source.connectionType==="wired"?"有线主控":"无线副控"} note={`${source.sourceRoom} · ${channel} · ID ${source.sourceId}`} onOpen={device?()=>onController(device):undefined}/>);
   }
   for(const member of group.members?.length?group.members:[group]){
     if(!member.did||cards.has(member.did))continue;
-    const parentId=member.parentId??member.topology?.parentId,device=devices.find(item=>item.did===member.did)??(parentId?devices.find(item=>item.did===parentId):undefined),smart=isIndependentSmartDevice(member);
+    const parentId=member.parentId??member.topology?.parentId,device=findPhysicalDevice(devices,member.did)??findPhysicalDevice(devices,parentId),smart=isIndependentSmartDevice(member);
     const onOpen=device&&isControlDevice(device)?()=>onController(device):()=>onMember(member);
     cards.set(member.did,<ConcreteDeviceCard key={member.did} device={device??member} name={device?.name??member.name} icon={device?.icon??member.icon} tone={device?.color??member.color} label={smart?"智能设备":parentId?"映射回路":"关联设备"} note={`ID ${member.did}${device&&device.did!==member.did?` · 配置于 ${device.name}`:""}`} onOpen={onOpen}/>);
   }
@@ -351,12 +351,12 @@ function ConcreteDeviceCard({device,name,icon,tone,label,note,onOpen}:{device?:D
   return <button type="button" className="concrete-device-card" disabled={!onOpen} onClick={event=>{event.stopPropagation();onOpen?.()}}><span className={tone}>{icon}</span><div><strong>{name}</strong><small>{note}</small></div><em>{label}</em>{device&&onOpen&&<b>›</b>}</button>
 }
 function groupChannelMatch(index:number|null,siid:number|null,group:SpecGroup,groups:SpecGroup[]){if(siid!==null)return siid===group.siid;if(index===null)return false;const ordinal=groups.filter(item=>item.name==="switch").findIndex(item=>item.key===group.key);return ordinal>=0&&(index===ordinal+1||index===0&&ordinal===0)}
-function groupRelatedDevices(device:Device,group:SpecGroup,groups:SpecGroup[],devices:Device[]){return devices.filter(item=>item.parentId===device.did&&groupChannelMatch(item.topology?.channelIndex??null,item.topology?.channelSiid??null,group,groups))}
+function groupRelatedDevices(device:Device,group:SpecGroup,groups:SpecGroup[],devices:Device[]){return devices.filter(item=>samePhysicalDevice(item.parentId,device.did)&&groupChannelMatch(item.topology?.channelIndex??null,item.topology?.channelSiid??null,group,groups))}
 function groupBindings(device:Device,group:SpecGroup,groups:SpecGroup[]){return(device.topology?.bindings??[]).filter(binding=>groupChannelMatch(binding.channelIndex,binding.channelSiid,group,groups))}
 function groupDisplayTargets(channel:DeviceTopology["channels"][number]|undefined,mapped:Device[],bindings:DeviceTopology["bindings"],devices:Device[]):SwitchChannelTarget<Device>[]{
   const targets=new Map(listSwitchChannelTargets(channel,devices).map(target=>[target.id,target]));
   for(const item of mapped)if(item.did&&!targets.has(item.did))targets.set(item.did,{id:item.did,name:item.name,room:item.room,device:item,smart:isIndependentSmartDevice(item)});
-  for(const item of bindings)if(!targets.has(item.targetId)){const device=devices.find(candidate=>candidate.did===item.targetId);targets.set(item.targetId,{id:item.targetId,name:item.targetName,room:item.targetRoom,device,smart:Boolean(device&&isIndependentSmartDevice(device))})}
+  for(const item of bindings)if(!targets.has(item.targetId)){const device=findPhysicalDevice(devices,item.targetId);targets.set(item.targetId,{id:item.targetId,name:item.targetName,room:item.targetRoom,device,smart:Boolean(device&&isIndependentSmartDevice(device))})}
   return[...targets.values()];
 }
 function SettingRow({setting,device,values,operating,onApply,onChange}:{setting:Setting;device:Device;values:Record<string,SettingValue>;operating:string;onApply:(setting:Setting,value?:SettingValue)=>void;onChange:(key:string,value:SettingValue)=>void}){
