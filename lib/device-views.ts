@@ -14,6 +14,8 @@ const centralControllerModel = /^(?:controller\w*|gateway\w*|central\w*|screen\w
 const switchModel = /^(?:switch\w*|panel\w*|remote\w*|relay\w*|key\w*|button\w*)$/;
 const modelKinds: Record<string, string> = { light: "light", lamp: "lamp", bulb: "light", strip: "light", ceiling: "light", downlight: "light", spotlight: "light", lighting: "light", lightstrip: "light", aircondition: "aircondition", acpartner: "acpartner", airpurifier: "airpurifier", vacuum: "vacuum", fan: "fan", lock: "lock", curtain: "curtain", humidifier: "humidifier", plug: "plug", camera: "camera", sensor: "sensor", switch: "switch", panel: "switch", remote: "switch", relay: "switch", button: "switch", key: "switch", controller: "switch", gateway: "switch", screen: "switch", hub: "switch" };
 
+function groupedDeviceId(did: string | null | undefined) { return Boolean(did && /^group/i.test(did.trim())); }
+
 export function physicalDeviceId(did: string | null | undefined) {
   const value = did?.trim() ?? "";
   const separator = value.lastIndexOf(".");
@@ -81,6 +83,7 @@ export function classifyDeviceKind(model: string, name: string, logicalType = ""
 }
 
 export function isControlDevice(device: ViewDevice) {
+  if (groupedDeviceId(device.did)) return false;
   const model = device.detail ?? device.model ?? "";
   const hardwareRole = device.hardwareRole ?? inferHardwareRole(model, device.name);
   if (hardwareRole === "controller") return true;
@@ -93,6 +96,7 @@ export function isControlDevice(device: ViewDevice) {
 }
 
 export function isIndependentSmartDevice(device: ViewDevice) {
+  if (groupedDeviceId(device.did)) return false;
   const model = (device.detail ?? device.model ?? "").toLowerCase();
   if (inferHardwareRole(model, device.name) !== "device") return false;
   if (!device.did && !(lightingModel.test(model) && !mappedModel.test(model))) return false;
@@ -120,11 +124,12 @@ export function selectDeviceView<T extends ViewDevice>(devices: T[], view: "hard
   if (view === "hardware") {
     const groups = new Map<string, T[]>();
     devices.forEach((device, index) => {
+      const grouped = groupedDeviceId(device.did);
       const hardwareRole = device.hardwareRole ?? inferHardwareRole(device.detail ?? device.model ?? "", device.name);
       const independentLight = (device.kind === "light" || device.kind === "lamp") && isIndependentSmartDevice(device);
-      if (!isControlDevice(device) && !independentLight) return;
+      if (!grouped && !isControlDevice(device) && !independentLight) return;
       if (hardwareRole === "device" && device.topology?.relation === "mapped" && device.parentId && ids.has(device.parentId)) return;
-      const identity = device.did ? `${device.homeId ?? ""}:${physicalDeviceId(device.did)}` : `${device.homeId ?? ""}:anonymous:${index}`;
+      const identity = device.did ? `${device.homeId ?? ""}:${grouped ? device.did : physicalDeviceId(device.did)}` : `${device.homeId ?? ""}:anonymous:${index}`;
       const members = groups.get(identity) ?? [];
       members.push(device);
       groups.set(identity, members);
@@ -149,6 +154,7 @@ export function selectDeviceView<T extends ViewDevice>(devices: T[], view: "hard
   }
 
   return devices.filter(device => {
+    if (groupedDeviceId(device.did)) return true;
     if ((device.kind === "light" || device.kind === "lamp" || lightingName.test(device.name)) && !controllerName.test(device.name)) return true;
     if (isControlDevice(device)) return false;
     if (device.did && controlledIds.has(device.did)) return true;
@@ -159,6 +165,37 @@ export function selectDeviceView<T extends ViewDevice>(devices: T[], view: "hard
 }
 
 function normalizedDeviceName(name: string) { return name.trim().replace(/[\s\u3000·•_\-]+/g, "").toLocaleLowerCase(); }
+
+function controlledDeviceRoom<T extends ViewDevice>(device: T, allDevices: T[], visited = new Set<ViewDevice>()): string {
+  const fallback = device.room ?? device.topology?.parentRoom ?? "未分配";
+  if (visited.has(device) || isIndependentSmartDevice(device)) return fallback;
+  visited.add(device);
+
+  const homeDevices = allDevices.filter(candidate => candidate.homeId === device.homeId);
+  const primary = device.topology?.controlledBy.find(source => source.connectionType === "wired")
+    ?? device.topology?.controlledBy.find(source => source.sourceRole === "primary");
+  if (primary) {
+    const controller = findPhysicalDevice(homeDevices, primary.sourceId);
+    return controller?.room ?? primary.sourceRoom ?? fallback;
+  }
+
+  const parent = findPhysicalDevice(homeDevices, device.parentId ?? device.topology?.parentId);
+  if (parent && isControlDevice(parent) && parent.topology?.role !== "secondary-panel") return parent.room ?? device.topology?.parentRoom ?? fallback;
+
+  const owners = homeDevices.filter(candidate => isControlDevice(candidate) && samePhysicalDevice(candidate.did, device.did));
+  if (parent && isControlDevice(parent) && !owners.includes(parent)) owners.unshift(parent);
+  for (const owner of owners) {
+    for (const channel of owner.topology?.channels ?? []) {
+      for (const target of channel.targets) {
+        if (normalizedDeviceName(target.name) !== normalizedDeviceName(device.name)) continue;
+        const actual = findPhysicalDevice(homeDevices, target.id);
+        if (actual && actual !== device) return controlledDeviceRoom(actual, allDevices, visited);
+      }
+    }
+  }
+
+  return parent?.room ?? device.topology?.parentRoom ?? fallback;
+}
 
 function controlledDeviceRank(device: ViewDevice) {
   let score = 0;
@@ -172,7 +209,8 @@ function controlledDeviceRank(device: ViewDevice) {
 export function groupControlledDevices<T extends ViewDevice>(devices: T[], allDevices: T[] = devices): Array<ControlledDeviceGroup<T>> {
   const groups = new Map<string, T[]>();
   for (const device of devices) {
-    const key = `${device.homeId ?? ""}:${device.room ?? "未分配"}:${normalizedDeviceName(device.name)}`;
+    const room = controlledDeviceRoom(device, allDevices);
+    const key = `${device.homeId ?? ""}:${room}:${normalizedDeviceName(device.name)}`;
     const members = groups.get(key) ?? [];
     members.push(device);
     groups.set(key, members);
@@ -180,6 +218,7 @@ export function groupControlledDevices<T extends ViewDevice>(devices: T[], allDe
   return [...groups.values()].map(members => {
     const ranked = [...members].sort((left, right) => controlledDeviceRank(right) - controlledDeviceRank(left));
     const primary = ranked[0];
+    const room = controlledDeviceRoom(primary, allDevices);
     const topology = ranked.map(device => device.topology).find(Boolean) ?? null;
     const unique = new Map<string, DeviceTopology["controlledBy"][number]>();
     for (const member of ranked) for (const source of member.topology?.controlledBy ?? []) unique.set(`${source.sourceId}:${source.channelIndex}:${source.channelSiid}:${source.connectionType}`, source);
@@ -193,7 +232,7 @@ export function groupControlledDevices<T extends ViewDevice>(devices: T[], allDe
         unique.set(`${source.sourceId}:${source.channelIndex}:${source.channelSiid}:${source.connectionType}`, source);
       }
     }
-    if (!topology) return { ...primary, did: undefined, parentId: null, virtual: true, members } as ControlledDeviceGroup<T>;
-    return { ...primary, did: undefined, parentId: null, virtual: true, topology: { ...topology, controlledBy: [...unique.values()] }, members } as ControlledDeviceGroup<T>;
+    if (!topology) return { ...primary, room, did: undefined, parentId: null, virtual: true, members } as ControlledDeviceGroup<T>;
+    return { ...primary, room, did: undefined, parentId: null, virtual: true, topology: { ...topology, controlledBy: [...unique.values()] }, members } as ControlledDeviceGroup<T>;
   });
 }

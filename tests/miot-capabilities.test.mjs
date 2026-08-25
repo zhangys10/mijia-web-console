@@ -495,7 +495,7 @@ test("groups controlled loads by name and preserves every associated device ID",
   assert.deepEqual(groups.find(group => group.name === "中间筒灯").members.map(member => member.did), ["center-1", "bedside-left-2", "bedside-right-3"]);
 });
 
-test("groups controlled loads by name and room while finding controllers across rooms", () => {
+test("groups controlled lamps by the wired main-switch room and their own name", () => {
   const raw = [
     { did: "living-panel.1", name: "客厅中控", model: "xiaomi.controller.oh4w", roomName: "客厅" },
     { did: "bedroom-load.1", name: "主卧中间筒灯", model: "vendor.switch.virtual", roomName: "主卧", extra: { parent_did: "living-panel.1", channel_index: 1 } },
@@ -506,16 +506,45 @@ test("groups controlled loads by name and room while finding controllers across 
   const devices = raw.map(device => ({ ...device, room: device.roomName, homeId: "home-1", kind: classifyDeviceKind(device.model, device.name), parentId: topology.get(device.did).parentId, topology: topology.get(device.did) }));
 
   const actual = groupControlledDevices(selectDeviceView(devices, "controlled"), devices);
-  assert.equal(actual.length, 2);
-  const bedroom = actual.find(group => group.room === "主卧");
-  const hallway = actual.find(group => group.room === "走廊");
-  assert.deepEqual(bedroom.members.map(member => member.did), ["bedroom-load.1"]);
-  assert.deepEqual(hallway.members.map(member => member.did), ["remote-panel.2"]);
-  assert.deepEqual(bedroom.topology.controlledBy.map(source => [source.sourceName, source.sourceRoom, source.connectionType]), [
+  assert.equal(actual.length, 1);
+  assert.equal(actual[0].room, "客厅");
+  assert.deepEqual(actual[0].members.map(member => member.did), ["bedroom-load.1", "remote-panel.2"]);
+  assert.deepEqual(actual[0].topology.controlledBy.map(source => [source.sourceName, source.sourceRoom, source.connectionType]), [
     ["客厅中控", "客厅", "wired"],
     ["走廊无线开关", "走廊", "wireless"],
   ]);
   assert.equal(selectDeviceView(devices, "hardware").filter(device => physicalDeviceId(device.did) === "remote-panel").length, 1);
+});
+
+test("keeps same-name lamps separate when their owning switches are in different rooms", () => {
+  const raw = [
+    { did: "living-switch", name: "客厅三开", model: "vendor.switch.triple", roomName: "客厅" },
+    { did: "bedroom-switch", name: "主卧中控", model: "xiaomi.controller.oh4w", roomName: "主卧" },
+    { did: "living-load", name: "中间筒灯", model: "vendor.switch.virtual", roomName: "主卧", extra: { parent_did: "living-switch", channel_index: 1 } },
+    { did: "bedroom-load", name: "中间筒灯", model: "vendor.switch.virtual", roomName: "客厅", extra: { parent_did: "bedroom-switch", channel_index: 2 } },
+  ];
+  const topology = buildDeviceTopology(raw);
+  const devices = raw.map(device => ({ ...device, room: device.roomName, homeId: "home-1", kind: classifyDeviceKind(device.model, device.name), parentId: topology.get(device.did).parentId, topology: topology.get(device.did) }));
+
+  const actual = groupControlledDevices(selectDeviceView(devices, "controlled"), devices);
+
+  assert.equal(actual.length, 2);
+  assert.deepEqual(actual.find(device => device.room === "客厅").members.map(member => member.did), ["living-load"]);
+  assert.deepEqual(actual.find(device => device.room === "主卧").members.map(member => member.did), ["bedroom-load"]);
+});
+
+test("keeps an independent smart lamp in its own room when its gateway is elsewhere", () => {
+  const raw = [
+    { did: "living-gateway", name: "客厅中控", model: "xiaomi.controller.oh4w", roomName: "客厅" },
+    { did: "bedroom-smart-light", name: "主卧智能灯", model: "yeelink.light.ceiling", roomName: "主卧", extra: { parent_did: "living-gateway" } },
+  ];
+  const topology = buildDeviceTopology(raw);
+  const devices = raw.map(device => ({ ...device, room: device.roomName, homeId: "home-1", kind: classifyDeviceKind(device.model, device.name), parentId: topology.get(device.did).parentId, topology: topology.get(device.did) }));
+
+  const actual = groupControlledDevices(selectDeviceView(devices, "controlled"), devices);
+
+  assert.equal(actual.length, 1);
+  assert.equal(actual[0].room, "主卧");
 });
 
 test("shows each button's ordinary-light names and separately opens real smart lights", () => {
