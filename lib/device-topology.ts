@@ -1,9 +1,10 @@
 type RawDevice = Record<string, unknown>;
 
-export type DeviceBinding = { targetId: string; targetName: string; targetRoom: string; channelIndex: number | null; channelSiid: number | null; targetChannelIndex: number | null; targetChannelSiid: number | null; viaId: string | null; viaName: string | null };
-export type DeviceControlSource = { sourceId: string; sourceName: string; sourceRoom: string; sourceRole: "primary" | "secondary"; channelIndex: number | null; channelSiid: number | null; viaId: string | null; viaName: string | null; targetCount: number };
+export type DeviceConnectionType = "wired" | "wireless";
+export type DeviceBinding = { targetId: string; targetName: string; targetRoom: string; channelIndex: number | null; channelSiid: number | null; targetChannelIndex: number | null; targetChannelSiid: number | null; viaId: string | null; viaName: string | null; connectionType: DeviceConnectionType };
+export type DeviceControlSource = { sourceId: string; sourceName: string; sourceRoom: string; sourceRole: "primary" | "secondary"; channelIndex: number | null; channelSiid: number | null; viaId: string | null; viaName: string | null; targetCount: number; connectionType: DeviceConnectionType };
 export type DeviceChannelTarget = { id: string; name: string; room: string; relation: "mapped" | "bound"; controllerCount: number };
-export type DeviceControlChannel = { key: string; label: string; channelIndex: number | null; channelSiid: number | null; role: "primary" | "secondary"; targets: DeviceChannelTarget[] };
+export type DeviceControlChannel = { key: string; label: string; channelIndex: number | null; channelSiid: number | null; role: "primary" | "secondary"; connectionType: DeviceConnectionType | "mixed"; targets: DeviceChannelTarget[] };
 export type DeviceTopology = {
   parentId: string | null;
   parentName: string | null;
@@ -12,6 +13,7 @@ export type DeviceTopology = {
   channelSiid: number | null;
   channelLabel: string | null;
   role: "independent" | "primary" | "secondary" | "secondary-panel";
+  connectionType: DeviceConnectionType | "mixed" | "unknown";
   relation: "none" | "mapped" | "subdevice";
   childCount: number;
   secondaryCount: number;
@@ -67,6 +69,19 @@ function wirelessMarker(values: RawDevice[]) {
     for (const key of ["role", "device_role", "deviceRole", "control_mode", "controlMode", "switch_mode", "mode"]) if (typeof scope[key] === "string" && /slave|secondary|wireless|virtual|mapped|remote/i.test(scope[key] as string)) return true;
   }
   return false;
+}
+
+function connectionMarker(values: RawDevice[]): DeviceConnectionType | undefined {
+  for (const scope of values) {
+    for (const key of ["is_wired", "isWired", "wired", "local_relay", "physical_relay"]) if (scope[key] === true || scope[key] === 1 || scope[key] === "1") return "wired";
+    for (const key of ["is_wireless", "isWireless", "wireless", "wireless_mode", "wirelessMode", "is_slave", "isSlave"]) if (scope[key] === true || scope[key] === 1 || scope[key] === "1") return "wireless";
+    for (const key of ["connection_type", "connectionType", "control_type", "controlType", "control_mode", "controlMode", "switch_mode", "mode", "role"]) {
+      const value = scope[key];
+      if (typeof value !== "string") continue;
+      if (/wireless|remote|slave|secondary/i.test(value)) return "wireless";
+      if (/wired|relay|physical|local|primary/i.test(value)) return "wired";
+    }
+  }
 }
 
 function channelLabel(values: RawDevice[], index: number | null, siid: number | null) {
@@ -156,14 +171,16 @@ export function buildDeviceTopology(rawDevices: RawDevice[]) {
         if (bindingIds.has(bindingKey)) continue;
         bindingIds.add(bindingKey);
         const target = devices.get(targetId)!;
-        bindings.push({ targetId, targetName: String(target.name ?? target.model ?? "受控设备"), targetRoom: String(target.roomName ?? target.room_name ?? "未分配"), channelIndex: itemIndex, channelSiid: itemSiid, targetChannelIndex, targetChannelSiid, viaId: null, viaName: null });
+        const connectionType = connectionMarker(itemScopes) ?? connectionMarker(values) ?? (wireless ? "wireless" : "wired");
+        bindings.push({ targetId, targetName: String(target.name ?? target.model ?? "受控设备"), targetRoom: String(target.roomName ?? target.room_name ?? "未分配"), channelIndex: itemIndex, channelSiid: itemSiid, targetChannelIndex, targetChannelSiid, viaId: null, viaName: null, connectionType });
       }
     }
 
     const relation = parentId ? (parentSwitch || wireless || index !== null || siid !== null ? "mapped" : "subdevice") : "none";
     const entirePanel = isSwitch && (wireless && (index === null || !parentId) || bindings.length > 0 && !parentId && wireless);
     const role = entirePanel ? "secondary-panel" : parentId && relation === "mapped" ? "secondary" : "independent";
-    topologies.set(did, { parentId, parentName: parent ? String(parent.name ?? parent.model ?? "主控设备") : null, parentRoom: parent ? String(parent.roomName ?? parent.room_name ?? "未分配") : null, channelIndex: index, channelSiid: siid, channelLabel: channelLabel(values, index, siid), role, relation, childCount: 0, secondaryCount: 0, bindings, controlledBy: [], channels: [] });
+    const connectionType = isSwitch ? connectionMarker(values) ?? (wireless ? "wireless" : "wired") : "unknown";
+    topologies.set(did, { parentId, parentName: parent ? String(parent.name ?? parent.model ?? "主控设备") : null, parentRoom: parent ? String(parent.roomName ?? parent.room_name ?? "未分配") : null, channelIndex: index, channelSiid: siid, channelLabel: channelLabel(values, index, siid), role, connectionType, relation, childCount: 0, secondaryCount: 0, bindings, controlledBy: [], channels: [] });
   }
 
   for (const topology of topologies.values()) {
@@ -198,30 +215,34 @@ export function buildDeviceTopology(rawDevices: RawDevice[]) {
   for (const [did, topology] of topologies) {
     if (topology.parentId && topology.relation === "mapped") {
       const parent = devices.get(topology.parentId)!;
-      topology.controlledBy.push({ sourceId: topology.parentId, sourceName: String(parent.name ?? parent.model ?? "主控设备"), sourceRoom: String(parent.roomName ?? parent.room_name ?? "未分配"), sourceRole: "primary", channelIndex: topology.channelIndex, channelSiid: topology.channelSiid, viaId: null, viaName: null, targetCount: 1 });
+      topology.controlledBy.push({ sourceId: topology.parentId, sourceName: String(parent.name ?? parent.model ?? "主控设备"), sourceRoom: String(parent.roomName ?? parent.room_name ?? "未分配"), sourceRole: "primary", channelIndex: topology.channelIndex, channelSiid: topology.channelSiid, viaId: null, viaName: null, targetCount: 1, connectionType: "wired" });
     }
     const source = devices.get(did)!;
     for (const binding of topology.bindings) {
       const target = topologies.get(binding.targetId);
       if (!target || target.controlledBy.some(item => item.sourceId === did && item.channelIndex === binding.channelIndex && item.channelSiid === binding.channelSiid)) continue;
       const targetCount = topology.bindings.filter(item => channelKey(item.channelIndex, item.channelSiid) === channelKey(binding.channelIndex, binding.channelSiid)).length;
-      target.controlledBy.push({ sourceId: did, sourceName: String(source.name ?? source.model ?? "副控设备"), sourceRoom: String(source.roomName ?? source.room_name ?? "未分配"), sourceRole: topology.role === "secondary-panel" || topology.role === "secondary" ? "secondary" : "primary", channelIndex: binding.channelIndex, channelSiid: binding.channelSiid, viaId: binding.viaId, viaName: binding.viaName, targetCount });
+      target.controlledBy.push({ sourceId: did, sourceName: String(source.name ?? source.model ?? "副控设备"), sourceRoom: String(source.roomName ?? source.room_name ?? "未分配"), sourceRole: binding.connectionType === "wireless" ? "secondary" : "primary", channelIndex: binding.channelIndex, channelSiid: binding.channelSiid, viaId: binding.viaId, viaName: binding.viaName, targetCount, connectionType: binding.connectionType });
     }
   }
 
   for (const [did, topology] of topologies) {
     const channels = new Map<string, DeviceControlChannel>();
-    const append = (index: number | null, siid: number | null, targetId: string, relation: "mapped" | "bound", label?: string | null) => {
+    const append = (index: number | null, siid: number | null, targetId: string, relation: "mapped" | "bound", connectionType: DeviceConnectionType, label?: string | null) => {
       const key = channelKey(index, siid);
-      const channel = channels.get(key) ?? { key, label: label ?? sourceChannelLabel(index, siid), channelIndex: index, channelSiid: siid, role: topology.role === "secondary-panel" || topology.role === "secondary" ? "secondary" as const : "primary" as const, targets: [] };
+      const channel = channels.get(key) ?? { key, label: label ?? sourceChannelLabel(index, siid), channelIndex: index, channelSiid: siid, role: connectionType === "wireless" ? "secondary" as const : "primary" as const, connectionType, targets: [] };
+      if (channel.connectionType !== connectionType) { channel.connectionType = "mixed"; channel.role = "primary"; }
       const target = devices.get(targetId);
       if (!target || channel.targets.some(item => item.id === targetId)) return;
       channel.targets.push({ id: targetId, name: String(target.name ?? target.model ?? "受控设备"), room: String(target.roomName ?? target.room_name ?? "未分配"), relation, controllerCount: topologies.get(targetId)?.controlledBy.length ?? 0 });
       channels.set(key, channel);
     };
-    for (const [targetId, target] of topologies) if (target.parentId === did && target.relation === "mapped") append(target.channelIndex, target.channelSiid, targetId, "mapped", target.channelLabel);
-    for (const binding of topology.bindings) append(binding.channelIndex, binding.channelSiid, binding.targetId, "bound");
+    for (const [targetId, target] of topologies) if (target.parentId === did && target.relation === "mapped") append(target.channelIndex, target.channelSiid, targetId, "mapped", "wired", target.channelLabel);
+    for (const binding of topology.bindings) append(binding.channelIndex, binding.channelSiid, binding.targetId, "bound", binding.connectionType);
     topology.channels = [...channels.values()].sort((left, right) => (left.channelIndex ?? left.channelSiid ?? 999) - (right.channelIndex ?? right.channelSiid ?? 999));
+    const types = new Set<DeviceConnectionType>(topology.channels.flatMap(channel => channel.connectionType === "mixed" ? ["wired", "wireless"] as DeviceConnectionType[] : [channel.connectionType]));
+    if (types.size > 1) topology.connectionType = "mixed";
+    else if (types.size === 1) topology.connectionType = [...types][0];
   }
   return topologies;
 }

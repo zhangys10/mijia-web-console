@@ -37,6 +37,7 @@ test("renders the Xiaomi smart home dashboard", async () => {
   assert.match(html, /实际受控设备/);
   assert.match(html, /物理面板/);
   assert.match(html, /一个或多个受控设备/);
+  assert.ok(html.indexOf('class="rooms"') < html.indexOf('class="topology-toolbar"'), "room selection should remain above the view switch");
 });
 
 test("reading or changing device settings requires an authenticated Xiaomi session", async () => {

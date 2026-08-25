@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildDeviceTopology } from "../lib/device-topology.ts";
+import { classifyDeviceKind, selectDeviceView } from "../lib/device-views.ts";
 import { normalizeMiotSpecification } from "../lib/miot-spec.ts";
 import { collectXiaomiHomes } from "../lib/xiaomi-cloud.ts";
 
@@ -71,6 +72,7 @@ test("links a mapped entrance light to its actual three-gang primary button", ()
   assert.equal(topology.get("virtual-200").parentName, "客厅三开");
   assert.equal(topology.get("virtual-200").channelLabel, "按键 2");
   assert.deepEqual(topology.get("virtual-200").controlledBy.map(item => item.sourceName), ["客厅三开"]);
+  assert.equal(topology.get("virtual-200").controlledBy[0].connectionType, "wired");
   assert.deepEqual(topology.get("switch-100").channels.map(channel => ({ label: channel.label, targets: channel.targets.map(target => target.name) })), [{ label: "按键 2", targets: ["玄关柜灯带"] }]);
 });
 
@@ -84,9 +86,11 @@ test("maps one wireless secondary button to multiple independently controlled de
   assert.equal(topology.get("wireless-100").role, "secondary-panel");
   assert.deepEqual(topology.get("wireless-100").bindings.map(binding => binding.targetName), ["玄关柜灯带", "客厅灯带"]);
   assert.deepEqual(topology.get("light-201").controlledBy.map(item => item.sourceRole), ["secondary"]);
+  assert.equal(topology.get("light-201").controlledBy[0].connectionType, "wireless");
   assert.deepEqual(topology.get("light-202").controlledBy.map(item => item.sourceName), ["床头副控面板"]);
   assert.equal(topology.get("wireless-100").channels.length, 1);
   assert.equal(topology.get("wireless-100").channels[0].targets.length, 2);
+  assert.equal(topology.get("wireless-100").channels[0].connectionType, "wireless");
   assert.equal(topology.get("light-201").controlledBy[0].targetCount, 2);
 });
 
@@ -125,6 +129,7 @@ test("keeps a wired switch primary when it exposes bound loads without a wireles
   assert.equal(topology.get("switch-100").channels[0].role, "primary");
   assert.equal(topology.get("switch-100").channels[0].targets.length, 2);
   assert.deepEqual(topology.get("light-201").controlledBy.map(item => item.sourceRole), ["primary"]);
+  assert.equal(topology.get("switch-100").channels[0].connectionType, "wired");
 });
 
 test("does not fabricate a target when a wireless-only switch does not publish bindings", () => {
@@ -136,4 +141,73 @@ test("does not fabricate a target when a wireless-only switch does not publish b
   assert.equal(topology.get("remote-300").role, "secondary-panel");
   assert.deepEqual(topology.get("remote-300").channels, []);
   assert.deepEqual(topology.get("light-201").controlledBy, []);
+});
+
+test("keeps a bedroom light strip visible even when Xiaomi reports a switch model", () => {
+  const raw = [
+    { did: "switch-100", name: "卧室三开", model: "vendor.switch.triple", roomName: "卧室" },
+    { did: "light-200", name: "卧室灯带", model: "vendor.switch.virtual", roomName: "卧室" },
+  ];
+  const topology = buildDeviceTopology(raw);
+  const devices = raw.map(device => ({ ...device, kind: classifyDeviceKind(device.model, device.name), topology: topology.get(device.did) }));
+
+  assert.equal(classifyDeviceKind("vendor.switch.virtual", "卧室灯带"), "light");
+  assert.equal(classifyDeviceKind("vendor.switch.triple", "卧室三开"), "switch");
+  assert.deepEqual(selectDeviceView(devices, "controlled").map(device => device.name), ["卧室灯带"]);
+});
+
+test("hardware view keeps actual controlled devices nested below their switch only", () => {
+  const raw = [
+    { did: "switch-100", name: "卧室三开", model: "vendor.switch.triple", roomName: "卧室", extra: { channels: [{ channel_index: 1, target_dids: ["light-200"] }] } },
+    { did: "light-200", name: "卧室灯带", model: "vendor.switch.virtual", roomName: "卧室" },
+  ];
+  const topology = buildDeviceTopology(raw);
+  const devices = raw.map(device => ({ ...device, kind: classifyDeviceKind(device.model, device.name), topology: topology.get(device.did) }));
+
+  assert.deepEqual(selectDeviceView(devices, "hardware").map(device => device.name), ["卧室三开"]);
+  assert.deepEqual(topology.get("switch-100").channels[0].targets.map(target => target.name), ["卧室灯带"]);
+  assert.deepEqual(selectDeviceView(devices, "controlled").map(device => device.name), ["卧室灯带"]);
+});
+
+test("hardware view hides a mapped cross-room load while retaining the secondary panel", () => {
+  const raw = [
+    { did: "main-100", name: "客厅三开", model: "vendor.switch.triple", roomName: "客厅" },
+    { did: "bed-200", name: "卧室灯带", model: "vendor.switch.virtual", roomName: "卧室", extra: { parent_did: "main-100", channel_index: 2 } },
+    { did: "remote-300", name: "床头副控面板", model: "vendor.switch.double", roomName: "卧室", extra: { wireless_mode: true, channels: [{ channel_index: 1, target_dids: ["bed-200"] }] } },
+  ];
+  const topology = buildDeviceTopology(raw);
+  const devices = raw.map(device => ({ ...device, kind: classifyDeviceKind(device.model, device.name), parentId: topology.get(device.did).parentId, topology: topology.get(device.did) }));
+
+  assert.deepEqual(selectDeviceView(devices, "hardware").map(device => device.name), ["客厅三开", "床头副控面板"]);
+  assert.deepEqual(selectDeviceView(devices, "controlled").map(device => device.name), ["卧室灯带"]);
+  assert.deepEqual(topology.get("bed-200").controlledBy.map(source => source.sourceName), ["客厅三开", "床头副控面板"]);
+});
+
+test("distinguishes the wired main-bedroom control from wireless bedside controls", () => {
+  const raw = [
+    { did: "center-100", name: "主卧中控", model: "vendor.switch.triple", roomName: "主卧" },
+    { did: "light-200", name: "主卧中间筒灯", model: "vendor.switch.virtual", roomName: "主卧", extra: { parent_did: "center-100", channel_index: 2, parent_siid: 3 } },
+    { did: "bed-300", name: "床头开关", model: "vendor.switch.double", roomName: "主卧", extra: { wireless_mode: true, channels: [{ channel_index: 1, target_dids: ["light-200"] }] } },
+  ];
+  const topology = buildDeviceTopology(raw);
+  const devices = raw.map(device => ({ ...device, kind: classifyDeviceKind(device.model, device.name), parentId: topology.get(device.did).parentId, topology: topology.get(device.did) }));
+
+  assert.equal(classifyDeviceKind("vendor.switch.virtual", "主卧中间筒灯"), "light");
+  assert.deepEqual(topology.get("light-200").controlledBy.map(source => [source.sourceName, source.connectionType]), [["主卧中控", "wired"], ["床头开关", "wireless"]]);
+  assert.equal(topology.get("center-100").channels[0].connectionType, "wired");
+  assert.equal(topology.get("bed-300").channels[0].connectionType, "wireless");
+  assert.deepEqual(selectDeviceView(devices, "hardware").map(device => device.name), ["主卧中控", "床头开关"]);
+  assert.deepEqual(selectDeviceView(devices, "controlled").map(device => device.name), ["主卧中间筒灯"]);
+});
+
+test("classifies separate wired and wireless keys on the same physical panel", () => {
+  const topology = buildDeviceTopology([
+    { did: "panel-100", name: "主卧中控", model: "vendor.switch.triple", roomName: "主卧", extra: { channels: [{ channel_index: 2, wireless_mode: true, target_dids: ["lamp-300"] }] } },
+    { did: "lamp-200", name: "主卧中间筒灯", model: "vendor.switch.virtual", roomName: "主卧", extra: { parent_did: "panel-100", channel_index: 1 } },
+    { did: "lamp-300", name: "床头灯带", model: "vendor.light.strip", roomName: "主卧" },
+  ]);
+
+  assert.equal(topology.get("panel-100").connectionType, "mixed");
+  assert.deepEqual(topology.get("panel-100").channels.map(channel => channel.connectionType), ["wired", "wireless"]);
+  assert.equal(topology.get("lamp-300").controlledBy[0].sourceRole, "secondary");
 });
