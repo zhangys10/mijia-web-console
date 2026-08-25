@@ -15,6 +15,22 @@ export async function GET(request: NextRequest) {
     const value = (await cookies()).get("xiaomi_session")?.value;
     if (!value) return NextResponse.json({ error: "XIAOMI_NOT_CONNECTED" }, { status: 401 });
     const did = request.nextUrl.searchParams.get("did");
+    const properties = request.nextUrl.searchParams.get("properties");
+    if (properties) {
+      if (!did) return NextResponse.json({ error: "INVALID_DEVICE_COMMAND" }, { status: 400 });
+      const mappings = properties.split(",").map(mapping => mapping.split(".").map(Number));
+      if (mappings.length > 40 || mappings.some(mapping => mapping.length !== 2 || mapping.some(item => !Number.isInteger(item) || item < 1))) return NextResponse.json({ error: "INVALID_PROPERTY_MAPPING" }, { status: 400 });
+      const response = await xiaomiRequest(await unseal<XiaomiSession>(value), "/app/miotspec/prop/get", { params: mappings.map(([siid, piid]) => ({ did, siid, piid })) });
+      if (!Array.isArray(response.result)) throw new Error("XIAOMI_DEVICE_RESPONSE_INVALID");
+      const values: Record<string, unknown> = {};
+      const errors: Record<string, number> = {};
+      for (const entry of response.result as Array<Record<string, unknown>>) {
+        const key = `${entry.siid}.${entry.piid}`;
+        if (typeof entry.code === "number" && entry.code !== 0) errors[key] = entry.code;
+        else values[key] = entry.value;
+      }
+      return NextResponse.json({ ok: true, values, errors });
+    }
     const siid = Number(request.nextUrl.searchParams.get("siid") ?? 2);
     const piid = Number(request.nextUrl.searchParams.get("piid") ?? 1);
     if (!did || !Number.isInteger(siid) || !Number.isInteger(piid) || siid < 1 || piid < 1) return NextResponse.json({ error: "INVALID_DEVICE_COMMAND" }, { status: 400 });

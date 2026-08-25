@@ -214,29 +214,54 @@ async function signedXiaomiRequest(session: XiaomiSession, path: string, data: R
   return result;
 }
 
+export function collectXiaomiHomes(result: Record<string, unknown> | undefined) {
+  const homes: Array<Record<string, unknown>> = [];
+  const collections = [result?.homelist, result?.list, result?.home_list, result?.homes, result?.share_home_list, result?.shared_homelist, result?.share_homelist];
+  const seenHomes = new Set<string>();
+  for (const collection of collections) {
+    if (!Array.isArray(collection)) continue;
+    for (const candidate of collection as Array<Record<string, unknown>>) {
+      const id = String(candidate.home_id ?? candidate.id ?? "");
+      if (!id || seenHomes.has(id)) continue;
+      seenHomes.add(id);
+      homes.push(candidate);
+    }
+  }
+  return homes;
+}
+
 export async function listDevices(session: XiaomiSession) {
   let firstError: Error | undefined;
+  let homes: Array<Record<string, unknown>> = [];
+  const primaryDevices: Array<Record<string, unknown>> = [];
+  const homeByDevice = new Map<string, { id: string; name: string; room: string }>();
   try {
     const homesResponse = await xiaomiRequest(session, "/app/v2/homeroom/gethome", { fg: true, fetch_share: true, fetch_share_dev: true, limit: 300, app_ver: 7 });
     const result = homesResponse.result as Record<string, unknown> | undefined;
-    const homes = (result?.homelist ?? result?.list ?? []) as Array<Record<string, unknown>>;
+    homes = collectXiaomiHomes(result);
     if (homes.length > 0) {
-      const devices: Array<Record<string, unknown>> = [];
       for (const home of homes.slice(0, 10)) {
-        const response = await xiaomiRequest(session, "/app/v2/home/home_device_list", { home_owner: home.home_owner, home_id: home.home_id, limit: 200, get_split_device: true, support_smart_home: true });
-        const payload = response.result as Record<string, unknown> | undefined;
-        const entries = (payload?.device_info ?? payload?.list ?? []) as Array<Record<string, unknown>>;
+        const homeId = String(home.home_id ?? home.id ?? "");
+        const homeName = String(home.name ?? home.home_name ?? "我的家");
         const roomEntries = (home.roomlist ?? home.room_info ?? home.rooms ?? []) as Array<Record<string, unknown>>;
         const roomByDevice = new Map<string, string>();
         const roomById = new Map<string, string>();
         for (const room of roomEntries) {
           const name = String(room.name ?? room.room_name ?? "未分配");
           roomById.set(String(room.id ?? room.room_id ?? ""), name);
-          for (const did of (room.dids ?? room.did_list ?? []) as unknown[]) roomByDevice.set(String(did), name);
+          for (const did of (room.dids ?? room.did_list ?? []) as unknown[]) { roomByDevice.set(String(did), name); homeByDevice.set(String(did), { id: homeId, name: homeName, room: name }); }
         }
-        for (const device of entries) devices.push({ ...device, homeId: String(home.home_id ?? ""), homeName: home.name ?? home.home_name ?? "我的家", roomName: device.room_name ?? roomByDevice.get(String(device.did)) ?? roomById.get(String(device.room_id ?? "")) ?? "未分配" });
+        for (const did of (home.dids ?? home.did_list ?? []) as unknown[]) if (!homeByDevice.has(String(did))) homeByDevice.set(String(did), { id: homeId, name: homeName, room: "未分配" });
+        try {
+          const response = await xiaomiRequest(session, "/app/v2/home/home_device_list", { home_owner: home.home_owner ?? home.owner_id ?? session.userId, home_id: home.home_id ?? home.id, limit: 200, get_split_device: true, support_smart_home: true });
+          const payload = response.result as Record<string, unknown> | undefined;
+          const entries = (payload?.device_info ?? payload?.list ?? payload?.devices ?? []) as Array<Record<string, unknown>>;
+          for (const device of entries) primaryDevices.push({ ...device, homeId, homeName, roomName: device.room_name ?? roomByDevice.get(String(device.did)) ?? roomById.get(String(device.room_id ?? "")) ?? "未分配" });
+        } catch (error) {
+          if (!firstError) firstError = error instanceof Error ? error : new Error("XIAOMI_DEVICE_SYNC_FAILED");
+        }
       }
-      return { homes: homes.map((home) => ({ id: String(home.home_id ?? ""), name: String(home.name ?? home.home_name ?? "我的家") })), devices };
+      if (!firstError) return { homes: homes.map((home) => ({ id: String(home.home_id ?? home.id ?? ""), name: String(home.name ?? home.home_name ?? "我的家") })), devices: primaryDevices };
     }
   } catch (error) {
     firstError = error instanceof Error ? error : new Error("XIAOMI_DEVICE_SYNC_FAILED");
@@ -251,6 +276,7 @@ export async function listDevices(session: XiaomiSession) {
     try {
       response = await signedXiaomiRequest(session, path, payload);
     } catch (signedError) {
+      if (primaryDevices.length > 0) return { homes: homes.map(home => ({ id: String(home.home_id ?? home.id ?? ""), name: String(home.name ?? home.home_name ?? "我的家") })), devices: primaryDevices };
       const finalError = signedError instanceof Error ? signedError : firstError;
       console.error("[xiaomi-cloud-sync]", JSON.stringify({ region: session.region, primaryError: firstError?.message, legacyEncryptedError: encryptedError instanceof Error ? encryptedError.message : "UNKNOWN_ERROR", legacySignedError: finalError?.message }));
       throw finalError ?? firstError ?? new Error("XIAOMI_DEVICE_SYNC_FAILED");
@@ -258,8 +284,18 @@ export async function listDevices(session: XiaomiSession) {
   }
   const result = response.result as Record<string, unknown> | Array<Record<string, unknown>> | undefined;
   const entries = Array.isArray(result) ? result : ((result?.list ?? result?.device_info ?? []) as Array<Record<string, unknown>>);
-  const devices: Array<Record<string, unknown>> = entries.map((device) => ({ ...device, homeId: String(device.home_id ?? "default"), homeName: device.home_name ?? "我的家", roomName: device.room_name ?? "未分配" }));
+  const legacyDevices: Array<Record<string, unknown>> = entries.map((device) => {
+    const assignment = homeByDevice.get(String(device.did));
+    const candidate = homes.find(home => String(home.home_id ?? home.id ?? "") === String(device.home_id ?? ""));
+    const fallbackHome = homes[0];
+    return { ...device, homeId: String(device.home_id ?? assignment?.id ?? fallbackHome?.home_id ?? fallbackHome?.id ?? "default"), homeName: device.home_name ?? assignment?.name ?? candidate?.name ?? candidate?.home_name ?? fallbackHome?.name ?? "我的家", roomName: device.room_name ?? assignment?.room ?? "未分配" };
+  });
+  const devicesById = new Map<string, Record<string, unknown>>();
+  for (const device of legacyDevices) devicesById.set(String(device.did), device);
+  for (const device of primaryDevices) devicesById.set(String(device.did), device);
+  const devices = [...devicesById.values()];
   const homeMap = new Map<string, { id: string; name: string }>();
+  for (const home of homes) homeMap.set(String(home.home_id ?? home.id ?? ""), { id: String(home.home_id ?? home.id ?? ""), name: String(home.name ?? home.home_name ?? "我的家") });
   for (const device of devices) homeMap.set(String(device.homeId), { id: String(device.homeId), name: String(device.homeName) });
   return { homes: [...homeMap.values()], devices };
 }

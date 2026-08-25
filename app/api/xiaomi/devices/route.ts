@@ -11,7 +11,8 @@ export async function GET() {
       did: String(device.did ?? ""), name: String(device.name ?? device.model ?? "未命名设备"), model: String(device.model ?? ""),
       online: Boolean(device.isOnline ?? device.is_online ?? device.online), room: String(device.roomName ?? "未分配"),
       homeId: String(device.homeId ?? "default"), home: String(device.homeName ?? "我的家"), roomId: String(device.room_id ?? ""),
-      icon: device.icon ?? null, parentId: device.parent_id ?? device.parentId ?? device.pid ?? null,
+      icon: device.icon ?? null, parentId: device.parent_id ?? device.parentId ?? null,
+      urn: typeof device.urn === "string" ? device.urn : typeof device.spec_type === "string" ? device.spec_type : typeof device.miot_type === "string" ? device.miot_type : null,
     }));
     return NextResponse.json({ homes: result.homes, devices });
   } catch (error) {

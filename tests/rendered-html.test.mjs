@@ -44,6 +44,7 @@ test("reading or changing device settings requires an authenticated Xiaomi sessi
 
   for (const request of [
     new Request("http://localhost/api/xiaomi/control?did=123&siid=2&piid=1"),
+    new Request("http://localhost/api/xiaomi/control?did=123&properties=2.1,3.1,4.1"),
     new Request("http://localhost/api/xiaomi/control", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -54,6 +55,20 @@ test("reading or changing device settings requires an authenticated Xiaomi sessi
     assert.equal(response.status, 401);
     assert.deepEqual(await response.json(), { error: "XIAOMI_NOT_CONNECTED" });
   }
+});
+
+test("device capability discovery requires an authenticated Xiaomi session", async () => {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("test", `spec-${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const response = await worker.fetch(
+    new Request("http://localhost/api/xiaomi/spec?model=vendor.switch.triple"),
+    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
+    { waitUntil() {}, passThroughOnException() {} },
+  );
+
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { error: "XIAOMI_NOT_CONNECTED" });
 });
 
 test("device synchronization requires an authenticated Xiaomi session", async () => {
