@@ -30,6 +30,30 @@ test("renders the Xiaomi smart home dashboard", async () => {
   assert.match(html, /<title>米家 Web 控制台<\/title>/);
   assert.match(html, /扫码连接米家/);
   assert.match(html, /我的设备/);
+  assert.match(html, /客厅/);
+  assert.match(html, /主卧/);
+  assert.match(html, /只读/);
+});
+
+test("reading or changing device settings requires an authenticated Xiaomi session", async () => {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("test", `control-${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
+  const context = { waitUntil() {}, passThroughOnException() {} };
+
+  for (const request of [
+    new Request("http://localhost/api/xiaomi/control?did=123&siid=2&piid=1"),
+    new Request("http://localhost/api/xiaomi/control", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ did: "123", siid: 2, piid: 1, value: true }),
+    }),
+  ]) {
+    const response = await worker.fetch(request, env, context);
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: "XIAOMI_NOT_CONNECTED" });
+  }
 });
 
 test("device synchronization requires an authenticated Xiaomi session", async () => {

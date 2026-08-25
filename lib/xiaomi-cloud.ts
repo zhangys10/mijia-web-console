@@ -226,9 +226,17 @@ export async function listDevices(session: XiaomiSession) {
         const response = await xiaomiRequest(session, "/app/v2/home/home_device_list", { home_owner: home.home_owner, home_id: home.home_id, limit: 200, get_split_device: true, support_smart_home: true });
         const payload = response.result as Record<string, unknown> | undefined;
         const entries = (payload?.device_info ?? payload?.list ?? []) as Array<Record<string, unknown>>;
-        for (const device of entries) devices.push({ ...device, homeName: home.name ?? home.home_name ?? "我的家", roomName: device.room_name ?? "未分配" });
+        const roomEntries = (home.roomlist ?? home.room_info ?? home.rooms ?? []) as Array<Record<string, unknown>>;
+        const roomByDevice = new Map<string, string>();
+        const roomById = new Map<string, string>();
+        for (const room of roomEntries) {
+          const name = String(room.name ?? room.room_name ?? "未分配");
+          roomById.set(String(room.id ?? room.room_id ?? ""), name);
+          for (const did of (room.dids ?? room.did_list ?? []) as unknown[]) roomByDevice.set(String(did), name);
+        }
+        for (const device of entries) devices.push({ ...device, homeId: String(home.home_id ?? ""), homeName: home.name ?? home.home_name ?? "我的家", roomName: device.room_name ?? roomByDevice.get(String(device.did)) ?? roomById.get(String(device.room_id ?? "")) ?? "未分配" });
       }
-      return { homes: homes.map((home) => ({ id: home.home_id, name: home.name ?? home.home_name ?? "我的家" })), devices };
+      return { homes: homes.map((home) => ({ id: String(home.home_id ?? ""), name: String(home.name ?? home.home_name ?? "我的家") })), devices };
     }
   } catch (error) {
     firstError = error instanceof Error ? error : new Error("XIAOMI_DEVICE_SYNC_FAILED");
@@ -250,6 +258,8 @@ export async function listDevices(session: XiaomiSession) {
   }
   const result = response.result as Record<string, unknown> | Array<Record<string, unknown>> | undefined;
   const entries = Array.isArray(result) ? result : ((result?.list ?? result?.device_info ?? []) as Array<Record<string, unknown>>);
-  const devices: Array<Record<string, unknown>> = entries.map((device) => ({ ...device, homeName: device.home_name ?? "我的家", roomName: device.room_name ?? "未分配" }));
-  return { homes: [], devices };
+  const devices: Array<Record<string, unknown>> = entries.map((device) => ({ ...device, homeId: String(device.home_id ?? "default"), homeName: device.home_name ?? "我的家", roomName: device.room_name ?? "未分配" }));
+  const homeMap = new Map<string, { id: string; name: string }>();
+  for (const device of devices) homeMap.set(String(device.homeId), { id: String(device.homeId), name: String(device.homeName) });
+  return { homes: [...homeMap.values()], devices };
 }
