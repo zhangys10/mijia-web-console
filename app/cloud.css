@@ -1,0 +1,18 @@
+.mode.connected span{background:#2db273;box-shadow:0 0 0 4px #2db27318}
+.api.cloud-live{background:linear-gradient(140deg,#effaf6,#fff);border-color:#caeedf}
+.cloud-modal{width:min(420px,100%)}
+.region-picker{display:flex;align-items:center;justify-content:space-between;margin:17px 0 12px;font-size:11px;color:#66717d}
+.region-picker select{border:1px solid #e7ebef;border-radius:8px;background:#fff;padding:7px 10px;color:#35404c;font-size:11px}
+.qr-box{width:230px;height:230px;margin:12px auto;border:1px solid #edf0f3;border-radius:16px;background:#fafbfc;display:grid;place-items:center;overflow:hidden}
+.qr-box img{width:210px;height:210px;object-fit:contain}
+.qr-loading,.qr-error{display:grid;justify-items:center;gap:12px;text-align:center;padding:18px}
+.qr-loading>span{width:33px;height:33px;border:3px solid #ffe1d2;border-top-color:#ff6b2c;border-radius:50%;animation:mi-spin .8s linear infinite}
+.qr-loading small,.qr-error strong{font-size:11px;color:#76818d;font-weight:500}
+.qr-error button{border:0;background:#ff6b2c;color:#fff;border-radius:8px;padding:8px 13px;font-size:10px;cursor:pointer}
+.scan-tip{text-align:center!important;font-size:11px!important;margin:0 0 7px!important;color:#77818c!important}
+.qr-link{display:block;text-align:center;font-size:10px;color:#f36b34;text-decoration:none;margin:9px 0}
+.security-note{font-size:9px;color:#88929d;background:#f7f8fa;border-radius:9px;padding:10px 12px;margin-top:14px;text-align:center}
+.connected-info{display:flex;align-items:center;gap:12px;background:#effaf5;border-radius:12px;padding:15px;margin:18px 0}.connected-info>span{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#d7f3e4;color:#25a469}.connected-info strong,.connected-info small{display:block}.connected-info strong{font-size:11px}.connected-info small{font-size:9px;color:#7f8b94;margin-top:4px}
+.logout{width:100%;border:1px solid #f0d8d0;border-radius:9px;padding:10px;background:#fff;color:#cb5530;font-size:11px;cursor:pointer}
+.empty-state{padding:40px;text-align:center;background:#fff;border:1px solid #e9edf2;border-radius:12px}.empty-state strong{font-size:13px}.empty-state p{font-size:10px;color:#89939f}
+@keyframes mi-spin{to{transform:rotate(360deg)}}
