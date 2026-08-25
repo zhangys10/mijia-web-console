@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./cloud.css";
 import "./responsive.css";
+import "./device-management.css";
 
 export const viewport: Viewport = {
   width: "device-width",

@@ -43,10 +43,13 @@ test("renders the Xiaomi smart home dashboard", async () => {
   assert.match(html, /实体开关/);
   assert.match(html, /中控屏/);
   assert.match(html, /智能灯具/);
-  assert.match(html, /开关与硬件/);
-  assert.match(html, /实际受控设备/);
-  assert.match(html, /按键直接显示绑定灯具/);
-  assert.ok(html.indexOf('class="rooms"') < html.indexOf('class="topology-toolbar"'), "room selection should remain above the view switch");
+  assert.match(html, /设备管理/);
+  assert.match(html, /房间设备/);
+  assert.match(html, /灯具拓扑/);
+  assert.match(html, /语音映射/);
+  assert.match(html, /真实房间/);
+  assert.doesNotMatch(html, /topology-toolbar/, "the old device page must be replaced, not rendered alongside the new interface");
+  assert.ok(html.indexOf('class="dm-room-tabs"') < html.indexOf('class="dm-view-tabs"'), "room selection should remain above the view switch");
 });
 
 test("reading or changing device settings requires an authenticated Xiaomi session", async () => {
