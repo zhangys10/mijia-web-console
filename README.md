@@ -1,107 +1,91 @@
-# vinext-starter
+# 米家 Web 控制台
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+一个基于 Next.js、Vinext 和 Cloudflare Workers 的米家设备管理界面。它通过小米二维码登录同步家庭、房间和设备，并提供设备控制、能力发现、开关拓扑以及实际照明视图。
 
-## Prerequisites
+## 功能
+
+- 小米二维码登录和区域选择
+- 家庭、房间、物理设备及派生端点同步
+- MIoT 规格发现、属性读写和动作调用
+- 实体开关、中控、智能灯具和普通回路的统一管理
+- 按家庭隔离的开关/照明拓扑
+- 桌面端和移动端响应式界面
+
+设备建模与交互规则见 [设备管理设计](docs/device-management-design.md)。
+
+## 技术栈
 
 - Node.js `>=22.13.0`
-- Linux with `flock`, `curl`, and GNU `timeout`
+- Next.js 16 / React 19
+- Vinext / Vite
+- Cloudflare Workers
+- TypeScript / ESLint
 
-## Sites Lifecycle
+## 本地开发
 
-The Sites lifecycle CLI runs the locked dependency install before returning this checkout. Edit the source under `app/`, then checkpoint when a coherent milestone is ready to inspect or share. The remote Sites builder runs `npm run build` against the pushed commit. Do not repeat install or build as a normal pre-checkpoint step.
+安装锁定版本的依赖：
 
-This starter does not use `wrangler.jsonc`.
-
-`install:ci` is intentionally a single, non-retrying `npm ci`. It refuses a concurrent install for the same project, consumes a matching image-seeded npm cache with `--prefer-offline` while retaining registry fallback for a missing cache object, otherwise downloads and verifies the complete vinext tarball recorded in `package-lock.json`, limits npm to one socket, and terminates a stalled install. `build` applies a short timeout. These helpers target Linux and use GNU `timeout`; they are not native macOS scripts.
-
-Scripts that need writable project-scoped home, npm, XDG, and temporary paths use `scripts/sites-env.sh`. The `dev` and `start` scripts honor the caller's runtime environment and keep Wrangler logs inside the checkout. The generated `.sites-runtime/` directory is disposable and ignored by Git.
-
-## Included Shape
-
-- edit site code under `app/`
-- `app/chatgpt-auth.ts` provides optional dispatch-owned ChatGPT sign-in helpers
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/index.ts` reads the D1 binding from the Cloudflare Worker environment
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```bash
+npm ci
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+为本地会话生成独立的随机加密密钥，并只注入当前终端：
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+```bash
+export XIAOMI_SESSION_SECRET="$(openssl rand -base64 32)"
+```
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+启动开发服务器：
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+```bash
+npm run dev
+```
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+默认情况下，Vite 会监听所有本地网络接口。浏览器中的米家二维码登录完成后，应用会把小米会话加密保存到 `HttpOnly` Cookie；服务端请求设备数据时才会解密使用。
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+## 配置
 
-## Diagnostic Commands
+### `XIAOMI_SESSION_SECRET`
 
-- `npm run install:ci`: perform the one bounded lockfile install
-- `npm run dev`: start the Vite/Vinext development server
-- `npm run build`: build the deployable Sites artifact
-- `npm run start`: start the built Vinext application
-- `npm test`: build and verify the rendered development-preview metadata
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+必填。该值用于通过 AES-GCM 加密二维码状态和小米会话 Cookie。
 
-Use build commands for targeted diagnosis after a remote failure, not as part of the normal checkpoint path.
+- 每个部署环境使用独立的高熵随机值。
+- 不要复用小米密码、API 令牌或其他账号凭据。
+- 不要把实际值写入源码、README、提交记录或日志。
+- 轮换该值会使现有登录会话失效，用户需要重新扫码。
 
-The timeout defaults can be overridden for a controlled canary with `SITES_INSTALL_TIMEOUT`, `SITES_INSTALL_KILL_AFTER`, `SITES_BUILD_TIMEOUT`, and `SITES_BUILD_KILL_AFTER`. A timeout fails the command; the helpers never retry an unchanged install or build.
+本地可以通过未跟踪的 `.env.local` 提供该变量；仓库的 `.gitignore` 会排除所有 `.env*` 文件。生产环境应使用部署平台的加密 Secret 配置。
 
-## Learn More
+## 常用命令
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+```bash
+npm run dev        # 启动 Vite/Vinext 开发服务器
+npm run build      # 生成 Cloudflare Worker 构建产物
+npm run start      # 启动已构建的 Vinext 应用
+npm run typecheck  # 检查应用 TypeScript 类型
+npm run lint       # 运行 ESLint
+npm test           # 构建并运行全部 Node 测试
+```
+
+## 部署
+
+构建产物是 Cloudflare Worker 应用，入口为 `worker/index.ts`：
+
+```bash
+npm ci
+npm run build
+```
+
+部署前，在目标 Cloudflare 环境中安全设置 `XIAOMI_SESSION_SECRET`。不要在命令历史、远程 URL、公开构建日志或版本库文件中传递实际值。具体发布命令可以按使用的 Cloudflare Workers 项目或 CI 流程配置。
+
+## 安全说明
+
+- 本项目不需要或存储用户的小米账号密码；用户在小米提供的二维码页面完成认证。
+- `serviceToken` 和 `ssecurity` 是小米协议的运行时会话字段。它们只应从小米登录响应取得，并在加密 Cookie 和服务端请求中使用。
+- 状态接口只返回脱敏后的用户标识，不返回会话字段。
+- 不应在客户端响应、应用日志、错误消息、示例配置或测试夹具中输出真实会话值。
+- 如果怀疑部署密钥或小米会话泄露，请立即轮换部署密钥、清除站点 Cookie，并重新扫码登录。
+
+## License
+
+本仓库当前未声明开源许可证。未经版权所有者许可，不得假定具有复制、修改或再分发权限。

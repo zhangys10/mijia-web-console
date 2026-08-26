@@ -20,6 +20,13 @@
 # misc
 .DS_Store
 *.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+*.keystore
 
 # debug
 npm-debug.log*
@@ -35,6 +42,7 @@ yarn-error.log*
 
 # typescript
 next-env.d.ts
+*.tsbuildinfo
 /dist/
 /.wrangler/
 /.sites-runtime/
