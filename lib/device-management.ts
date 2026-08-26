@@ -1,4 +1,4 @@
-import type { DeviceControlChannel, DeviceControlSource, DeviceTopology } from "./device-topology";
+import { parseDerivedDeviceId, type DeviceConnection, type DeviceControlChannel, type DeviceTopology } from "./device-topology.ts";
 
 export type ManagedHardwareRole = "controller" | "switch" | "device";
 
@@ -39,210 +39,220 @@ export type ManagedDeviceRecord<T extends ManagedDevice = ManagedDevice> = {
 
 export type LightingControl<T extends ManagedDevice = ManagedDevice> = {
   device: T;
-  connection: "wired" | "wireless";
+  endpoint?: T;
+  connection: DeviceConnection;
+  relationship: "relay-load" | "wireless-secondary" | "smart-device-power" | "unknown";
   channelIndex: number | null;
   channelSiid: number | null;
   inferred: boolean;
 };
+
+export type LightingTopologyKind = "ordinary-load" | "smart-light" | "smart-light-group" | "unknown";
 
 export type LightingTopology<T extends ManagedDevice = ManagedDevice> = {
   key: string;
   name: string;
   homeId: string;
   room: string;
+  kind: LightingTopologyKind;
   lights: T[];
   loads: T[];
   aliases: T[];
   controls: LightingControl<T>[];
+  on: boolean | null;
+  online: boolean | null;
+  stateSource: "smart-device" | "wired-endpoint" | "unknown";
+  unresolved: boolean;
 };
 
 export type DeviceManagementModel<T extends ManagedDevice = ManagedDevice> = {
   records: ManagedDeviceRecord<T>[];
+  endpoints: ManagedDeviceRecord<T>[];
   topologies: LightingTopology<T>[];
   totals: { devices: number; lights: number; switches: number; aliases: number; groups: number };
 };
 
-const switchName = /开关|面板|副控|主控|中控|中枢|网关|家庭屏|智能屏|控制屏|触控屏|遥控|控制器|[单双三四五六]开/;
+const hiddenRoom = /勿关|勿删|语音|隐藏/;
 const lightName = /灯带|灯光|灯具|灯组|灯泡|球泡|吸顶灯|吊灯|筒灯|射灯|壁灯|台灯|床头灯|柜灯|夜灯|氛围灯|照明|光源|灯$/;
-const voiceRoom = /勿关|勿删|语音|隐藏/;
 
 function groupId(did: string | undefined) {
-  return Boolean(did && /^group/i.test(did));
-}
-
-function physicalId(did: string | undefined | null) {
-  const value = did?.trim() ?? "";
-  const separator = value.lastIndexOf(".");
-  if (separator <= 0 || separator === value.length - 1) return value;
-  const prefix = value.slice(0, separator);
-  const segments = value.split(".");
-  if (segments.length === 2 && /^[a-z]+$/i.test(prefix)) return value;
-  if (segments.length === 3 && /^blt$/i.test(segments[0]) && /^\d+$/.test(segments[1])) return value;
-  return prefix;
-}
-
-function samePhysicalId(left: string | undefined | null, right: string | undefined | null) {
-  return Boolean(left && right && physicalId(left) === physicalId(right));
+  return Boolean(did && /^group\./i.test(did));
 }
 
 function normalizedName(value: string) {
   return value.trim().replace(/[\s\u3000·•_\-]+/g, "").toLocaleLowerCase();
 }
 
+function targetName(value: string) {
+  return normalizedName(value).replace(/副控.*$/, "").replace(/副控/g, "").replace(/电源$/, "");
+}
+
+function displayTargetName(value: string) {
+  return value.trim().replace(/副控.*$/, "").replace(/副控/g, "").replace(/电源$/, "") || value;
+}
+
+function isDerivedEndpoint(device: ManagedDevice) {
+  return Boolean(device.did && parseDerivedDeviceId(device.did) && device.topology?.relation === "mapped" && device.parentId);
+}
+
 function controlHardware(device: ManagedDevice) {
-  if (groupId(device.did)) return false;
-  if (device.hardwareRole === "controller" || device.hardwareRole === "switch") return true;
-  if (["primary", "secondary-panel"].includes(device.topology?.role ?? "")) return true;
-  if (switchName.test(device.name)) return true;
-  return /(?:^|[._-])(?:switch|panel|remote|controller|gateway|screen|hub)(?:[._-]|$)/i.test(device.detail);
+  if (groupId(device.did) || isDerivedEndpoint(device) || device.kind === "gateway") return false;
+  return device.hardwareRole === "controller" || device.hardwareRole === "switch";
 }
 
-function matchingChannel(channel: DeviceControlChannel, target: ManagedDevice) {
-  return channel.targets.some(candidate => candidate.id === target.did
-    || samePhysicalId(candidate.id, target.did) && normalizedName(candidate.name) === normalizedName(target.name));
-}
-
-function controllerPriority(device: ManagedDevice) {
-  return Number(switchName.test(device.name)) * 4
-    + Number(device.hardwareRole === "controller" || device.hardwareRole === "switch") * 2
-    + Number(Boolean(device.topology?.channels.length));
-}
-
-function resolveController<T extends ManagedDevice>(controllers: T[], did: string | undefined | null, excluded?: T) {
-  if (!did) return;
-  const exact = controllers.filter(device => device !== excluded && device.did === did);
-  if (exact.length) return exact.sort((left, right) => controllerPriority(right) - controllerPriority(left))[0];
-  const physical = controllers.filter(device => device !== excluded && (samePhysicalId(device.did, did)
-    || Boolean(device.did && did.startsWith(`${device.did}.`))));
-  return physical.sort((left, right) => (right.did?.length ?? 0) - (left.did?.length ?? 0)
-    || controllerPriority(right) - controllerPriority(left))[0];
+function independentLight(device: ManagedDevice) {
+  if (isDerivedEndpoint(device)) return false;
+  if (!device.did) return ["light", "lamp"].includes(device.kind);
+  return groupId(device.did) || ["light", "lamp"].includes(device.kind)
+    || lightName.test(device.name) && device.hardwareRole === "device";
 }
 
 function ownerFor<T extends ManagedDevice>(device: T, controllers: T[]) {
-  const parent = resolveController(controllers, device.parentId ?? device.topology?.parentId, device);
-  if (parent) return parent;
-  if (!device.did) return;
-  const matching = controllers.filter(candidate => candidate !== device && candidate.homeId === device.homeId && candidate.did
-    && (device.did!.startsWith(`${candidate.did}.`) || samePhysicalId(candidate.did, device.did)));
-  return matching.sort((left, right) => (right.did?.length ?? 0) - (left.did?.length ?? 0)
-    || controllerPriority(right) - controllerPriority(left))[0];
+  const parentId = device.parentId ?? device.topology?.parentId;
+  return controllers.find(controller => controller.homeId === device.homeId && controller.did === parentId);
 }
 
-function isVoiceAlias(device: ManagedDevice, owner: ManagedDevice | undefined) {
-  if (!owner || !device.did || !owner.did || device.did === owner.did) return false;
-  if (!samePhysicalId(device.did, owner.did) && !device.did.startsWith(`${owner.did}.`)) return false;
-  if (voiceRoom.test(device.room)) return true;
-  if (owner.topology?.role === "secondary-panel" || owner.topology?.connectionType === "wireless") return true;
-  if (device.topology?.connectionType === "wireless" || device.topology?.controlledBy.some(source => source.connectionType === "wireless")) return true;
-  return (owner.topology?.channels ?? []).some(channel => channel.connectionType === "wireless"
-    && channel.targets.some(target => normalizedName(target.name) === normalizedName(device.name)));
-}
-
-function recordCategory(device: ManagedDevice, owner: ManagedDevice | undefined): ManagedDeviceCategory {
+function recordCategory(device: ManagedDevice): ManagedDeviceCategory {
   if (groupId(device.did)) return "group";
-  if (isVoiceAlias(device, owner)) return "voice-alias";
-  const lighting = device.kind === "light" || device.kind === "lamp" || lightName.test(device.name);
-  if (lighting && !switchName.test(device.name)) {
-    const mapped = device.topology?.relation === "mapped"
-      || /(?:^|[._-])(?:switch|relay|virtual|split|channel)(?:[._-]|$)/i.test(device.detail)
-      || device.hardwareRole === "controller" || device.hardwareRole === "switch";
-    return mapped ? "wired-load" : "smart-light";
-  }
-  if (controlHardware(device)) return device.hardwareRole === "controller" || /中控|中枢|网关|屏/.test(device.name) ? "controller" : "switch";
+  if (device.hardwareRole === "controller") return "controller";
+  if (controlHardware(device)) return "switch";
+  if (independentLight(device)) return "smart-light";
   return "other";
 }
 
-function addControl<T extends ManagedDevice>(topology: LightingTopology<T>, device: T | undefined, connection: "wired" | "wireless", channelIndex: number | null = null, channelSiid: number | null = null, inferred = false) {
-  if (!device) return;
-  const exists = topology.controls.find(control => control.device.did === device.did
-    && control.connection === connection && control.channelIndex === channelIndex && control.channelSiid === channelSiid);
-  if (!exists) topology.controls.push({ device, connection, channelIndex, channelSiid, inferred });
+function endpointConnection(device: ManagedDevice, owner: ManagedDevice | undefined): DeviceConnection {
+  if (device.topology?.connectionType === "wired" || device.topology?.connectionType === "wireless") return device.topology.connectionType;
+  const siid = device.topology?.channelSiid;
+  const channel = owner?.topology?.channels.find(item => item.channelSiid === siid);
+  if (channel?.connectionType === "wired" || channel?.connectionType === "wireless") return channel.connectionType;
+  return /副控/.test(device.name) ? "wireless" : "unknown";
 }
 
-function sourceController<T extends ManagedDevice>(source: DeviceControlSource, controllers: T[]) {
-  return resolveController(controllers, source.sourceId);
+function channelFor(device: ManagedDevice, owner: ManagedDevice | undefined): DeviceControlChannel | undefined {
+  return owner?.topology?.channels.find(channel => channel.channelSiid === device.topology?.channelSiid);
 }
 
-function targetRoom<T extends ManagedDevice>(record: ManagedDeviceRecord<T>, controllers: T[]) {
-  if (record.category === "smart-light") return record.device.room;
-  const source = record.device.topology?.controlledBy.find(item => item.connectionType === "wired");
-  const wired = source ? sourceController(source, controllers) : undefined;
-  if (wired) return wired.room;
-  if (record.owner && record.owner.topology?.role !== "secondary-panel") return record.owner.room;
-  const sourceChannel = controllers.find(controller => (controller.topology?.channels ?? []).some(channel => channel.connectionType !== "wireless" && matchingChannel(channel, record.device)));
-  return sourceChannel?.room ?? record.device.room;
+function addControl<T extends ManagedDevice>(topology: LightingTopology<T>, owner: T | undefined, endpoint: T, connection: DeviceConnection, inferred: boolean) {
+  if (!owner) return;
+  const channel = channelFor(endpoint, owner);
+  const relationship = connection === "wireless" ? "wireless-secondary"
+    : topology.kind === "smart-light" || topology.kind === "smart-light-group" ? "smart-device-power"
+      : connection === "wired" ? "relay-load" : "unknown";
+  const exists = topology.controls.some(control => control.device.did === owner.did && control.channelSiid === endpoint.topology?.channelSiid && control.connection === connection);
+  if (!exists) topology.controls.push({
+    device: owner,
+    endpoint,
+    connection,
+    relationship,
+    channelIndex: channel?.channelIndex ?? endpoint.topology?.channelIndex ?? null,
+    channelSiid: channel?.channelSiid ?? endpoint.topology?.channelSiid ?? null,
+    inferred,
+  });
 }
 
-function attachPublishedControls<T extends ManagedDevice>(topology: LightingTopology<T>, target: T, controllers: T[]) {
-  for (const source of target.topology?.controlledBy ?? []) addControl(topology, sourceController(source, controllers), source.connectionType, source.channelIndex, source.channelSiid);
-  for (const controller of controllers) {
-    for (const channel of controller.topology?.channels ?? []) {
-      if (!matchingChannel(channel, target)) continue;
-      const connection = channel.connectionType === "wireless" || channel.connectionType === "mixed" && channel.role === "secondary" ? "wireless" : "wired";
-      addControl(topology, controller, connection, channel.channelIndex, channel.channelSiid);
-    }
+function createTopology<T extends ManagedDevice>(key: string, name: string, homeId: string, room: string, kind: LightingTopologyKind): LightingTopology<T> {
+  return { key, name, homeId, room, kind, lights: [], loads: [], aliases: [], controls: [], on: null, online: null, stateSource: "unknown", unresolved: false };
+}
+
+function selectTarget<T extends ManagedDevice>(candidates: LightingTopology<T>[], endpoint: T, owner?: T) {
+  if (candidates.length <= 1) return candidates[0];
+  if (!hiddenRoom.test(endpoint.room)) {
+    const sameEndpointRoom = candidates.filter(candidate => candidate.room === endpoint.room);
+    if (sameEndpointRoom.length === 1) return sameEndpointRoom[0];
   }
+  if (owner) {
+    const sameOwnerRoom = candidates.filter(candidate => candidate.room === owner.room);
+    if (sameOwnerRoom.length === 1) return sameOwnerRoom[0];
+  }
+  return undefined;
 }
 
 export function buildDeviceManagementModel<T extends ManagedDevice>(devices: T[]): DeviceManagementModel<T> {
   const controllers = devices.filter(controlHardware);
-  const records = devices.map(device => {
-    const owner = ownerFor(device, controllers);
-    const category = recordCategory(device, owner);
-    const groupMembers = category === "group" ? (device.groupMemberIds ?? [])
-      .map(did => devices.find(candidate => candidate.homeId === device.homeId && candidate.did === did))
-      .filter((candidate): candidate is T => Boolean(candidate)) : [];
-    return { device, category, owner, groupMembers };
-  });
+  const endpoints = devices.filter(isDerivedEndpoint);
+  const endpointRecords: ManagedDeviceRecord<T>[] = endpoints.map(device => ({
+    device,
+    category: endpointConnection(device, ownerFor(device, controllers)) === "wireless" ? "voice-alias" : "wired-load",
+    owner: ownerFor(device, controllers),
+    groupMembers: [],
+  }));
 
-  const claimed = new Set(records.filter(record => record.category === "group")
-    .flatMap(record => record.groupMembers.map(member => `${member.homeId}:${member.did}`)));
-  const visible = records.filter(record => record.category === "group"
-    || !record.device.did || !claimed.has(`${record.device.homeId}:${record.device.did}`));
+  const groupMembersById = new Map<string, T[]>();
+  for (const group of devices.filter(device => groupId(device.did))) {
+    groupMembersById.set(`${group.homeId}:${group.did}`, (group.groupMemberIds ?? []).map(did => devices.find(candidate => candidate.homeId === group.homeId && candidate.did === did)).filter((candidate): candidate is T => Boolean(candidate)));
+  }
+  const claimedMembers = new Set([...groupMembersById.values()].flatMap(members => members.map(member => `${member.homeId}:${member.did}`)));
+  const visibleDevices = devices.filter(device => !isDerivedEndpoint(device) && (!device.did || !claimedMembers.has(`${device.homeId}:${device.did}`)));
+  const records: ManagedDeviceRecord<T>[] = visibleDevices.map(device => ({
+    device,
+    category: recordCategory(device),
+    owner: ownerFor(device, controllers),
+    groupMembers: groupMembersById.get(`${device.homeId}:${device.did}`) ?? [],
+  }));
 
-  const groups = new Map<string, LightingTopology<T>>();
-  for (const record of records) {
-    if (record.category !== "smart-light" && record.category !== "wired-load") continue;
-    const room = targetRoom(record, controllers);
-    const key = `${record.device.homeId}:${room}:${normalizedName(record.device.name)}`;
-    const topology = groups.get(key) ?? { key, name: record.device.name, homeId: record.device.homeId, room, lights: [], loads: [], aliases: [], controls: [] };
-    if (record.category === "smart-light") topology.lights.push(record.device);
-    else topology.loads.push(record.device);
-    attachPublishedControls(topology, record.device, controllers);
-    if (record.category === "wired-load" && !topology.controls.some(control => control.connection === "wired")) {
-      addControl(topology, record.owner ?? (controlHardware(record.device) ? record.device : undefined), "wired", record.device.topology?.channelIndex ?? null, record.device.topology?.channelSiid ?? null, true);
+  const topologies = new Map<string, LightingTopology<T>>();
+  const byName = new Map<string, LightingTopology<T>[]>();
+  for (const device of devices.filter(independentLight)) {
+    const kind: LightingTopologyKind = groupId(device.did) ? "smart-light-group" : "smart-light";
+    const key = `${device.homeId}:${device.room}:${targetName(device.name)}:${device.did}`;
+    const topology = createTopology<T>(key, device.name, device.homeId, device.room, kind);
+    topology.lights.push(device);
+    topology.on = device.online === false ? null : Boolean(device.on);
+    topology.online = device.online ?? null;
+    topology.stateSource = "smart-device";
+    topologies.set(key, topology);
+    const nameKey = `${device.homeId}:${targetName(device.name)}`;
+    byName.set(nameKey, [...(byName.get(nameKey) ?? []), topology]);
+  }
+
+  const pending: Array<{ record: ManagedDeviceRecord<T>; connection: DeviceConnection }> = [];
+  for (const record of endpointRecords) {
+    const connection = endpointConnection(record.device, record.owner);
+    if (connection === "wireless") { pending.push({ record, connection }); continue; }
+    const nameKey = `${record.device.homeId}:${targetName(record.device.name)}`;
+    const smart = selectTarget(byName.get(nameKey) ?? [], record.device, record.owner);
+    let topology = smart;
+    if (!topology) {
+      const room = record.device.room;
+      const key = `${record.device.homeId}:${room}:${targetName(record.device.name)}`;
+      topology = topologies.get(key) ?? createTopology<T>(key, displayTargetName(record.device.name), record.device.homeId, room, connection === "unknown" ? "unknown" : "ordinary-load");
+      topologies.set(key, topology);
+      if (!(byName.get(nameKey) ?? []).includes(topology)) byName.set(nameKey, [...(byName.get(nameKey) ?? []), topology]);
     }
-    groups.set(key, topology);
+    topology.loads.push(record.device);
+    topology.unresolved ||= connection === "unknown";
+    addControl(topology, record.owner, record.device, connection, Boolean(smart));
+    if (topology.kind === "ordinary-load" && connection === "wired") {
+      topology.on = record.device.on;
+      topology.online = record.owner?.online ?? record.device.online ?? null;
+      topology.stateSource = "wired-endpoint";
+    }
   }
 
-  for (const record of records) {
-    if (record.category !== "voice-alias") continue;
-    const matching = [...groups.values()].filter(topology => topology.homeId === record.device.homeId
-      && normalizedName(topology.name) === normalizedName(record.device.name));
-    const explicit = matching.filter(topology => (record.owner?.topology?.channels ?? []).some(channel => channel.targets.some(target => [...topology.lights, ...topology.loads].some(device => target.id === device.did))));
-    const candidate = explicit[0] ?? matching.find(topology => topology.room === record.owner?.room)
-      ?? matching.find(topology => topology.room === record.device.room);
-    const room = candidate?.room ?? record.owner?.room ?? record.device.room;
-    const key = candidate?.key ?? `${record.device.homeId}:${room}:${normalizedName(record.device.name)}`;
-    const topology = candidate ?? { key, name: record.device.name, homeId: record.device.homeId, room, lights: [], loads: [], aliases: [], controls: [] };
+  for (const item of pending) {
+    const { record } = item;
+    const nameKey = `${record.device.homeId}:${targetName(record.device.name)}`;
+    const candidate = selectTarget(byName.get(nameKey) ?? [], record.device, record.owner);
+    const room = !hiddenRoom.test(record.device.room) ? record.device.room : record.owner?.room ?? record.device.room;
+    const key = `${record.device.homeId}:${room}:${targetName(record.device.name)}:unresolved`;
+    const topology = candidate ?? topologies.get(key) ?? createTopology<T>(key, displayTargetName(record.device.name), record.device.homeId, room, "unknown");
+    if (!candidate) { topology.unresolved = true; topologies.set(key, topology); byName.set(nameKey, [...(byName.get(nameKey) ?? []), topology]); }
     topology.aliases.push(record.device);
-    const channel = (record.owner?.topology?.channels ?? []).find(item => item.connectionType === "wireless"
-      && item.targets.some(target => normalizedName(target.name) === normalizedName(record.device.name)));
-    addControl(topology, record.owner, "wireless", channel?.channelIndex ?? record.device.topology?.channelIndex ?? null, channel?.channelSiid ?? record.device.topology?.channelSiid ?? null, !channel);
-    groups.set(key, topology);
+    addControl(topology, record.owner, record.device, "wireless", !candidate || candidate.kind === "smart-light" || candidate.kind === "smart-light-group");
   }
 
-  const topologies = [...groups.values()].sort((left, right) => left.room.localeCompare(right.room, "zh-CN") || left.name.localeCompare(right.name, "zh-CN"));
-  for (const topology of topologies) topology.controls.sort((left, right) => Number(left.connection !== "wired") - Number(right.connection !== "wired") || left.device.name.localeCompare(right.device.name, "zh-CN"));
+  const sorted = [...topologies.values()].sort((left, right) => left.room.localeCompare(right.room, "zh-CN") || left.name.localeCompare(right.name, "zh-CN"));
+  for (const topology of sorted) topology.controls.sort((left, right) => Number(left.connection !== "wired") - Number(right.connection !== "wired") || left.device.name.localeCompare(right.device.name, "zh-CN"));
 
   return {
-    records: visible,
-    topologies,
+    records,
+    endpoints: endpointRecords,
+    topologies: sorted,
     totals: {
-      devices: visible.length,
-      lights: records.filter(record => record.category === "smart-light" || record.category === "wired-load").length,
+      devices: records.length,
+      lights: sorted.length,
       switches: records.filter(record => record.category === "switch" || record.category === "controller").length,
-      aliases: records.filter(record => record.category === "voice-alias").length,
+      aliases: endpointRecords.filter(record => endpointConnection(record.device, record.owner) === "wireless").length,
       groups: records.filter(record => record.category === "group").length,
     },
   };

@@ -1,148 +1,200 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildDeviceTopology } from "../lib/device-topology.ts";
+import {
+  buildDeviceTopology,
+  deviceChannelStateKey,
+  parseDerivedDeviceId,
+  topologyForDevice,
+} from "../lib/device-topology.ts";
 import { buildDeviceManagementModel } from "../lib/device-management.ts";
-import { classifyDeviceKind, inferHardwareRole } from "../lib/device-views.ts";
+import { classifyDeviceKind, inferHardwareRole, physicalDeviceId } from "../lib/device-views.ts";
 
-function records(raw) {
-  const topology = buildDeviceTopology(raw);
-  return raw.map((device, index) => ({
-    id: index + 1,
-    did: device.did,
-    name: device.name,
-    home: "我的家",
-    homeId: device.homeId ?? "home-1",
-    room: device.roomName,
-    kind: classifyDeviceKind(device.model, device.name),
-    icon: "☀",
-    on: false,
-    status: "在线",
-    detail: device.model,
-    color: "orange",
-    online: true,
-    parentId: topology.get(device.did)?.parentId ?? null,
-    hardwareRole: inferHardwareRole(device.model, device.name),
-    topology: topology.get(device.did),
-    groupMemberIds: device.groupMemberIds,
-  }));
+function runtime(homeId, did, siid, connectionType, reportedOn = false, buttonIndex = null) {
+  return {
+    homeId,
+    did,
+    siid,
+    buttonIndex,
+    label: buttonIndex ? `按键 ${buttonIndex}` : `服务 ${siid}`,
+    connectionType,
+    reportedOn,
+    modeValue: connectionType === "wired" ? 0 : connectionType === "wireless" ? 1 : null,
+    evidence: connectionType === "unknown" ? "unknown" : "miot-property",
+  };
 }
 
-test("keeps smart lights, physical switches and voice aliases in their actual Xiaomi rooms", () => {
-  const devices = records([
-    { did: "bedroom-switch", name: "主卧中控", model: "xiaomi.controller.oh4w", roomName: "主卧" },
-    { did: "bedroom-switch.1", name: "中间筒灯", model: "xiaomi.controller.oh4w", roomName: "勿关" },
-    { did: "smart-light", name: "主卧智能灯", model: "yeelink.light.ceiling", roomName: "主卧" },
-  ]);
+function records(raw, states = []) {
+  const runtimeStates = new Map(states.map(state => [deviceChannelStateKey(state.homeId, state.did, state.siid), state]));
+  const topologies = buildDeviceTopology(raw, runtimeStates);
+  return raw.map((device, index) => {
+    const topology = topologyForDevice(topologies, device);
+    const parsed = parseDerivedDeviceId(device.did);
+    const channel = parsed
+      ? topologies.get(`${device.homeId}:${parsed.physicalDid}`)?.channels.find(item => item.channelSiid === parsed.siid)
+      : undefined;
+    return {
+      id: index + 1,
+      did: device.did,
+      name: device.name,
+      home: device.home ?? "我的家",
+      homeId: device.homeId,
+      room: device.roomName,
+      kind: classifyDeviceKind(device.model, device.name, device.logicalType ?? ""),
+      icon: "☀",
+      on: device.on ?? channel?.reportedOn ?? false,
+      status: device.online === false ? "离线" : "在线",
+      detail: device.model,
+      color: "orange",
+      online: device.online ?? true,
+      parentId: topology?.parentId ?? null,
+      hardwareRole: inferHardwareRole(device.model, device.name),
+      topology,
+      groupMemberIds: device.groupMemberIds,
+    };
+  });
+}
 
-  const model = buildDeviceManagementModel(devices);
-
-  assert.deepEqual(model.records.map(record => [record.device.name, record.device.room, record.category]), [
-    ["主卧中控", "主卧", "controller"],
-    ["中间筒灯", "勿关", "voice-alias"],
-    ["主卧智能灯", "主卧", "smart-light"],
-  ]);
-  assert.equal(model.records[1].owner.did, "bedroom-switch");
+test("recognizes only Xiaomi .sN IDs as derived endpoints", () => {
+  assert.deepEqual(parseDerivedDeviceId("720449456.s14"), { physicalDid: "720449456", siid: 14 });
+  assert.equal(parseDerivedDeviceId("group.120"), null);
+  assert.equal(parseDerivedDeviceId("blt.3.12345678"), null);
+  assert.equal(parseDerivedDeviceId("lumi.158d0001.2"), null);
+  assert.equal(physicalDeviceId("720449456.s14"), "720449456");
+  assert.equal(physicalDeviceId("lumi.158d0001.2"), "lumi.158d0001.2");
 });
 
-test("links a voice alias from 勿关 to the matching wired-room lamp topology", () => {
-  const devices = records([
-    { did: "bedroom-switch", name: "主卧中控", model: "xiaomi.controller.oh4w", roomName: "主卧" },
-    { did: "bedroom-load", name: "中间筒灯", model: "vendor.switch.virtual", roomName: "主卧", extra: { parent_did: "bedroom-switch", channel_index: 1 } },
-    { did: "bedroom-switch.2", name: "中间筒灯", model: "xiaomi.controller.oh4w", roomName: "勿关" },
+test("hardware inventory contains physical panels and switches but never their .sN endpoints", () => {
+  const raw = [
+    { did: "720449456", homeId: "fabric", name: "主卧智能中控屏", model: "xiaomi.controller.oh4w", roomName: "主卧" },
+    { did: "720449456.s14", homeId: "fabric", name: "床头筒灯", model: "xiaomi.controller.oh4w", roomName: "主卧" },
+    { did: "1206737667", homeId: "fabric", name: "主卧床头开关-左", model: "linp.switch.qh2db4", roomName: "主卧" },
+    { did: "1206737667.s3", homeId: "fabric", name: "床头筒灯", model: "linp.switch.qh2db4", roomName: "勿关" },
+    { did: "smart-1", homeId: "fabric", name: "主卧吸顶灯", model: "yeelink.light.ceiling", roomName: "主卧" },
+  ];
+  const devices = records(raw, [
+    runtime("fabric", "720449456", 14, "wired", false, 1),
+    runtime("fabric", "1206737667", 3, "wireless", false, 2),
   ]);
-
   const model = buildDeviceManagementModel(devices);
-  const lamp = model.topologies.find(topology => topology.name === "中间筒灯");
 
-  assert.equal(lamp.room, "主卧");
-  assert.deepEqual(lamp.loads.map(device => device.did), ["bedroom-load"]);
-  assert.deepEqual(lamp.aliases.map(device => device.did), ["bedroom-switch.2"]);
-  assert.deepEqual(lamp.controls.map(control => [control.device.name, control.connection]), [
-    ["主卧中控", "wired"],
-    ["主卧中控", "wireless"],
-  ]);
+  assert.deepEqual(model.records.map(record => record.device.did), ["720449456", "1206737667", "smart-1"]);
+  assert.deepEqual(model.endpoints.map(record => record.device.did), ["720449456.s14", "1206737667.s3"]);
+  assert.deepEqual(model.records.map(record => record.category), ["controller", "switch", "smart-light"]);
 });
 
-test("separates same-name lamp topologies by the location of their wired switch", () => {
-  const devices = records([
-    { did: "bedroom-switch", name: "主卧中控", model: "xiaomi.controller.oh4w", roomName: "主卧" },
-    { did: "living-switch", name: "客厅三开", model: "vendor.switch.triple", roomName: "客厅" },
-    { did: "bedroom-load", name: "中间筒灯", model: "vendor.switch.virtual", roomName: "勿关", extra: { parent_did: "bedroom-switch", channel_index: 1 } },
-    { did: "living-load", name: "中间筒灯", model: "vendor.switch.virtual", roomName: "主卧", extra: { parent_did: "living-switch", channel_index: 1 } },
-    { did: "bedroom-switch.2", name: "中间筒灯", model: "xiaomi.controller.oh4w", roomName: "勿关" },
-  ]);
+test("aggregates the four main-bedroom loads with their real wired and wireless channel counts", () => {
+  const raw = [
+    { did: "center", homeId: "fabric", name: "主卧智能中控屏", model: "xiaomi.controller.oh4w", roomName: "主卧" },
+    { did: "center.s14", homeId: "fabric", name: "床头筒灯", model: "xiaomi.controller.oh4w", roomName: "主卧" },
+    { did: "center.s15", homeId: "fabric", name: "中间筒灯", model: "xiaomi.controller.oh4w", roomName: "主卧" },
+    { did: "center.s16", homeId: "fabric", name: "床尾筒灯", model: "xiaomi.controller.oh4w", roomName: "主卧" },
+    { did: "left", homeId: "fabric", name: "主卧床头开关-左", model: "linp.switch.qh2db4", roomName: "主卧" },
+    { did: "left.s2", homeId: "fabric", name: "灯带", model: "linp.switch.qh2db4", roomName: "勿关" },
+    { did: "left.s3", homeId: "fabric", name: "床头筒灯", model: "linp.switch.qh2db4", roomName: "勿关" },
+    { did: "left.s4", homeId: "fabric", name: "中间筒灯", model: "linp.switch.qh2db4", roomName: "勿关" },
+    { did: "right", homeId: "fabric", name: "主卧床头开关-右", model: "linp.switch.qh2db4", roomName: "主卧" },
+    { did: "right.s2", homeId: "fabric", name: "灯带", model: "linp.switch.qh2db4", roomName: "主卧" },
+    { did: "right.s3", homeId: "fabric", name: "床头筒灯", model: "linp.switch.qh2db4", roomName: "勿关" },
+    { did: "right.s4", homeId: "fabric", name: "中间筒灯", model: "linp.switch.qh2db4", roomName: "勿关" },
+  ];
+  const states = [
+    runtime("fabric", "center", 14, "wired", false, 1),
+    runtime("fabric", "center", 15, "wired", false, 2),
+    runtime("fabric", "center", 16, "wired", false, 3),
+    runtime("fabric", "left", 2, "wireless", true, 1),
+    runtime("fabric", "left", 3, "wireless", true, 2),
+    runtime("fabric", "left", 4, "wireless", true, 3),
+    runtime("fabric", "right", 2, "wired", false, 1),
+    runtime("fabric", "right", 3, "wireless", true, 2),
+    runtime("fabric", "right", 4, "wireless", true, 3),
+  ];
+  const model = buildDeviceManagementModel(records(raw, states));
+  const summary = Object.fromEntries(model.topologies.map(topology => [topology.name, {
+    room: topology.room,
+    wired: topology.controls.filter(control => control.connection === "wired").length,
+    wireless: topology.controls.filter(control => control.connection === "wireless").length,
+  }]));
 
-  const model = buildDeviceManagementModel(devices);
-  const bedroom = model.topologies.find(topology => topology.name === "中间筒灯" && topology.room === "主卧");
-  const living = model.topologies.find(topology => topology.name === "中间筒灯" && topology.room === "客厅");
-
-  assert.deepEqual(bedroom.loads.map(device => device.did), ["bedroom-load"]);
-  assert.deepEqual(bedroom.aliases.map(device => device.did), ["bedroom-switch.2"]);
-  assert.deepEqual(living.loads.map(device => device.did), ["living-load"]);
-  assert.equal(living.aliases.length, 0);
+  assert.deepEqual(summary, {
+    灯带: { room: "主卧", wired: 1, wireless: 1 },
+    中间筒灯: { room: "主卧", wired: 1, wireless: 2 },
+    床头筒灯: { room: "主卧", wired: 1, wireless: 2 },
+    床尾筒灯: { room: "主卧", wired: 1, wireless: 0 },
+  });
 });
 
-test("links a separate wireless bedside switch to the wired primary controller", () => {
-  const devices = records([
-    { did: "bedroom-control", name: "主卧中控", model: "xiaomi.controller.oh4w", roomName: "主卧" },
-    { did: "bedside-switch", name: "床头无线开关", model: "vendor.switch.triple", roomName: "主卧" },
-    { did: "bedroom-load", name: "中间筒灯", model: "vendor.switch.virtual", roomName: "主卧", extra: { parent_did: "bedroom-control", channel_index: 1 } },
-    { did: "bedside-switch.1", name: "中间筒灯", model: "vendor.switch.triple", roomName: "勿关" },
-  ]);
+test("uses the derived endpoint room for ordinary cross-room loads", () => {
+  const raw = [
+    { did: "living-switch", homeId: "fabric", name: "客厅三开", model: "linp.switch.t2dbw3", roomName: "客厅" },
+    { did: "living-switch.s2", homeId: "fabric", name: "玄关柜灯带", model: "linp.switch.t2dbw3", roomName: "玄关" },
+    { did: "living-switch.s3", homeId: "fabric", name: "餐边柜灯带", model: "linp.switch.t2dbw3", roomName: "餐厅" },
+  ];
+  const model = buildDeviceManagementModel(records(raw, [
+    runtime("fabric", "living-switch", 2, "wired", true, 1),
+    runtime("fabric", "living-switch", 3, "wired", false, 2),
+  ]));
 
-  const model = buildDeviceManagementModel(devices);
-  const topology = model.topologies.find(item => item.name === "中间筒灯");
-
-  assert.equal(topology.room, "主卧");
-  assert.deepEqual(topology.aliases.map(device => [device.did, device.room]), [["bedside-switch.1", "勿关"]]);
-  assert.deepEqual(topology.controls.map(control => [control.device.did, control.connection]), [
-    ["bedroom-control", "wired"],
-    ["bedside-switch", "wireless"],
-  ]);
+  assert.equal(model.topologies.find(item => item.name === "玄关柜灯带").room, "玄关");
+  assert.equal(model.topologies.find(item => item.name === "餐边柜灯带").room, "餐厅");
+  assert.ok(model.topologies.every(item => item.controls[0].device.did === "living-switch"));
 });
 
-test("supports one wireless switch controlling multiple distinct lamp topologies", () => {
-  const devices = records([
-    { did: "lumi.main", name: "主卧中控", model: "xiaomi.controller.oh4w", roomName: "主卧" },
-    { did: "lumi.remote", name: "床头无线开关", model: "vendor.switch.triple", roomName: "主卧" },
-    { did: "circuit-middle", name: "中间筒灯", model: "vendor.switch.virtual", roomName: "主卧", extra: { parent_did: "lumi.main", channel_index: 1 } },
-    { did: "circuit-bedside", name: "床头灯带", model: "vendor.switch.virtual", roomName: "主卧", extra: { parent_did: "lumi.main", channel_index: 2 } },
-    { did: "lumi.remote.1", name: "中间筒灯", model: "vendor.switch.triple", roomName: "勿关" },
-    { did: "lumi.remote.2", name: "床头灯带", model: "vendor.switch.triple", roomName: "勿关" },
-  ]);
+test("links a derived power endpoint to the real smart light and keeps the smart light state", () => {
+  const raw = [
+    { did: "panel", homeId: "fabric", name: "餐厅中控", model: "xiaomi.controller.oh4w", roomName: "餐厅" },
+    { did: "panel.s15", homeId: "fabric", name: "餐厅吊灯", model: "xiaomi.controller.oh4w", roomName: "勿关" },
+    { did: "pendant", homeId: "fabric", name: "餐厅吊灯", model: "yeelink.light.pendant", roomName: "餐厅", online: false, on: true },
+  ];
+  const model = buildDeviceManagementModel(records(raw, [runtime("fabric", "panel", 15, "wired", true, 2)]));
+  const target = model.topologies.find(item => item.name === "餐厅吊灯");
 
-  const model = buildDeviceManagementModel(devices);
-
-  for (const [name, alias] of [["中间筒灯", "lumi.remote.1"], ["床头灯带", "lumi.remote.2"]]) {
-    const topology = model.topologies.find(item => item.name === name);
-    assert.equal(topology.room, "主卧");
-    assert.deepEqual(topology.aliases.map(device => device.did), [alias]);
-    assert.ok(topology.controls.some(control => control.device.did === "lumi.main" && control.connection === "wired"));
-    assert.ok(topology.controls.some(control => control.device.did === "lumi.remote" && control.connection === "wireless"));
-  }
+  assert.equal(target.kind, "smart-light");
+  assert.equal(target.room, "餐厅");
+  assert.equal(target.stateSource, "smart-device");
+  assert.equal(target.online, false);
+  assert.equal(target.on, null, "an offline smart light must not borrow the relay state");
+  assert.equal(target.controls[0].relationship, "smart-device-power");
 });
 
-test("shows group cards in room inventory while preserving member editing targets", () => {
-  const devices = records([
-    { did: "group.42", name: "客厅灯组", model: "yeelink.light.group", roomName: "客厅", groupMemberIds: ["light-1", "light-2"] },
-    { did: "light-1", name: "左侧筒灯", model: "yeelink.light.ceiling", roomName: "客厅" },
-    { did: "light-2", name: "右侧筒灯", model: "yeelink.light.ceiling", roomName: "客厅" },
-  ]);
+test("links wireless derived power aliases to a smart-light group without inventing group members", () => {
+  const raw = [
+    { did: "remote", homeId: "fabric", name: "客厅副控", model: "linp.switch.qh2db4", roomName: "客厅" },
+    { did: "remote.s4", homeId: "fabric", name: "客厅射灯副控", model: "linp.switch.qh2db4", roomName: "勿关" },
+    { did: "group.900", homeId: "fabric", name: "客厅射灯", model: "yeelink.light.group", roomName: "客厅", groupMemberIds: [] },
+  ];
+  const model = buildDeviceManagementModel(records(raw, [runtime("fabric", "remote", 4, "wireless", false, 3)]));
+  const target = model.topologies.find(item => item.name === "客厅射灯");
 
-  const model = buildDeviceManagementModel(devices);
-
-  assert.equal(model.records.length, 1);
-  assert.equal(model.records[0].category, "group");
-  assert.deepEqual(model.records[0].groupMembers.map(device => device.did), ["light-1", "light-2"]);
+  assert.equal(target.kind, "smart-light-group");
+  assert.deepEqual(target.aliases.map(device => device.did), ["remote.s4"]);
+  assert.equal(target.controls[0].relationship, "wireless-secondary");
+  assert.deepEqual(model.records.find(record => record.device.did === "group.900").groupMembers, []);
 });
 
-test("keeps independent smart lights in their real room despite a gateway elsewhere", () => {
-  const devices = records([
-    { did: "living-gateway", name: "客厅中控", model: "xiaomi.controller.oh4w", roomName: "客厅" },
-    { did: "bedroom-light", name: "主卧智能灯", model: "yeelink.light.ceiling", roomName: "主卧", extra: { parent_did: "living-gateway" } },
-  ]);
+test("keeps unknown channel mode unknown and never defaults it to wired", () => {
+  const raw = [
+    { did: "switch", homeId: "fabric", name: "未识别开关", model: "linp.switch.unknown", roomName: "书房" },
+    { did: "switch.s2", homeId: "fabric", name: "书房灯带", model: "linp.switch.unknown", roomName: "书房" },
+  ];
+  const model = buildDeviceManagementModel(records(raw));
+  const target = model.topologies[0];
 
-  const model = buildDeviceManagementModel(devices);
+  assert.equal(target.kind, "unknown");
+  assert.equal(target.unresolved, true);
+  assert.equal(target.controls[0].connection, "unknown");
+});
 
-  assert.equal(model.topologies.find(topology => topology.name === "主卧智能灯").room, "主卧");
+test("does not merge identical names across Xiaomi homes", () => {
+  const raw = [
+    { did: "a", homeId: "home-a", name: "卧室开关", model: "linp.switch.t2dbw2", roomName: "卧室" },
+    { did: "a.s2", homeId: "home-a", name: "灯带", model: "linp.switch.t2dbw2", roomName: "卧室" },
+    { did: "b", homeId: "home-b", name: "卧室开关", model: "linp.switch.t2dbw2", roomName: "卧室" },
+    { did: "b.s2", homeId: "home-b", name: "灯带", model: "linp.switch.t2dbw2", roomName: "卧室" },
+  ];
+  const model = buildDeviceManagementModel(records(raw, [
+    runtime("home-a", "a", 2, "wired"),
+    runtime("home-b", "b", 2, "wired"),
+  ]));
+
+  assert.deepEqual(model.topologies.map(item => [item.homeId, item.name]), [["home-a", "灯带"], ["home-b", "灯带"]]);
 });

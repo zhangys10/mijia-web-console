@@ -63,7 +63,7 @@ const targetDidPattern = /^(?:target-did|target-device-id|target-device|target-d
 const targetChannelPattern = /^(?:target-channel|target-siid|target-service|target-service-id|target-key|target-button|target-channel-index)$/i;
 const sourceKeyPattern = /^(?:current-key|source-key|source-button|source-channel|key-index|key-id|button-index|button-id)$/i;
 const addBindingActionPattern = /(?:^|[-_])(?:bind|add|pair|link)(?:[-_]|$)/i;
-const pairingActionPattern = /(?:^|[-_])(?:learn|pair)(?:[-_]|$)/i;
+const ignoredLocalControlPattern = /^(?:local-control|local-control-num|get-control-num|get-local-ctrl|key-relay-set|key-param|key-mode|wireless-mode|enter-study|clear-wireless|clear-local-ctrl|set-key)$/i;
 
 function parameterSemantic(property: MiotCapabilityProperty | undefined): BindingParameterSemantic {
   if (!property) return "unknown";
@@ -98,18 +98,17 @@ function classifyAction(group: MiotCapabilityGroup, action: MiotCapabilityAction
 }
 
 export function analyzeSwitchBindingCapabilities(model: string, groups: MiotCapabilityGroup[]): SwitchBindingCapability {
-  const properties = groups.flatMap(group => group.properties.filter(property => bindingPropertyPattern.test(property.name)));
+  const properties = groups.flatMap(group => group.properties.filter(property => bindingPropertyPattern.test(property.name) && !ignoredLocalControlPattern.test(property.name)));
   const writableProperties = properties.filter(property => property.writable);
   const targetProperties = writableProperties.filter(property => targetDidPattern.test(property.name) && property.format === "string");
-  const actions = groups.flatMap(group => group.actions.filter(action => bindingActionPattern.test(action.name)).map(action => classifyAction(group, action)));
+  const actions = groups.flatMap(group => group.actions.filter(action => bindingActionPattern.test(action.name) && !ignoredLocalControlPattern.test(action.name)).map(action => classifyAction(group, action)));
   const targetActions = actions.filter(action => addBindingActionPattern.test(action.name) && action.targetSelectable);
-  const pairingActions = actions.filter(action => pairingActionPattern.test(action.name) && action.safeWithoutParameters);
+  const pairingActions: BindingAction[] = [];
 
   let status: SwitchBindingCapability["status"] = "unsupported";
   let mode: SwitchBindingCapability["mode"] = "unsupported";
   if (targetActions.length) { status = "writable"; mode = "target-action"; }
   else if (targetProperties.length) { status = "writable"; mode = "target-property"; }
-  else if (writableProperties.length || actions.length) { status = "writable"; mode = "pairing"; }
   else if (properties.some(property => property.readable)) { status = "readonly"; mode = "readonly"; }
 
   return { model, status, mode, properties, writableProperties, actions, targetActions, pairingActions, targetProperties };
@@ -119,10 +118,11 @@ export function listSwitchBindingTargets<T extends BindingViewDevice>(source: T,
   const targets = new Map<string, SwitchBindingTarget>();
   for (const device of devices) {
     if (!device.did || device.did === source.did || device.homeId && source.homeId && device.homeId !== source.homeId) continue;
-    if (device.kind !== "light" && device.kind !== "lamp") continue;
+    const mappedEndpoint = device.topology?.relation === "mapped" && Boolean(device.parentId ?? device.topology.parentId);
+    if (!mappedEndpoint && device.kind !== "light" && device.kind !== "lamp") continue;
     const model = (device.detail ?? device.model ?? "").toLowerCase();
     const virtualModel = /(switch|relay|channel|gang|virtual)/.test(model) && !/(light|lamp|strip|bulb)/.test(model);
-    if (!(device.topology?.relation === "mapped" && device.parentId) && !virtualModel) {
+    if (!mappedEndpoint && !virtualModel) {
       const key = `${device.homeId ?? ""}:${device.room ?? ""}:${device.name}`;
       if (!targets.has(key)) targets.set(key, { key, name: device.name, room: device.room ?? "未分配", did: device.did, deviceDid: device.did, channelIndex: null, channelSiid: null, controllerName: null, kind: "smart-device" });
       continue;

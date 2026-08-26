@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { findSwitchGroupChannel, switchGroupConnection } from "../lib/switch-channel-mode.ts";
+import { findSwitchGroupChannel, resolveSwitchMode, switchGroupConnection } from "../lib/switch-channel-mode.ts";
 
 const groups = [
   { key: "2", name: "switch", siid: 2, properties: [{ key: "2.2", name: "wireless-mode" }] },
@@ -44,4 +44,21 @@ test("understands vendor mode choices where zero means wireless", () => {
 
   assert.equal(switchGroupConnection(choiceGroup, [choiceGroup], { "4.2": 0 }), "wireless");
   assert.equal(switchGroupConnection(choiceGroup, [choiceGroup], { "4.2": 1 }), "wired");
+});
+
+test("uses the exact mode property returned by the observed Linp and Xiaomi models", () => {
+  const modeGroup = {
+    key: "14",
+    name: "switch",
+    siid: 14,
+    properties: [{ key: "14.2", name: "mode" }],
+  };
+
+  assert.equal(switchGroupConnection(modeGroup, [modeGroup], { "14.2": 0 }), "wired");
+  assert.equal(switchGroupConnection(modeGroup, [modeGroup], { "14.2": 1 }), "wireless");
+});
+
+test("does not turn an unrecognized mode value into a wired channel", () => {
+  assert.equal(resolveSwitchMode({ key: "2.2", name: "mode" }, "vendor-private"), "unknown");
+  assert.equal(switchGroupConnection(groups[0], groups, {}, { role: "unknown", connectionType: "unknown", channels: [] }), "unknown");
 });

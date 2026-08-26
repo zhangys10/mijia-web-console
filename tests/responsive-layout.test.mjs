@@ -24,8 +24,10 @@ test("renders the rebuilt device inventory and interactive light topology on des
   assert.match(styles, /\.dm-topology-explorer\s*\{\s*grid-template-columns:\s*1fr/s);
   assert.match(styles, /\.dm-room-grid\s*\{[^}]*grid-template-columns:/s);
   assert.match(component, /<canvas\s+ref=\{canvasRef\}/);
-  assert.match(component, /语音映射/);
+  assert.match(component, /开关与硬件/);
+  assert.match(component, /实际照明/);
   assert.match(component, /有线主控/);
   assert.match(component, /无线副控/);
+  assert.match(component, /模式待确认/);
   assert.match(component, /stopPropagation\(\);\s*onOpenMember\(member\)/);
 });

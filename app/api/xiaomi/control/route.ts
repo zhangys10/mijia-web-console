@@ -29,14 +29,14 @@ export async function GET(request: NextRequest) {
         if (typeof entry.code === "number" && entry.code !== 0) errors[key] = entry.code;
         else values[key] = entry.value;
       }
-      return NextResponse.json({ ok: true, values, errors });
+      return NextResponse.json({ ok: true, did, values, errors, capturedAt: new Date().toISOString() });
     }
     const siid = Number(request.nextUrl.searchParams.get("siid") ?? 2);
     const piid = Number(request.nextUrl.searchParams.get("piid") ?? 1);
     if (!did || !Number.isInteger(siid) || !Number.isInteger(piid) || siid < 1 || piid < 1) return NextResponse.json({ error: "INVALID_DEVICE_COMMAND" }, { status: 400 });
     const response = await xiaomiRequest(await unseal<XiaomiSession>(value), "/app/miotspec/prop/get", { params: [{ did, siid, piid }] });
     const result = propertyResult(response);
-    return NextResponse.json({ ok: true, value: result.value, siid, piid });
+    return NextResponse.json({ ok: true, did, value: result.value, siid, piid, capturedAt: new Date().toISOString() });
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
     console.error("[xiaomi-control-read]", JSON.stringify({ error: message }));

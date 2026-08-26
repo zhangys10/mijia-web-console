@@ -32,7 +32,7 @@ test("renders the Xiaomi smart home dashboard", async () => {
   assert.match(html, /<meta name="theme-color" content="#fafbfc"/, "mobile browsers should inherit the dashboard theme");
   assert.match(html, /aria-label="账号与连接"/, "mobile users must retain access to Xiaomi account settings");
   assert.match(html, /扫码连接米家/);
-  assert.match(html, /我的设备/);
+  assert.match(html, /设备管理/);
   assert.match(html, /客厅/);
   assert.match(html, /主卧/);
   assert.match(html, /客厅三开/);
@@ -44,10 +44,10 @@ test("renders the Xiaomi smart home dashboard", async () => {
   assert.match(html, /中控屏/);
   assert.match(html, /智能灯具/);
   assert.match(html, /设备管理/);
-  assert.match(html, /房间设备/);
-  assert.match(html, /灯具拓扑/);
-  assert.match(html, /语音映射/);
-  assert.match(html, /真实房间/);
+  assert.match(html, /开关与硬件/);
+  assert.match(html, /实际照明/);
+  assert.match(html, /无线副控/);
+  assert.match(html, /硬件按米家房间展示/);
   assert.doesNotMatch(html, /topology-toolbar/, "the old device page must be replaced, not rendered alongside the new interface");
   assert.ok(html.indexOf('class="dm-room-tabs"') < html.indexOf('class="dm-view-tabs"'), "room selection should remain above the view switch");
 });

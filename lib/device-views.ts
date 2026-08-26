@@ -7,26 +7,19 @@ export type SwitchChannelTarget<T extends ViewDevice> = { id: string; name: stri
 
 const lightingName = /灯带|灯光|灯具|灯组|灯泡|球泡|吸顶灯|吊灯|筒灯|射灯|壁灯|台灯|床头灯|柜灯|夜灯|氛围灯|照明|光源|灯$/;
 const controllerName = /开关|面板|副控|主控|中控|中枢|网关|家庭屏|智能屏|控制屏|触控屏|遥控|控制器|[单双三四五六]开/;
-const centralControllerName = /中控|中枢|网关|家庭屏|智能屏|控制屏|触控屏/;
+const centralControllerName = /中控|家庭屏|智能屏|控制屏|触控屏/;
 const lightingModel = /(?:^|[._-])(?:light|lamp|bulb|strip|ceiling|downlight|spotlight|lighting|lightstrip)(?:[._-]|$)/;
 const mappedModel = /(?:^|[._-])(?:switch|relay|channel|gang|virtual|split)(?:[._-]|$)/;
-const centralControllerModel = /^(?:controller\w*|gateway\w*|central\w*|screen\w*|hub\w*)$/;
+const centralControllerModel = /^(?:controller\w*|central\w*|screen\w*)$/;
 const switchModel = /^(?:switch\w*|panel\w*|remote\w*|relay\w*|key\w*|button\w*)$/;
-const modelKinds: Record<string, string> = { light: "light", lamp: "lamp", bulb: "light", strip: "light", ceiling: "light", downlight: "light", spotlight: "light", lighting: "light", lightstrip: "light", aircondition: "aircondition", acpartner: "acpartner", airpurifier: "airpurifier", vacuum: "vacuum", fan: "fan", lock: "lock", curtain: "curtain", humidifier: "humidifier", plug: "plug", camera: "camera", sensor: "sensor", switch: "switch", panel: "switch", remote: "switch", relay: "switch", button: "switch", key: "switch", controller: "switch", gateway: "switch", screen: "switch", hub: "switch" };
+const modelKinds: Record<string, string> = { light: "light", lamp: "lamp", bulb: "light", strip: "light", ceiling: "light", downlight: "light", spotlight: "light", lighting: "light", lightstrip: "light", aircondition: "aircondition", airc: "aircondition", acpartner: "acpartner", airpurifier: "airpurifier", vacuum: "vacuum", fan: "fan", lock: "lock", curtain: "curtain", humidifier: "humidifier", plug: "plug", camera: "camera", sensor: "sensor", switch: "switch", panel: "switch", remote: "switch", relay: "switch", button: "switch", key: "switch", controller: "switch", screen: "switch", gateway: "gateway", hub: "gateway" };
 
 function groupedDeviceId(did: string | null | undefined) { return Boolean(did && /^group/i.test(did.trim())); }
 
 export function physicalDeviceId(did: string | null | undefined) {
   const value = did?.trim() ?? "";
-  const separator = value.lastIndexOf(".");
-  if (separator <= 0 || separator === value.length - 1) return value;
-  const prefix = value.slice(0, separator);
-  const segments = value.split(".");
-  // `lumi.<id>` and `blt.<version>.<id>` are complete protocol IDs, not
-  // split-device suffixes. Their own `.1` / `.2` descendants are normalized.
-  if (segments.length === 2 && /^[a-z]+$/i.test(prefix)) return value;
-  if (segments.length === 3 && /^blt$/i.test(segments[0]) && /^\d+$/.test(segments[1])) return value;
-  return prefix;
+  if (groupedDeviceId(value)) return value;
+  return value.match(/^(.+)\.s\d+$/i)?.[1] ?? value;
 }
 
 export function samePhysicalDevice(left: string | null | undefined, right: string | null | undefined) {
@@ -46,27 +39,30 @@ function modelParts(value: string) {
 
 export function inferHardwareRole(model: string, name = ""): HardwareRole {
   const { category, tokens } = modelParts(model);
-  if (centralControllerModel.test(category) || tokens.slice(1).some(token => centralControllerModel.test(token)) || centralControllerName.test(name)) return "controller";
+  if (centralControllerModel.test(category) || tokens.slice(1).some(token => centralControllerModel.test(token))) return "controller";
+  const declaredKind = modelKinds[category] ?? modelKinds[tokens.slice(1).find(token => Boolean(modelKinds[token])) ?? ""];
+  if (declaredKind === "gateway" || declaredKind && declaredKind !== "switch") return "device";
+  if (declaredKind === "switch") return "switch";
+  if (centralControllerName.test(name)) return "controller";
   if (tokens.some(token => /^(?:virtual|split|channel)$/.test(token)) && lightingName.test(name) && !controllerName.test(name)) return "device";
   if (switchModel.test(category) || tokens.slice(1).some(token => switchModel.test(token)) || controllerName.test(name)) return "switch";
   return "device";
 }
 
 export function classifyDeviceKind(model: string, name: string, logicalType = "") {
+  const { category, tokens } = modelParts(model);
+  const modelKind = modelKinds[category] ?? modelKinds[tokens.slice(1).find(token => Boolean(modelKinds[token])) ?? ""];
+  if (modelKind) return modelKind;
+
   const reported = modelParts(logicalType);
   const reportedKind = reported.tokens.find(token => Boolean(modelKinds[token]));
   if (reportedKind) return modelKinds[reportedKind];
-
-  const { category, tokens } = modelParts(model);
-  const modelKind = modelKinds[category] ?? modelKinds[tokens.slice(1).find(token => Boolean(modelKinds[token])) ?? ""];
-  if (inferHardwareRole(model) === "device" && modelKind) return modelKind;
 
   // Names and the cloud-reported logical type describe the controllable load.
   // The model is used separately for grouping the physical piece of hardware.
   if (lightingName.test(name) && !controllerName.test(name)) return "light";
   if (controllerName.test(name)) return "switch";
 
-  if (modelKinds[category]) return modelKinds[category];
   if (switchModel.test(category)) {
     if (tokens.some(token => /^(?:virtual|split|channel)$/.test(token)) && lightingName.test(name) && !controllerName.test(name)) return "light";
     return "switch";
