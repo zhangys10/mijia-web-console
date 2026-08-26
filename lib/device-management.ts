@@ -83,12 +83,22 @@ function normalizedName(value: string) {
   return value.trim().replace(/[\s\u3000·•_\-]+/g, "").toLocaleLowerCase();
 }
 
+function withoutControlQualifier(value: string) {
+  const withoutPower = value.replace(/电源$/, "");
+  const marker = withoutPower.indexOf("副控");
+  if (marker < 0) return withoutPower;
+  const before = withoutPower.slice(0, marker);
+  const after = withoutPower.slice(marker + "副控".length);
+  // “灯具名 + 副控 + 位置说明”保留副控前的灯名；“位置 + 副控 + 灯具名”只移除“副控”。
+  return lightName.test(before) ? before : `${before}${after}`;
+}
+
 function targetName(value: string) {
-  return normalizedName(value).replace(/副控.*$/, "").replace(/副控/g, "").replace(/电源$/, "");
+  return withoutControlQualifier(normalizedName(value));
 }
 
 function displayTargetName(value: string) {
-  return value.trim().replace(/副控.*$/, "").replace(/副控/g, "").replace(/电源$/, "") || value;
+  return withoutControlQualifier(value.trim()) || value;
 }
 
 function isDerivedEndpoint(device: ManagedDevice) {
@@ -210,7 +220,10 @@ export function buildDeviceManagementModel<T extends ManagedDevice>(devices: T[]
     const connection = endpointConnection(record.device, record.owner);
     if (connection === "wireless") { pending.push({ record, connection }); continue; }
     const nameKey = `${record.device.homeId}:${targetName(record.device.name)}`;
-    const smart = selectTarget(byName.get(nameKey) ?? [], record.device, record.owner);
+    // 有线/未知端点只能全局匹配独立智能灯；普通灯必须先按端点房间建立锚点。
+    // 否则遇到第二个同名普通灯时，会错误复用第一个房间的唯一候选。
+    const smartCandidates = (byName.get(nameKey) ?? []).filter(candidate => candidate.kind === "smart-light" || candidate.kind === "smart-light-group");
+    const smart = selectTarget(smartCandidates, record.device, record.owner);
     let topology = smart;
     if (!topology) {
       const room = record.device.room;

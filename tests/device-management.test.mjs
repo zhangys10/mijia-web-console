@@ -123,6 +123,78 @@ test("aggregates the four main-bedroom loads with their real wired and wireless 
   });
 });
 
+test("keeps same-name ordinary lamps in different rooms attached to their own wired switches", () => {
+  const raw = [
+    { did: "kitchen", homeId: "fabric", name: "厨房开关", model: "linp.switch.t2dbw2", roomName: "厨房" },
+    { did: "kitchen.s3", homeId: "fabric", name: "灯带", model: "linp.switch.t2dbw2", roomName: "厨房" },
+    { did: "bedroom", homeId: "fabric", name: "主卧床头开关-右", model: "linp.switch.qh2db4", roomName: "主卧" },
+    { did: "bedroom.s2", homeId: "fabric", name: "灯带", model: "linp.switch.qh2db4", roomName: "主卧" },
+    { did: "remote", homeId: "fabric", name: "主卧床头开关-左", model: "linp.switch.qh2db4", roomName: "主卧" },
+    { did: "remote.s2", homeId: "fabric", name: "灯带", model: "linp.switch.qh2db4", roomName: "勿关" },
+  ];
+  const model = buildDeviceManagementModel(records(raw, [
+    runtime("fabric", "kitchen", 3, "wired", false, 2),
+    runtime("fabric", "bedroom", 2, "wired", true, 1),
+    runtime("fabric", "remote", 2, "wireless", true, 1),
+  ]));
+  const strips = model.topologies.filter(item => item.name === "灯带");
+
+  assert.equal(strips.length, 2);
+  assert.deepEqual(strips.map(item => item.room), ["厨房", "主卧"]);
+  assert.deepEqual(strips.find(item => item.room === "厨房").controls.map(control => [control.device.did, control.connection]), [
+    ["kitchen", "wired"],
+  ]);
+  assert.deepEqual(strips.find(item => item.room === "主卧").controls.map(control => [control.device.did, control.connection]), [
+    ["bedroom", "wired"],
+    ["remote", "wireless"],
+  ]);
+});
+
+test("keeps main and secondary bedroom lamps separate before assigning their wireless controls", () => {
+  const raw = [
+    { did: "main", homeId: "fabric", name: "主卧中控屏", model: "xiaomi.controller.oh4w", roomName: "主卧" },
+    { did: "main.s15", homeId: "fabric", name: "中间筒灯", model: "xiaomi.controller.oh4w", roomName: "主卧" },
+    { did: "secondary", homeId: "fabric", name: "次卧中控屏", model: "xiaomi.controller.oh4w", roomName: "次卧" },
+    { did: "secondary.s15", homeId: "fabric", name: "中间筒灯", model: "xiaomi.controller.oh4w", roomName: "次卧" },
+    { did: "main-remote", homeId: "fabric", name: "主卧床头开关", model: "linp.switch.qh2db4", roomName: "主卧" },
+    { did: "main-remote.s4", homeId: "fabric", name: "中间筒灯", model: "linp.switch.qh2db4", roomName: "勿关" },
+    { did: "secondary-remote", homeId: "fabric", name: "次卧床头四键", model: "linp.switch.qh2db4", roomName: "次卧" },
+    { did: "secondary-remote.s4", homeId: "fabric", name: "中间筒灯副控次卧床头", model: "linp.switch.qh2db4", roomName: "勿关" },
+  ];
+  const model = buildDeviceManagementModel(records(raw, [
+    runtime("fabric", "main", 15, "wired"),
+    runtime("fabric", "secondary", 15, "wired"),
+    runtime("fabric", "main-remote", 4, "wireless"),
+    runtime("fabric", "secondary-remote", 4, "wireless"),
+  ]));
+  const downlights = model.topologies.filter(item => item.name === "中间筒灯");
+
+  assert.equal(downlights.length, 2);
+  assert.deepEqual(downlights.map(item => item.room), ["次卧", "主卧"]);
+  assert.deepEqual(downlights.find(item => item.room === "主卧").controls.map(control => control.device.did), ["main", "main-remote"]);
+  assert.deepEqual(downlights.find(item => item.room === "次卧").controls.map(control => control.device.did), ["secondary", "secondary-remote"]);
+});
+
+test("normalizes a location-prefix wireless alias without dropping the lamp name", () => {
+  const raw = [
+    { did: "panel", homeId: "fabric", name: "玄关中控屏", model: "xiaomi.controller.oh4w", roomName: "玄关" },
+    { did: "panel.s16", homeId: "fabric", name: "客厅灯带", model: "xiaomi.controller.oh4w", roomName: "客厅" },
+    { did: "remote", homeId: "fabric", name: "客厅三开", model: "linp.switch.t2dbw3", roomName: "客厅" },
+    { did: "remote.s4", homeId: "fabric", name: "客厅副控灯带", model: "linp.switch.t2dbw3", roomName: "勿关" },
+  ];
+  const model = buildDeviceManagementModel(records(raw, [
+    runtime("fabric", "panel", 16, "wired"),
+    runtime("fabric", "remote", 4, "wireless"),
+  ]));
+
+  assert.equal(model.topologies.length, 1);
+  assert.equal(model.topologies[0].name, "客厅灯带");
+  assert.deepEqual(model.topologies[0].controls.map(control => [control.device.did, control.connection]), [
+    ["panel", "wired"],
+    ["remote", "wireless"],
+  ]);
+});
+
 test("uses the derived endpoint room for ordinary cross-room loads", () => {
   const raw = [
     { did: "living-switch", homeId: "fabric", name: "客厅三开", model: "linp.switch.t2dbw3", roomName: "客厅" },
