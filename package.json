@@ -11,7 +11,7 @@
     "start": "vinext start",
     "test": "npm run build && node --test tests/*.test.mjs",
     "typecheck": "tsc --noEmit --project tsconfig.app-check.json",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .claude"
   },
   "dependencies": {
     "next": "16.2.6",

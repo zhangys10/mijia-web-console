@@ -46,7 +46,7 @@ test("renders the Xiaomi smart home dashboard", async () => {
   assert.match(html, /设备管理/);
   assert.match(html, /开关与硬件/);
   assert.match(html, /实际照明/);
-  assert.match(html, /无线副控/);
+  assert.match(html, /无线控制/);
   assert.match(html, /硬件按米家房间展示/);
   assert.doesNotMatch(html, /topology-toolbar/, "the old device page must be replaced, not rendered alongside the new interface");
   assert.ok(html.indexOf('class="dm-room-tabs"') < html.indexOf('class="dm-view-tabs"'), "room selection should remain above the view switch");

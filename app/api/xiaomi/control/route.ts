@@ -58,14 +58,14 @@ export async function POST(request: NextRequest) {
       const response = await xiaomiRequest(await unseal<XiaomiSession>(value), "/app/miotspec/action", { did: body.did, siid, aiid, in: Array.isArray(body.params) ? body.params : [] });
       const result = response.result as Record<string, unknown> | undefined;
       if (result && typeof result.code === "number" && result.code !== 0) throw new Error(`XIAOMI_PROPERTY_CODE_${result.code}`);
-      return NextResponse.json({ ok: true, result });
+      return NextResponse.json({ ok: true, did: body.did, result });
     }
     if (!["boolean", "number", "string"].includes(typeof body.value) || (typeof body.value === "number" && !Number.isFinite(body.value))) return NextResponse.json({ error: "INVALID_DEVICE_COMMAND" }, { status: 400 });
     const piid = Number(body.piid ?? 1);
     if (!Number.isInteger(piid) || piid < 1) return NextResponse.json({ error: "INVALID_PROPERTY_MAPPING" }, { status: 400 });
     const response = await xiaomiRequest(await unseal<XiaomiSession>(value), "/app/miotspec/prop/set", { params: [{ did: body.did, siid, piid, value: body.value }] });
     const result = propertyResult(response);
-    return NextResponse.json({ ok: true, value: body.value, result });
+    return NextResponse.json({ ok: true, did: body.did, value: body.value, result });
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
     console.error("[xiaomi-control-write]", JSON.stringify({ error: message }));

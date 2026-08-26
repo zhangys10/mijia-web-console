@@ -128,19 +128,23 @@ key-param
 
 ### 4.2 模式映射
 
+`mode` 只说明按键服务当前公开的本地继电器模式，不能单独证明它控制的对象，也不能同时承担“逻辑控制传输”和“物理供电”两个含义。
+
 ```ts
 type Connection = "wired" | "wireless" | "unknown";
+type ButtonControlMode = "wired-direct" | "wireless-control" | "unknown";
+type RelayPowerMode = "wired-power" | "no-power-edge" | "unknown";
 ```
 
-对于已验证型号：
+对于已验证且没有厂商枚举的型号：
 
-| `mode` | 连接类型 | 含义 |
+| `mode` | 兼容连接类型 | 含义 |
 | --- | --- | --- |
-| `0` | `wired` | 继电器直接控制负载电源 |
-| `1` | `wireless` | 按键作为无线副控，不直接切换本地继电器 |
-| 缺失或无法识别 | `unknown` | 模式待确认 |
+| `0` | `wired` | 本地继电器参与；若控制对象是智能灯，仍可同时存在无线逻辑控制 |
+| `1` | `wireless` | 按键作为无线控制，不直接切换本地继电器 |
+| 其他数值、缺失或无法识别 | `unknown` | 模式待确认 |
 
-若型号规格提供明确的枚举标签，优先依据枚举中的“有线/主控”或“无线/副控”语义解析。未知值不得归为 `wired`。
+若型号规格提供明确枚举，优先使用枚举语义。仅含“有线”或仅含“无线”的标签可以映射兼容连接类型；同时包含“有线和无线”等双重语义的标签不得压缩成单一值，应交由控制边表达或保留为 `unknown`。
 
 ### 4.3 按键状态
 
@@ -153,12 +157,18 @@ type Connection = "wired" | "wireless" | "unknown";
 
 ### 5.1 目标类别
 
+按键的“控制设备”允许包含非照明智能设备；照明聚合仍只收录灯具目标。
+
 ```ts
-type LightingTargetKind =
+type ControlObjectKind =
+  | "unconfigured"
   | "ordinary-load"
   | "smart-light"
   | "smart-light-group"
+  | "smart-device"
   | "unknown";
+
+type LightingTargetKind = Exclude<ControlObjectKind, "unconfigured" | "smart-device">;
 ```
 
 | 类别 | 锚点 | 配置入口 | 状态来源 |
@@ -172,22 +182,29 @@ type LightingTargetKind =
 
 ```ts
 type ControlRelation =
-  | "relay-load"
-  | "wireless-secondary"
-  | "smart-device-power"
-  | "group-control"
+  | "wired-load"
+  | "wireless-control"
+  | "wired-smart-light-power"
   | "unknown";
+
+type EvidenceSource =
+  | "explicit-control-object"
+  | "split-device"
+  | "miot-property"
+  | "name-match"
+  | "none";
 ```
 
 | 关系 | 来源 | 目标 |
 | --- | --- | --- |
-| `relay-load` | 有线 `switch` 服务 | 普通灯回路 |
-| `wireless-secondary` | 无线 `switch` 服务 | 已匹配照明目标 |
-| `smart-device-power` | 派生电源端点 | 独立智能灯 |
-| `group-control` | 明确目标 DID 的控制端点 | 智能灯组 |
-| `unknown` | 模式或目标无法确认的端点 | 待确认目标 |
+| `wired-load` | 有线 `switch` 服务/继电器 | 普通灯回路 |
+| `wireless-control` | 具体物理按键 | 智能灯、灯组或其他智能设备 |
+| `wired-smart-light-power` | 派生电源端点/继电器 | 独立智能灯或已确认灯组电源 |
+| `unknown` | 模式或目标无法确认的按键 | 待确认目标或未配置占位 |
 
-一个来源服务可以连接多个目标，一个目标也可以包含多个有线或无线来源。数据模型使用多对多控制边，不把关系限制为一对一。
+同一智能灯可以同时接收同一开关按键的 `wireless-control` 和该继电器的 `wired-smart-light-power`。两条边必须分别保存，不能用一个 `connection` 值互相覆盖。其他智能设备只有 `wireless-control`，除非另有明确供电证据，否则不得生成有线电源边。
+
+一个来源服务可以连接多个目标，一个目标也可以包含多个来源和多种关系。数据模型使用多对多控制边，不把关系限制为一对一。
 
 ### 5.3 名称匹配
 
@@ -293,20 +310,50 @@ type LightingTarget = {
   unresolved: boolean;
 };
 
+type ButtonControlObject = {
+  key: string;
+  homeId: string;
+  sourceDid: string;
+  sourceSiid: number;
+  buttonIndex: number | null;
+  targetDid: string | null;
+  targetSiid: number | null;
+  targetName: string;
+  targetRoom: string;
+  targetKind: ControlObjectKind;
+  evidence: "confirmed" | "inferred" | "unknown";
+  evidenceSource: EvidenceSource;
+};
+
+type ChannelControlObjectResult = {
+  key: string;
+  homeId: string;
+  sourceDid: string;
+  sourceSiid: number;
+  status: "available" | "unavailable" | "failed";
+  complete: boolean;
+  reason:
+    | "complete"
+    | "embedded-data-incomplete"
+    | "query-not-supported"
+    | "query-failed";
+  objects: ButtonControlObject[];
+};
+
 type ControlEdge = {
   key: string;
   homeId: string;
   sourceDid: string;
   sourceSiid: number;
-  endpointDid: string;
+  endpointDid: string | null;
   targetKey: string;
   relation:
-    | "relay-load"
-    | "wireless-secondary"
-    | "smart-device-power"
-    | "group-control"
+    | "wired-load"
+    | "wireless-control"
+    | "wired-smart-light-power"
     | "unknown";
   evidence: "confirmed" | "inferred" | "unknown";
+  evidenceSource: EvidenceSource;
 };
 
 type HomeTopology = {
@@ -326,18 +373,21 @@ type HomeTopology = {
 
 1. 按 `homeId + did` 建立家庭级设备索引。
 2. 根据 DID 规则识别 `group.*`、物理设备和 `.sN` 派生端点。
-3. 按型号获取并缓存 MIoT 规格。
-4. 仅枚举真实 `switch` 服务，忽略事件型按键。
-5. 批量读取各服务的 `on` 与 `mode`。
-6. 为每个 `.sN` 端点关联同家庭物理根 DID 与服务 `siid`。
-7. 先建立独立智能灯和智能灯组目标。
-8. 使用 `wired` 端点建立普通灯目标或智能设备供电关系。
-9. 使用明确绑定或全家庭名称匹配关联 `wireless` 端点。
-10. 按目标类别计算 `targetRoom`、状态与配置入口。
-11. 合并同目标控制边，保留所有来源设备、服务和证据等级。
-12. 将模式缺失、父设备缺失、名称歧义和成员未知记录到 `unresolved`。
+3. 从设备列表的白名单字段只读解析显式来源按键、目标 DID/siid、名称与房间；无法识别的私有结构直接忽略。
+4. 为每个按键记录控制设备结果的 `status` 与 `complete`；设备列表内嵌对象只能证明发现了对象，不能证明响应完整。
+5. 按型号获取并缓存 MIoT 规格。
+6. 仅枚举真实 `switch` 服务，忽略事件型按键。
+7. 批量读取各服务的 `on` 与 `mode`。
+8. 将 `Wired And Wireless` 解释为 `relay-enabled` 能力，将 `Wireless` 解释为 `wireless-only`，不再把能力值直接当成最终连接关系。
+9. 为每个 `.sN` 端点关联同家庭物理根 DID 与服务 `siid`。
+10. 先建立独立智能灯和智能灯组目标。
+11. 联合 mode 能力与控制设备结果判定：`relay-enabled + available + complete + empty` 才能确认 `wired-load`；查询不可用、失败或不完整时保持待确认。
+12. 智能灯按控制对象建立 `wireless-control`，并在继电器能力与 split endpoint 均确认时另建 `wired-smart-light-power`；其他智能设备只建立 `wireless-control`。
+13. 按目标类别计算 `targetRoom`、状态与配置入口。
+14. 保留同目标的所有独立边、来源服务和证据等级，不合并不同 relation。
+15. 将模式缺失、控制设备结果不可用或不完整、父设备缺失、未配置、名称歧义和成员未知记录到 `unresolved`。
 
-构建顺序固定为“设备与规格 → 实时模式 → 目标锚点 → 无线关系 → 状态”，不得在读取真实 `mode` 前默认控制角色。
+构建顺序固定为“控制设备查询状态 → 设备与规格 → 实时模式能力 → 组合判定 → 目标锚点 → 独立控制/供电边 → 状态”。发现流程只允许读取设备列表、已验证的只读控制设备结果和属性，不得调用属性写入、学习、配对、清除或其他 action。未验证真实“控制设备”接口前，系统将设备列表内嵌数据标记为不完整，不会把空数组解释为无绑定。
 
 ## 9. API 契约
 
@@ -376,6 +426,9 @@ type DeviceSyncResponse = {
 
 - 同步同时读取设备列表、必要型号规格和实时状态。
 - 状态读取失败时仍返回设备，相关连接类型和状态设为 `unknown`。
+- 每个 switch 通道公开 `modeCapability`、`controlObjectStatus`、`controlObjectComplete` 和组合判定 `classification`。
+- 只有 `controlObjectStatus="available"` 且 `controlObjectComplete=true` 的空结果可作为“确认无智能绑定”的证据。
+- 当通道为 `relay-enabled`、存在同家庭同物理 DID 的 `.sN` 端点，且当前未发现明确智能目标时，可建立证据级别为 `inferred`、来源为 `split-device` 的 `wired-load`，分类为 `inferred-wired`；它只表示“有线回路（拓扑推定）”，不得表述为绑定查询已确认。
 - `parentId` 只关联同家庭物理根 DID。
 - 派生端点的 `on` 取对应物理设备服务状态。
 - 智能灯和灯组的 `on` 取自身 DID 状态。
@@ -469,7 +522,9 @@ GET /api/xiaomi/control?did=...&properties=2.1,2.2,3.1,3.2
 ### 10.5 状态与响应式布局
 
 - 离线硬件和智能灯显示离线样式。
-- `unknown` 模式显示“模式待确认”。
+- `unknown` 模式显示“关系待确认”。
+- 控制设备结果不可用、失败或不完整时分别显示原因，不显示为“确认无绑定”。
+- `wireless-only + complete empty` 显示“无线模式未配置”。
 - `inferred` 关系显示“名称推断”。
 - 桌面端使用目标列表、拓扑图和控制详情并列布局。
 - 移动端改为单列，保持全部配置入口和点击区域。

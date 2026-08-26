@@ -3,7 +3,7 @@ import type { DeviceControlChannel, DeviceTopology } from "./device-topology";
 export type HardwareRole = "controller" | "switch" | "device";
 type ViewDevice = { did?: string; name: string; kind: string; icon?: string; room?: string; homeId?: string; parentId?: string | null; detail?: string; model?: string; logicalType?: string; hardwareRole?: HardwareRole; topology?: DeviceTopology | null };
 export type ControlledDeviceGroup<T extends ViewDevice> = Omit<T, "did" | "parentId"> & { did?: undefined; parentId: null; virtual: true; members: T[] };
-export type SwitchChannelTarget<T extends ViewDevice> = { id: string; name: string; room: string; device?: T; smart: boolean };
+export type SwitchChannelTarget<T extends ViewDevice> = { id: string; name: string; room: string; device?: T; smart: boolean; kind?: DeviceControlChannel["controlObjects"][number]["targetKind"]; evidence?: DeviceControlChannel["controlObjects"][number]["evidence"] };
 
 const lightingName = /灯带|灯光|灯具|灯组|灯泡|球泡|吸顶灯|吊灯|筒灯|射灯|壁灯|台灯|床头灯|柜灯|夜灯|氛围灯|照明|光源|灯$/;
 const controllerName = /开关|面板|副控|主控|中控|中枢|网关|家庭屏|智能屏|控制屏|触控屏|遥控|控制器|[单双三四五六]开/;
@@ -107,7 +107,7 @@ export function listSwitchChannelTargets<T extends ViewDevice>(channel: DeviceCo
   for (const target of channel.targets) {
     if (targets.has(target.id)) continue;
     const device = findPhysicalDevice(devices, target.id);
-    targets.set(target.id, { id: target.id, name: target.name, room: target.room, device, smart: Boolean(device && isIndependentSmartDevice(device)) });
+    targets.set(target.id, { id: target.id, name: target.name, room: target.room, device, smart: Boolean(device && isIndependentSmartDevice(device)), kind: target.kind, evidence: target.evidence });
   }
   return [...targets.values()];
 }
