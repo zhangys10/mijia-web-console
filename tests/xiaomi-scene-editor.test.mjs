@@ -13,6 +13,7 @@ import {
   submitSceneEdit,
   validateSceneDraftCapabilities,
 } from "../lib/xiaomi-scene-editor.ts";
+import { isSceneWritableProperty } from "../lib/xiaomi-scene-properties.ts";
 
 const modernScene = {
   scene_id: "scene-1",
@@ -125,6 +126,15 @@ test("validates scene drafts and checks device MIoT capabilities server-side", a
   assert.throws(() => assertBasicSceneDraft({ homeId: "home-1", name: "不支持", actions: [{ clientId: "one", kind: "invoke-action", did: "light-1", deviceName: "灯", model: "vendor.light.v1", label: "切换", siid: 2, aiid: 1 }] }, false), /INVALID_SCENE_ACTION/);
   await assert.rejects(validateSceneDraftCapabilities({ ...draft, homeId: "home-2" }, [{ did: "light-1", homeId: "home-1", model: "vendor.light.v1" }], async () => { throw new Error("must not load"); }), /XIAOMI_SCENE_DEVICE_NOT_FOUND/);
   await assert.rejects(validateSceneDraftCapabilities({ ...draft, actions: [{ ...draft.actions[0], properties: [{ siid: 2, piid: 1, value: "not-boolean" }] }] }, [{ did: "light-1", homeId: "home-1", model: "vendor.light.v1" }], async () => ({ model: "vendor.light.v1", urn: "urn:test", description: "灯", groups: [{ key: "2", name: "light", label: "灯", siid: 2, properties: [{ key: "2.1", name: "on", label: "开关", siid: 2, piid: 1, format: "bool", readable: true, writable: true, notify: true }], actions: [], events: [] }] })), /XIAOMI_SCENE_PROPERTY_UNSUPPORTED/);
+});
+
+test("exposes only standard user-facing properties with a safe value editor", () => {
+  const property = { name: "brightness", format: "uint8", readable: true, writable: true, range: { min: 1, max: 100, step: 1 } };
+  assert.equal(isSceneWritableProperty("light", property), true);
+  assert.equal(isSceneWritableProperty("light", { ...property, name: "factory-reset", format: "bool", range: undefined }), false);
+  assert.equal(isSceneWritableProperty("custom-service", { ...property, name: "on", format: "bool", range: undefined }), false);
+  assert.equal(isSceneWritableProperty("light", { ...property, readable: false }), false);
+  assert.equal(isSceneWritableProperty("light", { ...property, range: undefined }), false);
 });
 
 test("submits the exact AppSceneService Edit endpoint and recognizes returned ids", async () => {

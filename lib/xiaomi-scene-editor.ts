@@ -2,6 +2,7 @@ import { xiaomiRequest, type XiaomiSession } from "./xiaomi-cloud.ts";
 import { getMiotCapabilities } from "./miot-spec.ts";
 import { parseDerivedDeviceId } from "./device-topology.ts";
 import { isDeviceGroupId } from "./device-groups.ts";
+import { isSceneWritableProperty } from "./xiaomi-scene-properties.ts";
 import {
   parsedSceneRecord,
   type XiaomiRequester,
@@ -410,11 +411,11 @@ export async function validateSceneDraftCapabilities(
       specification = await loadCapabilities(model, urn);
       specifications.set(key, specification);
     }
-    const properties = specification.groups.flatMap(group => group.properties);
     if (action.kind === "set-properties") {
       for (const requested of action.properties ?? []) {
-        const property = properties.find(item => item.siid === requested.siid && item.piid === requested.piid);
-        if (!property?.writable || !validPropertyValue(property, requested.value)) throw new Error("XIAOMI_SCENE_PROPERTY_UNSUPPORTED");
+        const group = specification.groups.find(item => item.siid === requested.siid);
+        const property = group?.properties.find(item => item.piid === requested.piid);
+        if (!group || !property || !isSceneWritableProperty(group.name, property) || !validPropertyValue(property, requested.value)) throw new Error("XIAOMI_SCENE_PROPERTY_UNSUPPORTED");
       }
     } else throw new Error("XIAOMI_SCENE_ACTION_UNSUPPORTED");
     actions.push({
