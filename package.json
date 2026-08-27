@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vinext build",
+    "build:vercel": "next build --webpack",
     "start": "vinext start",
     "test": "npm run build && npm run test:unit",
     "test:unit": "node --experimental-strip-types --test tests/*.test.mjs",
