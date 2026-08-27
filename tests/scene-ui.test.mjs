@@ -61,6 +61,10 @@ test("scene editor supports safe create and update workflows", async () => {
   assert.match(source, /动作保持只读/);
   assert.match(source, /放弃尚未保存的场景修改/);
   assert.match(source, /设置属性/);
+  assert.match(source, /按房间筛选/);
+  assert.match(source, /按类型筛选/);
+  assert.match(source, /className="scene-device-options" role="listbox"/);
+  assert.match(source, /aria-selected=\{working\?\.did===device\.did\}/);
   assert.doesNotMatch(source, />执行动作</);
   assert.match(source, /moveAction/);
   assert.match(styles, /@media\(max-width:760px\)/);

@@ -41,8 +41,18 @@ function errorText(error: string) {
   return `场景保存失败：${error || "未知错误"}`;
 }
 
-function editableDevices(devices: ManagedDevice[], homeId: string) {
-  return devices.filter(device => device.homeId === homeId && device.did && !parseDerivedDeviceId(device.did) && !/^group\./i.test(device.did));
+function editableDevices(devices: ManagedDevice[], homeId: string): Array<ManagedDevice & { did:string }> {
+  return devices.filter((device):device is ManagedDevice & { did:string } => Boolean(device.homeId === homeId && device.did && !parseDerivedDeviceId(device.did) && !/^group\./i.test(device.did)));
+}
+
+function deviceKindLabel(kind:string) {
+  return ({light:"灯光",lamp:"灯光",aircondition:"空调",acpartner:"空调伴侣",airpurifier:"空气净化器",vacuum:"扫拖机器人",fan:"风扇",lock:"智能门锁",curtain:"窗帘",humidifier:"加湿器",plug:"智能插座",switch:"智能开关",camera:"摄像头",sensor:"传感器",gateway:"网关"} as Record<string,string>)[kind]||"智能设备";
+}
+
+function deviceKindGroup(kind:string) {
+  if(kind==="lamp")return "light";
+  if(kind==="acpartner")return "aircondition";
+  return kind;
 }
 
 function actionSummary(action: SceneEditorDraft["actions"][number]) {
@@ -63,8 +73,13 @@ export default function SceneEditor({ homeId, homeName, devices, sceneId, onClos
   const [workingIndex,setWorkingIndex]=useState<number|undefined>();
   const [spec,setSpec]=useState<Specification>({loading:false,groups:[]});
   const [addPropertyKey,setAddPropertyKey]=useState("");
+  const [deviceRoom,setDeviceRoom]=useState("");
+  const [deviceKind,setDeviceKind]=useState("");
   const requestId=useRef(0);
   const candidates=useMemo(()=>editableDevices(devices,homeId),[devices,homeId]);
+  const deviceRooms=useMemo(()=>Array.from(new Set(candidates.map(device=>device.room))).sort((left,right)=>left.localeCompare(right,"zh-CN")),[candidates]);
+  const deviceKinds=useMemo(()=>Array.from(new Set(candidates.map(device=>deviceKindGroup(device.kind)))).sort((left,right)=>deviceKindLabel(left).localeCompare(deviceKindLabel(right),"zh-CN")),[candidates]);
+  const filteredCandidates=useMemo(()=>candidates.filter(device=>(!deviceRoom||device.room===deviceRoom)&&(!deviceKind||deviceKindGroup(device.kind)===deviceKind)),[candidates,deviceKind,deviceRoom]);
   const writable=spec.groups.flatMap(group=>group.properties.filter(property=>property.writable));
 
   useEffect(()=>{
@@ -95,13 +110,13 @@ export default function SceneEditor({ homeId, homeName, devices, sceneId, onClos
   }
 
   function startAdd(){
-    setComposerOpen(true);setWorkingIndex(undefined);setWorking(undefined);setSpec({loading:false,groups:[]});setAddPropertyKey("");
+    setComposerOpen(true);setWorkingIndex(undefined);setWorking(undefined);setSpec({loading:false,groups:[]});setAddPropertyKey("");setDeviceRoom("");setDeviceKind("");
   }
 
   function startEdit(action:SceneDraftAction,index:number){
     const device=candidates.find(item=>item.did===action.did);
     setComposerOpen(true);setWorkingIndex(index);setWorking({...structuredClone(action),...(device?{deviceName:device.name,model:device.detail}:{})});setAddPropertyKey("");
-    if(device)void loadSpecification(device);
+    if(device){setDeviceRoom(device.room);setDeviceKind(deviceKindGroup(device.kind));void loadSpecification(device)}
   }
 
   function addProperty(){
@@ -155,7 +170,7 @@ export default function SceneEditor({ homeId, homeName, devices, sceneId, onClos
           {!draft.actions.length&&<div className="scene-editor-empty">还没有动作。选择设备并加入至少一个动作后才能创建场景。</div>}
         </section>
         {draft.actionsEditable&&composerOpen&&<section className={`scene-action-composer ${working?"active":""}`}><div className="scene-editor-section-title"><div><span>＋</span><div><strong>{workingIndex===undefined?"添加动作":"修改动作"}</strong><small>仅展示设备公开且可安全写入的能力</small></div></div></div>
-          <label><span>目标设备</span><select value={working?.did??""} onChange={event=>selectDevice(event.target.value)}><option value="">选择设备</option>{Array.from(new Set(candidates.map(item=>item.room))).map(room=><optgroup key={room} label={room}>{candidates.filter(item=>item.room===room).map(device=><option key={device.did} value={device.did}>{device.name}{device.online===false?" · 离线":""}</option>)}</optgroup>)}</select></label>
+          <div className="scene-device-picker"><div className="scene-device-filters"><label><span>按房间筛选</span><select value={deviceRoom} onChange={event=>setDeviceRoom(event.target.value)}><option value="">全部房间</option>{deviceRooms.map(room=><option key={room} value={room}>{room}</option>)}</select></label><label><span>按类型筛选</span><select value={deviceKind} onChange={event=>setDeviceKind(event.target.value)}><option value="">全部类型</option>{deviceKinds.map(kind=><option key={kind} value={kind}>{deviceKindLabel(kind)}</option>)}</select></label></div><div className="scene-device-result-title"><span>目标设备</span><small>{filteredCandidates.length} 台可选</small></div><div className="scene-device-options" role="listbox" aria-label="目标设备">{filteredCandidates.map(device=><button type="button" role="option" aria-selected={working?.did===device.did} className={working?.did===device.did?"selected":""} key={device.did} onClick={()=>selectDevice(device.did)}><span className="scene-device-icon">{device.icon}</span><span><strong>{device.name}</strong><small>{device.room} · {deviceKindLabel(device.kind)}{device.online===false?" · 离线":""}</small></span><i>{working?.did===device.did?"✓":"›"}</i></button>)}</div>{!filteredCandidates.length&&<div className="scene-device-empty">没有符合当前筛选条件的设备。</div>}</div>
           {spec.loading&&<div className="scene-composer-state">正在读取设备能力…</div>}{spec.error&&<div className="scene-composer-state error">该设备能力暂不可用：{spec.error}</div>}
           {working&&!spec.loading&&!spec.error&&working.kind==="set-properties"&&<><div className="scene-kind-tabs"><button type="button" className="selected" disabled={!writable.length}>设置属性</button></div>
             <><div className="scene-property-list">{(working.properties??[]).map((property,index)=>{const capability=writable.find(item=>item.siid===property.siid&&item.piid===property.piid);return <div key={`${property.siid}.${property.piid}`}><div><strong>{capability?.label||property.label||`属性 ${property.siid}.${property.piid}`}</strong><button type="button" onClick={()=>setWorking({...working,properties:working.properties?.filter((_,item)=>item!==index)})}>移除</button></div><PropertyValueEditor property={capability} value={property.value} onChange={value=>setPropertyValue(index,value)}/></div>})}</div><div className="scene-add-property"><select value={addPropertyKey} onChange={event=>setAddPropertyKey(event.target.value)}><option value="">选择要设置的属性</option>{spec.groups.map(group=><optgroup key={group.key} label={group.label}>{group.properties.filter(property=>property.writable&&!working.properties?.some(item=>item.siid===property.siid&&item.piid===property.piid)).map(property=><option key={property.key} value={property.key}>{property.label}</option>)}</optgroup>)}</select><button type="button" disabled={!addPropertyKey} onClick={addProperty}>加入</button></div></>
