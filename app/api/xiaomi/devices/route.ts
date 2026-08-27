@@ -11,12 +11,33 @@ import {
 } from "../../../../lib/device-topology";
 import { classifyDeviceKind, inferHardwareRole } from "../../../../lib/device-views";
 import { getMiotCapabilities, type MiotCapabilityGroup, type MiotCapabilityProperty } from "../../../../lib/miot-spec";
-import { resolveSwitchMode } from "../../../../lib/switch-channel-mode";
+import { diagnoseSwitchMode, isSwitchModeProperty } from "../../../../lib/switch-channel-mode";
 import { listDevices, unseal, xiaomiRequest, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
 
 type RawDevice = Record<string, unknown>;
 type PropertyValue = boolean | number | string;
 type PropertyPlan = { did: string; siid: number; piid: number };
+type PropertyResultState =
+  | { status: "ok" }
+  | { status: "property-code-error"; code: number }
+  | { status: "property-result-invalid" }
+  | { status: "property-batch-failed" };
+
+const debugRuntime = process.env.XIAOMI_RUNTIME_DEBUG === "1";
+
+function redactedDid(did: string) {
+  return did.length <= 4 ? "••••" : `••••${did.slice(-4)}`;
+}
+
+function errorCode(error: unknown) {
+  const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
+  return /^(?:XIAOMI|MIOT)_[A-Z0-9_]+$/.test(message) ? message : error instanceof Error ? error.name : "UNKNOWN_ERROR";
+}
+
+function runtimeDiagnostic(event: string, details: Record<string, unknown>) {
+  if (!debugRuntime) return;
+  console.info("[xiaomi-runtime]", JSON.stringify({ event, ...details }));
+}
 
 function text(value: unknown) {
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
@@ -66,9 +87,31 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
     specificationKeys.set(`${model}:${urn ?? ""}`, { model, urn });
   }
   const specifications = new Map<string, MiotCapabilityGroup[]>();
+  const specificationFailures = new Map<string, string>();
   await Promise.all([...specificationKeys.entries()].map(async ([key, item]) => {
-    try { specifications.set(key, (await getMiotCapabilities(item.model, item.urn)).groups); }
-    catch { specifications.set(key, []); }
+    try {
+      const groups = (await getMiotCapabilities(item.model, item.urn)).groups;
+      specifications.set(key, groups);
+      if (item.model === "xiaomi.controller.oh4w") {
+        runtimeDiagnostic("specification-loaded", {
+          model: item.model,
+          switches: groups.filter(group => group.name === "switch").map(group => ({
+            siid: group.siid,
+            modeProperties: group.properties.filter(isSwitchModeProperty).map(property => ({
+              name: property.name,
+              piid: property.piid,
+              readable: property.readable,
+              choices: property.choices ?? [],
+            })),
+          })),
+        });
+      }
+    } catch (error) {
+      const failure = errorCode(error);
+      specifications.set(key, []);
+      specificationFailures.set(key, failure);
+      runtimeDiagnostic("specification-failed", { model: item.model, error: failure });
+    }
   }));
 
   const plans = new Map<string, PropertyPlan>();
@@ -82,18 +125,40 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
   const deviceOnDescriptors: Array<{ device: RawDevice; property: MiotCapabilityProperty }> = [];
 
   for (const device of candidates) {
-    if (!isOnline(device)) continue;
     const did = text(device.did);
     const model = deviceModel(device);
-    const groups = specifications.get(`${model}:${deviceUrn(device) ?? ""}`) ?? [];
+    const specificationKey = `${model}:${deviceUrn(device) ?? ""}`;
+    const groups = specifications.get(specificationKey) ?? [];
     const role = inferHardwareRole(model, text(device.name));
+    if (!isOnline(device)) {
+      if (role === "controller" || role === "switch") {
+        runtimeDiagnostic("device-skipped", { did: redactedDid(did), model, reason: "device-offline" });
+      }
+      continue;
+    }
     if (role === "controller" || role === "switch") {
       const switchGroups = groups.filter(group => group.name === "switch");
+      if (!switchGroups.length) {
+        runtimeDiagnostic("switch-services-missing", {
+          did: redactedDid(did),
+          model,
+          reason: specificationFailures.has(specificationKey) ? "spec-unavailable" : "switch-service-missing",
+          error: specificationFailures.get(specificationKey) ?? null,
+        });
+      }
       switchGroups.forEach((group, index) => {
         const on = group.properties.find(property => property.name === "on" && property.readable);
-        const mode = group.properties.find(property => property.name === "mode" && property.readable);
+        const mode = group.properties.find(property => isSwitchModeProperty(property) && property.readable);
         channelDescriptors.push({ device, group, buttonIndex: index + 1, on, mode });
         for (const property of [on, mode]) if (property) plans.set(propertyKey(did, property.siid, property.piid), { did, siid: property.siid, piid: property.piid });
+        if (model === "xiaomi.controller.oh4w" && !mode) {
+          runtimeDiagnostic("mode-property-missing", {
+            did: redactedDid(did),
+            model,
+            siid: group.siid,
+            properties: group.properties.map(property => ({ name: property.name, piid: property.piid, readable: property.readable })),
+          });
+        }
       });
     }
     if (isDeviceGroupId(did) || ["light", "lamp"].includes(classifyDeviceKind(model, text(device.name)))) {
@@ -106,15 +171,45 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
   }
 
   const values = new Map<string, PropertyValue>();
-  await Promise.all(chunks([...plans.values()], 40).map(async batch => {
+  const resultStates = new Map<string, PropertyResultState>();
+  await Promise.all(chunks([...plans.values()], 40).map(async (batch, batchIndex) => {
     try {
       const response = await xiaomiRequest(session, "/app/miotspec/prop/get", { params: batch });
-      if (!Array.isArray(response.result)) return;
-      for (const item of response.result as RawDevice[]) {
-        if (Number(item.code ?? 0) !== 0 || !["boolean", "number", "string"].includes(typeof item.value)) continue;
-        values.set(propertyKey(text(item.did), Number(item.siid), Number(item.piid)), item.value as PropertyValue);
+      if (!Array.isArray(response.result)) {
+        for (const plan of batch) resultStates.set(propertyKey(plan.did, plan.siid, plan.piid), { status: "property-result-invalid" });
+        runtimeDiagnostic("property-batch-invalid", { batch: batchIndex + 1, requested: batch.length });
+        return;
       }
-    } catch { /* A failed state batch must not make device synchronization fail. */ }
+      let accepted = 0;
+      let rejected = 0;
+      for (const item of response.result as RawDevice[]) {
+        const key = propertyKey(text(item.did), Number(item.siid), Number(item.piid));
+        if (Number(item.code ?? 0) !== 0) {
+          resultStates.set(key, { status: "property-code-error", code: Number(item.code) });
+          rejected += 1;
+          continue;
+        }
+        if (!["boolean", "number", "string"].includes(typeof item.value)) {
+          resultStates.set(key, { status: "property-result-invalid" });
+          rejected += 1;
+          continue;
+        }
+        values.set(key, item.value as PropertyValue);
+        resultStates.set(key, { status: "ok" });
+        accepted += 1;
+      }
+      runtimeDiagnostic("property-batch-completed", {
+        batch: batchIndex + 1,
+        requested: batch.length,
+        returned: response.result.length,
+        accepted,
+        rejected,
+      });
+    } catch (error) {
+      const failure = errorCode(error);
+      for (const plan of batch) resultStates.set(propertyKey(plan.did, plan.siid, plan.piid), { status: "property-batch-failed" });
+      runtimeDiagnostic("property-batch-failed", { batch: batchIndex + 1, requested: batch.length, error: failure });
+    }
   }));
 
   const channels = new Map<string, DeviceChannelRuntimeState>();
@@ -122,8 +217,33 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
     const did = text(descriptor.device.did);
     const homeId = deviceHome(descriptor.device);
     const onValue = descriptor.on ? values.get(propertyKey(did, descriptor.on.siid, descriptor.on.piid)) : undefined;
-    const modeValue = descriptor.mode ? values.get(propertyKey(did, descriptor.mode.siid, descriptor.mode.piid)) : undefined;
-    const connectionType = descriptor.mode && modeValue !== undefined ? resolveSwitchMode(descriptor.mode, modeValue) : "unknown";
+    const modeKey = descriptor.mode ? propertyKey(did, descriptor.mode.siid, descriptor.mode.piid) : null;
+    const modeValue = modeKey ? values.get(modeKey) : undefined;
+    const diagnostic = diagnoseSwitchMode(descriptor.mode, modeValue);
+    const connectionType = diagnostic.capability === "wireless-only" ? "wireless" : "unknown";
+    if (diagnostic.capability === "unknown") {
+      const resultState = modeKey ? resultStates.get(modeKey) : undefined;
+      runtimeDiagnostic("channel-mode-unknown", {
+        did: redactedDid(did),
+        model: deviceModel(descriptor.device),
+        siid: descriptor.group.siid,
+        modeProperty: descriptor.mode ? { name: descriptor.mode.name, piid: descriptor.mode.piid } : null,
+        reason: resultState && resultState.status !== "ok" ? resultState.status : diagnostic.reason,
+        propertyCode: resultState?.status === "property-code-error" ? resultState.code : null,
+        valueType: modeValue === undefined ? "missing" : typeof modeValue,
+        value: modeValue ?? null,
+        choices: descriptor.mode?.choices ?? [],
+      });
+    } else if (deviceModel(descriptor.device) === "xiaomi.controller.oh4w") {
+      runtimeDiagnostic("channel-mode-resolved", {
+        did: redactedDid(did),
+        model: deviceModel(descriptor.device),
+        siid: descriptor.group.siid,
+        piid: descriptor.mode?.piid ?? null,
+        modeCapability: diagnostic.capability,
+        value: modeValue,
+      });
+    }
     channels.set(deviceChannelStateKey(homeId, did, descriptor.group.siid), {
       homeId,
       did,
@@ -131,9 +251,10 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
       buttonIndex: descriptor.buttonIndex,
       label: descriptor.group.label,
       connectionType,
+      modeCapability: diagnostic.capability,
       reportedOn: typeof onValue === "boolean" ? onValue : null,
       modeValue: modeValue ?? null,
-      evidence: connectionType === "unknown" ? "unknown" : "miot-property",
+      evidence: diagnostic.capability === "unknown" ? "unknown" : "miot-property",
     });
   }
 
@@ -153,7 +274,20 @@ export async function GET() {
     const session = await unseal<XiaomiSession>(value);
     const result = await listDevices(session);
     const runtime = await loadRuntimeState(session, result.devices);
-    const topology = buildDeviceTopology(result.devices, runtime.channels);
+    const topology = buildDeviceTopology(result.devices, runtime.channels, result.controlObjectResults);
+    for (const mapped of new Set([...topology.values()])) {
+      for (const channel of mapped.channels) {
+        runtimeDiagnostic("channel-control-classified", {
+          did: mapped.parentId ? redactedDid(mapped.parentId) : null,
+          siid: channel.channelSiid,
+          modeCapability: channel.modeCapability,
+          controlObjectStatus: channel.controlObjectStatus,
+          controlObjectComplete: channel.controlObjectComplete,
+          objectCount: channel.controlObjects.length,
+          classification: channel.classification,
+        });
+      }
+    }
     const groupMembers = collectDeviceGroupMembers(result.devices);
     const devices = result.devices.map(device => {
       const did = text(device.did);

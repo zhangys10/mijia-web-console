@@ -1,8 +1,44 @@
+import {
+  controlObjectChannelKey,
+  controlObjectResult,
+  type ButtonControlObject,
+  type ChannelControlObjectResult,
+  type ControlEdge,
+  type ControlEvidence,
+  type ControlEvidenceSource,
+  type ControlObjectKind,
+  type ControlObjectQueryReason,
+  type ControlObjectQueryStatus,
+  type ControlRelation,
+} from "./xiaomi-control-objects.ts";
+import type { SwitchModeCapability } from "./switch-channel-mode.ts";
+
 type RawDevice = Record<string, unknown>;
 
+export type {
+  ButtonControlObject,
+  ChannelControlObjectResult,
+  ControlEdge,
+  ControlEvidence,
+  ControlEvidenceSource,
+  ControlObjectKind,
+  ControlObjectQueryReason,
+  ControlObjectQueryStatus,
+  ControlRelation,
+};
 export type DeviceConnectionType = "wired" | "wireless";
 export type DeviceConnection = DeviceConnectionType | "unknown";
-export type DeviceChannelEvidence = "miot-property" | "user-domain-rule" | "unknown";
+export type DeviceChannelEvidence = "miot-property" | "explicit-control-object" | "control-object-query" | "split-device" | "name-match" | "user-domain-rule" | "unknown";
+export type DeviceChannelClassification =
+  | "confirmed-wired"
+  | "configured-wireless"
+  | "configured-smart-light"
+  | "wireless-unconfigured"
+  | "control-data-unavailable"
+  | "control-data-failed"
+  | "control-data-incomplete"
+  | "inferred-wired"
+  | "unknown";
 export type DeviceBinding = {
   targetId: string;
   targetName: string;
@@ -30,10 +66,14 @@ export type DeviceControlSource = {
 };
 export type DeviceChannelTarget = {
   id: string;
+  targetKey: string;
   name: string;
   room: string;
   relation: "mapped" | "bound";
   controllerCount: number;
+  kind?: ControlObjectKind;
+  evidence?: "confirmed" | "inferred" | "unknown";
+  evidenceSource?: ControlEvidenceSource;
 };
 export type DeviceControlChannel = {
   key: string;
@@ -42,7 +82,15 @@ export type DeviceControlChannel = {
   channelSiid: number | null;
   role: "primary" | "secondary" | "unknown";
   connectionType: DeviceConnection | "mixed";
+  modeCapability: SwitchModeCapability;
+  relayEnabled: boolean;
+  controlObjectStatus: ControlObjectQueryStatus;
+  controlObjectComplete: boolean;
+  controlObjectReason: ControlObjectQueryReason;
+  classification: DeviceChannelClassification;
   targets: DeviceChannelTarget[];
+  controlObjects: ButtonControlObject[];
+  edges: ControlEdge[];
   reportedOn: boolean | null;
   modeValue: boolean | number | string | null;
   evidence: DeviceChannelEvidence;
@@ -71,6 +119,7 @@ export type DeviceChannelRuntimeState = {
   buttonIndex: number | null;
   label: string;
   connectionType: DeviceConnection;
+  modeCapability?: SwitchModeCapability;
   reportedOn: boolean | null;
   modeValue: boolean | number | string | null;
   evidence: DeviceChannelEvidence;
@@ -115,16 +164,58 @@ function roleFor(connection: DeviceConnection) {
   return connection === "wired" ? "primary" as const : connection === "wireless" ? "secondary" as const : "unknown" as const;
 }
 
+function connectionFromEdges(
+  edges: ControlEdge[],
+  fallback: DeviceConnection,
+): DeviceControlChannel["connectionType"] {
+  const hasWired = edges.some(edge => edge.relation === "wired-load" || edge.relation === "wired-smart-light-power");
+  const hasWireless = edges.some(edge => edge.relation === "wireless-control");
+  if (hasWired && hasWireless) return "mixed";
+  if (hasWired) return "wired";
+  if (hasWireless) return "wireless";
+  return fallback;
+}
+
+function channelRole(connection: DeviceControlChannel["connectionType"]) {
+  if (connection === "mixed") return "primary" as const;
+  return roleFor(connection);
+}
+
+const controlEvidenceRank: Record<ControlEvidence, number> = {
+  unknown: 0,
+  inferred: 1,
+  confirmed: 2,
+};
+
+const controlEvidenceSourceRank: Record<ControlEvidenceSource, number> = {
+  none: 0,
+  "name-match": 1,
+  "miot-property": 2,
+  "split-device": 3,
+  "explicit-control-object": 4,
+  "control-object-query": 5,
+};
+
+function strongestControlObjectEvidence(objects: ButtonControlObject[]): DeviceChannelEvidence | null {
+  const strongest = [...objects].sort((left, right) =>
+    controlEvidenceRank[right.evidence] - controlEvidenceRank[left.evidence]
+    || controlEvidenceSourceRank[right.evidenceSource] - controlEvidenceSourceRank[left.evidenceSource]
+  )[0];
+  if (!strongest || strongest.evidence === "unknown" || strongest.evidenceSource === "none") return null;
+  return strongest.evidenceSource;
+}
+
 function fallbackChannelState(device: RawDevice, ownerDid: string, siid: number): DeviceChannelRuntimeState {
   const wireless = hiddenSecondaryName.test(deviceName(device));
   return {
     homeId: homeId(device), did: ownerDid, siid, buttonIndex: null, label: `服务 ${siid}`,
-    connectionType: wireless ? "wireless" : "unknown", reportedOn: null, modeValue: null,
+    connectionType: wireless ? "wireless" : "unknown", modeCapability: wireless ? "wireless-only" : "unknown", reportedOn: null, modeValue: null,
     evidence: wireless ? "user-domain-rule" : "unknown",
   };
 }
 
 function aggregateConnection(channels: DeviceControlChannel[]): DeviceTopology["connectionType"] {
+  if (channels.some(channel => channel.connectionType === "mixed")) return "mixed";
   const known = new Set(channels.map(channel => channel.connectionType).filter((value): value is DeviceConnectionType => value === "wired" || value === "wireless"));
   if (known.size > 1) return "mixed";
   if (known.size === 1) return [...known][0];
@@ -145,8 +236,115 @@ export function topologyForDevice(topologies: Map<string, DeviceTopology>, devic
   return topologies.get(deviceTopologyIdentity(homeId(device), did)) ?? topologies.get(did);
 }
 
-export function buildDeviceTopology(rawDevices: RawDevice[], runtimeStates: Map<string, DeviceChannelRuntimeState> = new Map()) {
+type ChannelDecision = {
+  connection: DeviceConnection;
+  classification: DeviceChannelClassification;
+  relation: ControlRelation | null;
+  relayEnabled: boolean;
+};
+
+function decideChannel(
+  capability: SwitchModeCapability,
+  result: ChannelControlObjectResult,
+  hasMappedEndpoint: boolean,
+): ChannelDecision {
+  const smartTargets = result.objects.filter(object => ["smart-light", "smart-light-group", "smart-device"].includes(object.targetKind));
+  const trustedSmartTargets = smartTargets.filter(object => object.evidence === "confirmed");
+  const hasSmartCandidate = smartTargets.length > 0;
+  const hasSmartTarget = trustedSmartTargets.length > 0;
+  const trustedOrdinaryLoads = result.objects.filter(object => object.targetKind === "ordinary-load" && object.evidence === "confirmed");
+  const trustedUnconfigured = result.objects.filter(object => object.targetKind === "unconfigured" && object.evidence === "confirmed");
+  const hasOrdinaryLoad = trustedOrdinaryLoads.length > 0;
+  const onlyUnconfigured = result.objects.length === 0 || trustedUnconfigured.length === result.objects.length;
+  const onlyWiredTargets = trustedOrdinaryLoads.length + trustedUnconfigured.length === result.objects.length;
+  const hasUntrustedCandidate = result.objects.some(object => object.evidence !== "confirmed");
+  const relayEnabled = capability === "relay-enabled";
+
+  if (hasSmartTarget) {
+    return {
+      connection: "wireless",
+      classification: trustedSmartTargets.some(object => object.targetKind === "smart-light" || object.targetKind === "smart-light-group")
+        ? "configured-smart-light"
+        : "configured-wireless",
+      relation: "wireless-control",
+      relayEnabled,
+    };
+  }
+  if (result.status === "available" && result.complete) {
+    if (capability === "wireless-only" && onlyUnconfigured) {
+      return { connection: "wireless", classification: "wireless-unconfigured", relation: null, relayEnabled: false };
+    }
+    if (relayEnabled && onlyWiredTargets && (hasMappedEndpoint || hasOrdinaryLoad || onlyUnconfigured)) {
+      return { connection: "wired", classification: "confirmed-wired", relation: "wired-load", relayEnabled: true };
+    }
+  }
+  if (relayEnabled && hasMappedEndpoint && !hasSmartCandidate && !hasUntrustedCandidate) {
+    return { connection: "wired", classification: "inferred-wired", relation: "wired-load", relayEnabled: true };
+  }
+  if (result.status === "failed") {
+    return { connection: capability === "wireless-only" ? "wireless" : "unknown", classification: "control-data-failed", relation: "unknown", relayEnabled };
+  }
+  if (result.status === "unavailable") {
+    return { connection: capability === "wireless-only" ? "wireless" : "unknown", classification: "control-data-unavailable", relation: "unknown", relayEnabled };
+  }
+  if (!result.complete) {
+    return { connection: capability === "wireless-only" ? "wireless" : "unknown", classification: "control-data-incomplete", relation: "unknown", relayEnabled };
+  }
+  return { connection: "unknown", classification: "unknown", relation: "unknown", relayEnabled };
+}
+
+function controlObjectTargetKey(controlObject: ButtonControlObject) {
+  return controlObject.targetDid
+    ? deviceTopologyIdentity(controlObject.homeId, controlObject.targetDid)
+    : `${controlObject.homeId}:${controlObject.targetRoom}:${controlObject.targetName}`;
+}
+
+function edgeFor(
+  controlObject: ButtonControlObject,
+  relation: ControlRelation,
+  endpointDid: string | null,
+): ControlEdge {
+  return {
+    key: `${controlObject.key}:${relation}:${endpointDid ?? "-"}`,
+    homeId: controlObject.homeId,
+    sourceDid: controlObject.sourceDid,
+    sourceSiid: controlObject.sourceSiid,
+    endpointDid,
+    targetKey: controlObjectTargetKey(controlObject),
+    relation,
+    evidence: controlObject.evidence,
+    evidenceSource: controlObject.evidenceSource,
+  };
+}
+
+export function buildDeviceTopology(
+  rawDevices: RawDevice[],
+  runtimeStates: Map<string, DeviceChannelRuntimeState> = new Map(),
+  suppliedControlResults: Array<ChannelControlObjectResult | ButtonControlObject> = [],
+) {
   const entries = rawDevices.map(device => ({ device, did: stringValue(device.did), home: homeId(device) })).filter(entry => Boolean(entry.did));
+  const controlObjectResults: ChannelControlObjectResult[] = [];
+  const legacyObjects = new Map<string, ButtonControlObject[]>();
+  for (const supplied of suppliedControlResults) {
+    if ("objects" in supplied) {
+      controlObjectResults.push(supplied);
+      continue;
+    }
+    const key = controlObjectChannelKey(supplied.homeId, supplied.sourceDid, supplied.sourceSiid);
+    legacyObjects.set(key, [...(legacyObjects.get(key) ?? []), supplied]);
+  }
+  for (const objects of legacyObjects.values()) {
+    controlObjectResults.push(controlObjectResult(
+      objects[0].homeId,
+      objects[0].sourceDid,
+      objects[0].sourceSiid,
+      "available",
+      false,
+      objects,
+    ));
+  }
+  const controlResultsByChannel = new Map(controlObjectResults.map(result => [result.key, result]));
+  const controlObjects = controlObjectResults.flatMap(result => result.objects);
   const index = new Map(entries.map(entry => [deviceTopologyIdentity(entry.home, entry.did), entry.device]));
   const topologies = new Map<string, DeviceTopology>();
   const derivedByOwner = new Map<string, Array<{ device: RawDevice; did: string; parsed: { physicalDid: string; siid: number } }>>();
@@ -211,23 +409,101 @@ export function buildDeviceTopology(rawDevices: RawDevice[], runtimeStates: Map<
     const ownerKey = deviceTopologyIdentity(entry.home, entry.did);
     const derived = derivedByOwner.get(ownerKey) ?? [];
     const states = [...runtimeStates.values()].filter(state => state.homeId === entry.home && state.did === entry.did);
-    if (!derived.length && !states.length) continue;
-    const siids = new Set([...derived.map(item => item.parsed.siid), ...states.map(state => state.siid)]);
+    const explicit = controlObjects.filter(controlObject => controlObject.homeId === entry.home && controlObject.sourceDid === entry.did);
+    if (!derived.length && !states.length && !explicit.length) continue;
+    const siids = new Set([...derived.map(item => item.parsed.siid), ...states.map(state => state.siid), ...explicit.map(item => item.sourceSiid)]);
     const channels: DeviceControlChannel[] = [...siids].map(siid => {
-      const targets = derived.filter(item => item.parsed.siid === siid);
-      const runtime = runtimeStates.get(deviceChannelStateKey(entry.home, entry.did, siid)) ?? (targets[0]
-        ? fallbackChannelState(targets[0].device, entry.did, siid)
-        : { homeId: entry.home, did: entry.did, siid, buttonIndex: null, label: `服务 ${siid}`, connectionType: "unknown" as const, reportedOn: null, modeValue: null, evidence: "unknown" as const });
-      const connection = runtime.connectionType === "unknown" && targets.some(target => hiddenSecondaryName.test(deviceName(target.device))) ? "wireless" as const : runtime.connectionType;
-      const evidence = connection === "wireless" && runtime.connectionType === "unknown" ? "user-domain-rule" as const : runtime.evidence;
+      const mappedTargets = derived.filter(item => item.parsed.siid === siid);
+      const channelKey = controlObjectChannelKey(entry.home, entry.did, siid);
+      const controlResult = controlResultsByChannel.get(channelKey)
+        ?? controlObjectResult(entry.home, entry.did, siid, "unavailable", false);
+      const channelControlObjects = controlResult.objects;
+      const runtime = runtimeStates.get(deviceChannelStateKey(entry.home, entry.did, siid)) ?? (mappedTargets[0]
+        ? fallbackChannelState(mappedTargets[0].device, entry.did, siid)
+        : { homeId: entry.home, did: entry.did, siid, buttonIndex: channelControlObjects[0]?.buttonIndex ?? null, label: `服务 ${siid}`, connectionType: "unknown" as const, modeCapability: "unknown" as const, reportedOn: null, modeValue: null, evidence: "unknown" as const });
+      const modeCapability = runtime.modeCapability
+        ?? (runtime.connectionType === "wireless" ? "wireless-only" : runtime.connectionType === "wired" ? "relay-enabled" : "unknown");
+      const decision = decideChannel(modeCapability, controlResult, mappedTargets.length > 0);
+      const configuredObjects = channelControlObjects.filter(controlObject =>
+        controlObject.evidence === "confirmed"
+        && ["smart-light", "smart-light-group", "smart-device"].includes(controlObject.targetKind)
+      );
+      const evidence = decision.classification === "confirmed-wired"
+        ? "control-object-query" as const
+        : decision.classification.startsWith("configured-")
+          ? strongestControlObjectEvidence(configuredObjects) ?? runtime.evidence
+          : decision.classification === "inferred-wired"
+            ? "split-device" as const
+            : decision.connection === "wireless" && runtime.connectionType === "unknown"
+              ? "user-domain-rule" as const
+              : runtime.evidence;
+      const explicitTargets = channelControlObjects.map(controlObject => ({
+        id: controlObject.targetDid ?? controlObject.key,
+        targetKey: controlObjectTargetKey(controlObject),
+        name: controlObject.targetName,
+        room: controlObject.targetRoom,
+        relation: "bound" as const,
+        controllerCount: 1,
+        kind: controlObject.targetKind,
+        evidence: controlObject.evidence,
+        evidenceSource: controlObject.evidenceSource,
+      }));
+      const targetIndex = new Map<string, DeviceChannelTarget>();
+      for (const target of mappedTargets.map(target => ({ id: target.did, targetKey: deviceTopologyIdentity(entry.home, target.did), name: deviceName(target.device), room: roomName(target.device), relation: "mapped" as const, controllerCount: 1 }))) targetIndex.set(target.id, target);
+      for (const target of explicitTargets) targetIndex.set(target.id, target);
+      const endpointDid = mappedTargets[0]?.did ?? null;
+      const edges = channelControlObjects.flatMap(controlObject => {
+        const relation = controlObject.targetKind === "unconfigured"
+          ? decision.relation
+          : controlObject.evidence === "confirmed"
+            && ["smart-light", "smart-light-group", "smart-device"].includes(controlObject.targetKind)
+            ? "wireless-control" as const
+            : controlObject.targetKind === "ordinary-load" && controlObject.evidence === "confirmed"
+              ? "wired-load" as const
+              : "unknown" as const;
+        const result = relation ? [edgeFor(controlObject, relation, endpointDid)] : [];
+        if (
+          relation === "wireless-control"
+          && (controlObject.targetKind === "smart-light" || controlObject.targetKind === "smart-light-group")
+          && endpointDid
+          && decision.relayEnabled
+        ) result.push(edgeFor(controlObject, "wired-smart-light-power", endpointDid));
+        return result;
+      });
+      if (!channelControlObjects.length && decision.relation) {
+        const synthetic: ButtonControlObject = {
+          key: `${channelKey}:query-result`,
+          homeId: entry.home,
+          sourceDid: entry.did,
+          sourceSiid: siid,
+          buttonIndex: runtime.buttonIndex,
+          targetDid: endpointDid,
+          targetSiid: siid,
+          targetName: mappedTargets[0] ? deviceName(mappedTargets[0].device) : runtime.label,
+          targetRoom: mappedTargets[0] ? roomName(mappedTargets[0].device) : roomName(entry.device),
+          targetKind: decision.relation === "wired-load" ? "ordinary-load" : "unknown",
+          evidence: decision.classification === "confirmed-wired" ? "confirmed" : decision.classification === "inferred-wired" ? "inferred" : "unknown",
+          evidenceSource: decision.classification === "confirmed-wired" ? "control-object-query" : decision.classification === "inferred-wired" ? "split-device" : "none",
+        };
+        edges.push(edgeFor(synthetic, decision.relation, endpointDid));
+      }
+      const connection = connectionFromEdges(edges, decision.connection);
       return {
         key: `service:${siid}`,
-        label: targets[0] ? deviceName(targets[0].device) : runtime.label,
-        channelIndex: runtime.buttonIndex,
+        label: channelControlObjects[0]?.targetName || (mappedTargets[0] ? deviceName(mappedTargets[0].device) : runtime.label),
+        channelIndex: runtime.buttonIndex ?? channelControlObjects[0]?.buttonIndex ?? null,
         channelSiid: siid,
-        role: roleFor(connection),
+        role: channelRole(connection),
         connectionType: connection,
-        targets: targets.map(target => ({ id: target.did, name: deviceName(target.device), room: roomName(target.device), relation: "mapped" as const, controllerCount: 1 })),
+        modeCapability,
+        relayEnabled: decision.relayEnabled,
+        controlObjectStatus: controlResult.status,
+        controlObjectComplete: controlResult.complete,
+        controlObjectReason: controlResult.reason,
+        classification: decision.classification,
+        targets: [...targetIndex.values()],
+        controlObjects: channelControlObjects,
+        edges,
         reportedOn: runtime.reportedOn,
         modeValue: runtime.modeValue,
         evidence,
@@ -238,7 +514,25 @@ export function buildDeviceTopology(rawDevices: RawDevice[], runtimeStates: Map<
     topology.channels = channels;
     topology.connectionType = aggregateConnection(channels);
     topology.secondaryCount = channels.filter(channel => channel.connectionType === "wireless").length;
-    topology.role = channels.length && channels.every(channel => channel.connectionType === "wireless") ? "secondary-panel" : channels.some(channel => channel.connectionType === "wired") ? "primary" : "unknown";
+    topology.role = channels.length && channels.every(channel => channel.connectionType === "wireless") ? "secondary-panel" : channels.some(channel => channel.role === "primary") ? "primary" : "unknown";
+
+    for (const target of derived) {
+      const channel = channels.find(candidate => candidate.channelSiid === target.parsed.siid);
+      const child = topologies.get(deviceTopologyIdentity(entry.home, target.did));
+      if (!channel || !child) continue;
+      const childConnection = channel.connectionType === "mixed" ? "wired" : channel.connectionType;
+      child.connectionType = childConnection;
+      child.role = roleFor(childConnection);
+      child.channelIndex = channel.channelIndex;
+      child.channelLabel = channel.label;
+      const source = child.controlledBy[0];
+      if (source) {
+        source.sourceRole = roleFor(childConnection);
+        source.channelIndex = channel.channelIndex;
+        source.connectionType = childConnection;
+        source.evidence = channel.evidence;
+      }
+    }
   }
 
   const didCounts = new Map<string, number>();

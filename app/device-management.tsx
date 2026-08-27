@@ -40,14 +40,43 @@ function channelLabel(control: LightingControl) {
   if (control.channelSiid !== null) return `服务 ${control.channelSiid}`;
   return "关联按键";
 }
-function connectionLabel(connection: LightingControl["connection"]) {
-  return connection === "wired" ? "有线主控" : connection === "wireless" ? "无线副控" : "模式待确认";
+function connectionLabel(control: LightingControl) {
+  if (control.relation === "wired-smart-light-power") return "有线供电";
+  if (control.relation === "wired-load") return control.evidence === "inferred" ? "有线回路（推定）" : "有线直连";
+  if (control.relation === "wireless-control") return "无线控制";
+  return "关系待确认";
 }
 function topologyKindLabel(topology: LightingTopology) {
   if (topology.kind === "smart-light-group") return "智能灯组";
   if (topology.kind === "smart-light") return "智能灯具";
   if (topology.kind === "ordinary-load") return "普通灯回路";
   return "目标待确认";
+}
+type PreviewChannel = NonNullable<ManagedDevice["topology"]>["channels"][number];
+
+function channelStatusLabel(channel: PreviewChannel) {
+  if (channel.classification === "wireless-unconfigured") return "无线未配置";
+  if (channel.classification === "control-data-unavailable") return "控制对象不可用";
+  if (channel.classification === "control-data-failed") return "控制对象读取失败";
+  if (channel.classification === "control-data-incomplete") return "控制对象不完整";
+  if (channel.classification === "inferred-wired") return "有线回路（推定）";
+  return "待确认";
+}
+
+function channelPreviewPresentation(channel: PreviewChannel, targetKinds: Array<string | undefined>) {
+  const relations = new Set(channel.edges.map(edge => edge.relation));
+  const unconfigured = targetKinds.length > 0 && targetKinds.every(kind => kind === "unconfigured");
+  const dual = relations.has("wireless-control") && relations.has("wired-smart-light-power");
+  if (channel.classification === "wireless-unconfigured") return { tone: "wireless", label: "无线未配置" };
+  if (channel.classification === "inferred-wired") return { tone: "inferred-wired", label: "推定有线" };
+  if (unconfigured) return { tone: "unknown", label: "未配置" };
+  if (dual) return { tone: "mixed", label: "无线 + 供电" };
+  if (relations.has("wireless-control")) return { tone: "wireless", label: "无线" };
+  if (relations.has("wired-smart-light-power")) return { tone: "wired", label: "供电" };
+  if (relations.has("wired-load")) return { tone: "wired", label: "有线" };
+  if (channel.connectionType === "wireless") return { tone: "wireless", label: "无线" };
+  if (channel.connectionType === "wired") return { tone: "wired", label: "有线" };
+  return { tone: "unknown", label: channelStatusLabel(channel) };
 }
 
 export default function DeviceManagement({ devices, allDevices, homes, selectedHome, room, connected, onSelectHome, onSelectRoom, onOpenDevice }: Props) {
@@ -67,13 +96,13 @@ export default function DeviceManagement({ devices, allDevices, homes, selectedH
   const activeTopology = topologies.find(topology => topology.key === selectedTopology) ?? topologies[0];
 
   return <section className="dm-shell" aria-label="米家设备管理">
-    <header className="dm-intro"><div><span className="dm-eyebrow">MIJIA HOME</span><h2>设备管理</h2><p>硬件按米家房间展示；照明视图按灯具位置聚合供电回路和无线副控。</p></div><span className={`dm-connection ${connected ? "connected" : "demo"}`}>{connected ? "米家云已连接" : "演示设备"}</span></header>
+    <header className="dm-intro"><div><span className="dm-eyebrow">MIJIA HOME</span><h2>设备管理</h2><p>硬件按米家房间展示；照明视图按灯具位置分别聚合有线回路、无线控制和智能灯供电。</p></div><span className={`dm-connection ${connected ? "connected" : "demo"}`}>{connected ? "米家云已连接" : "演示设备"}</span></header>
 
     <section className="dm-summary" aria-label="家庭设备统计">
       <SummaryCard icon="▦" value={model.totals.devices} label="实际硬件" tone="neutral" />
       <SummaryCard icon="☀" value={model.totals.lights} label="照明目标" tone="orange" />
       <SummaryCard icon="⌘" value={model.totals.switches} label="开关与中控" tone="violet" />
-      <SummaryCard icon="⌁" value={model.totals.aliases} label="无线副控端点" tone="blue" />
+      <SummaryCard icon="⌁" value={model.totals.aliases} label="无线派生端点" tone="blue" />
     </section>
 
     <div className="dm-filter-group"><span className="dm-filter-label">家庭</span><div className="dm-home-list">{homes.map(home => <button key={home.id} type="button" className={`dm-home-card ${home.id === selectedHome ? "selected" : ""}`} onClick={() => onSelectHome(home.id)}><span>⌂</span><strong>{home.name}</strong><small>{allDevices.filter(device => device.homeId === home.id).length} 条米家记录</small></button>)}</div></div>
@@ -85,9 +114,9 @@ export default function DeviceManagement({ devices, allDevices, homes, selectedH
 
     {view === "hardware" ? <div className="dm-room-inventory">{groupedRooms.map(group => <section key={`${selectedHome}:${group.name}`} className="dm-room-section"><div className="dm-room-heading"><div><strong>{group.name}</strong>{hiddenRoom.test(group.name) && <span>仅保留真实硬件</span>}</div><small>{group.records.length} 台硬件</small></div><div className="dm-room-grid">{group.records.map(record => <DeviceRecordCard key={`${record.device.homeId}:${record.device.did ?? record.device.id}`} record={record} endpointsById={endpointsById} onOpen={() => onOpenDevice(record.device)} onOpenMapped={(endpoint) => onOpenDevice(record.device, endpoint)} onOpenMember={onOpenDevice} />)}</div></section>)}{!groupedRooms.length && <EmptyState title="这个房间没有实际硬件" detail="开关派生端点不会在本视图中单独显示，请切换到实际照明视图查看控制关系。" />}</div>
       : <div className="dm-topology-view">{activeTopology ? <div className="dm-topology-explorer"><aside className="dm-topology-list" aria-label="实际照明目标"><div className="dm-list-heading"><strong>实际照明目标</strong><small>{topologies.length} 个</small></div>{topologies.map(topology => <button type="button" key={topology.key} className={`dm-topology-item ${topology.key === activeTopology.key ? "selected" : ""}`} onClick={() => setSelectedTopology(topology.key)}><span className="dm-light-icon">☀</span><div><strong>{topology.name}</strong><small>{topology.room} · {topologyKindLabel(topology)} · {topology.controls.length} 个控制来源</small></div>{topology.unresolved && <em>待确认</em>}</button>)}</aside>
-        <section className="dm-topology-stage"><div className="dm-stage-heading"><div><span>{activeTopology.room} · {topologyKindLabel(activeTopology)}</span><h3>{activeTopology.name}</h3><p>{activeTopology.controls.filter(control => control.connection === "wired").length} 个有线控制 · {activeTopology.controls.filter(control => control.connection === "wireless").length} 个无线控制 · {activeTopology.controls.filter(control => control.connection === "unknown").length} 个模式待确认</p></div><TargetState topology={activeTopology} /></div>
+        <section className="dm-topology-stage"><div className="dm-stage-heading"><div><span>{activeTopology.room} · {topologyKindLabel(activeTopology)}</span><h3>{activeTopology.name}</h3><p>{activeTopology.controls.filter(control => control.connection === "wired").length} 个有线控制 · {activeTopology.controls.filter(control => control.connection === "wireless").length} 个无线控制 · {activeTopology.controls.filter(control => control.connection === "unknown").length} 个关系待确认</p></div><TargetState topology={activeTopology} /></div>
           <LightingCanvas topology={activeTopology} onOpenDevice={onOpenDevice} />
-          <div className="dm-legend"><span><i className="wired" />有线供电</span><span><i className="wireless" />无线副控</span><span><i className="unknown" />关系待确认</span></div>
+          <div className="dm-legend"><span><i className="wired" />有线直连 / 供电</span><span><i className="wireless" />无线控制</span><span><i className="unknown" />关系待确认</span></div>
           <TopologyDetails topology={activeTopology} onOpenDevice={onOpenDevice} />
         </section></div> : <EmptyState title="这个房间暂未识别到照明目标" detail="模式读取失败的端点会保留为待确认；同步成功后将自动按真实模式重建拓扑。" />}</div>}
   </section>;
@@ -100,10 +129,17 @@ function DeviceRecordCard({ record, endpointsById, onOpen, onOpenMapped, onOpenM
   const channels = category === "switch" || category === "controller" ? device.topology?.channels ?? [] : [];
   const summary = category === "group" ? groupMembers.length ? `${groupMembers.length} 台已公开成员` : "成员关系暂未公开"
     : channels.length ? `${channels.length} 个实际 switch 服务` : `${device.status} · 点击查看设备设置`;
-  return <article className={`dm-record-card ${category} ${device.online === false ? "offline" : ""}`} role="button" tabIndex={0} onClick={onOpen} onKeyDown={event => { if (event.currentTarget === event.target && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onOpen(); } }}>
-    <div className="dm-record-top"><span className={`dm-record-icon ${device.color}`}>{category === "group" ? "◫" : device.icon}</span><span className={`dm-category ${category}`}>{categoryLabels[category]}</span></div>
+  return <article className={`dm-record-card dm-record-kind-${category} ${device.online === false ? "offline" : ""}`} role="button" tabIndex={0} onClick={onOpen} onKeyDown={event => { if (event.currentTarget === event.target && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onOpen(); } }}>
+    <div className="dm-record-top"><span className={`dm-record-icon ${device.color}`}>{category === "group" ? "◫" : device.icon}</span><span className={`dm-category dm-category-${category}`}>{categoryLabels[category]}</span></div>
     <h3>{device.name}</h3><p>{summary}</p>
-    {channels.length > 0 && <div className="dm-channel-preview">{channels.map(channel => <button type="button" key={channel.key} className={channel.connectionType === "wireless" ? "wireless" : channel.connectionType === "wired" ? "wired" : "unknown"} onClick={event => { event.stopPropagation(); const endpoint = endpointsById.get(channel.targets[0]?.id); if (endpoint) onOpenMapped(endpoint); else onOpen(); }}><i>{channel.connectionType === "wireless" ? "无线" : channel.connectionType === "wired" ? "有线" : "待确认"}</i><span>{channel.targets[0]?.name ?? channel.label}</span><small>{channel.channelSiid !== null ? `s${channel.channelSiid}` : ""}</small></button>)}</div>}
+    {channels.length > 0 && <div className="dm-channel-preview">{channels.map(channel => {
+      const targets = channel.targets.length ? channel.targets : [{ id: "", targetKey: "", name: channel.controlObjects[0]?.targetName ?? channel.label, room: channel.controlObjects[0]?.targetRoom ?? device.room, kind: channel.controlObjects[0]?.targetKind }];
+      const primaryTarget = targets[0];
+      const { tone, label } = channelPreviewPresentation(channel, targets.map(target => target.kind));
+      const targetName = targets.length > 1 ? `${primaryTarget.name} +${targets.length - 1}` : primaryTarget.name;
+      const mappedEndpoint = channel.targets.length === 1 ? endpointsById.get(primaryTarget.id) : undefined;
+      return <button type="button" key={channel.key} className={`dm-channel-row ${tone}`} title={`${label} · ${targets.map(target => target.name).join("、")}${channel.channelSiid !== null ? ` · s${channel.channelSiid}` : ""}`} onClick={event => { event.stopPropagation(); if (mappedEndpoint) onOpenMapped(mappedEndpoint); else onOpen(); }}><i className="dm-channel-status">{label}</i><span className="dm-channel-name">{targetName}</span><small className="dm-channel-siid">{channel.channelSiid !== null ? `s${channel.channelSiid}` : ""}</small></button>;
+    })}</div>}
     {category === "group" && groupMembers.length > 0 && <div className="dm-group-members">{groupMembers.map(member => <button key={`${member.did}:${member.name}`} type="button" onClick={event => { event.stopPropagation(); onOpenMember(member); }}><span className={member.color}>{member.icon}</span><span><strong>{member.name}</strong><small>{member.room} · {member.did}</small></span><b>›</b></button>)}</div>}
     {category === "group" && !groupMembers.length && <div className="dm-group-unknown">组合设备 · 成员关系暂未公开</div>}
     <div className="dm-record-footer"><span>{device.room}</span>{device.did ? <code title={device.did}>{device.did}</code> : <small>演示设备</small>}<b>›</b></div>
@@ -117,16 +153,16 @@ function TargetState({ topology }: { topology: LightingTopology }) {
 }
 
 function TopologyDetails({ topology, onOpenDevice }: { topology: LightingTopology; onOpenDevice: (device: ManagedDevice, mappedDevice?: ManagedDevice) => void }) {
-  const sections: Array<{ key: LightingControl["connection"]; title: string }> = [{ key: "wired", title: "有线供电端点" }, { key: "wireless", title: "无线副控" }, { key: "unknown", title: "模式待确认" }];
+  const sections: Array<{ key: LightingControl["relation"]; title: string }> = [{ key: "wired-load", title: "有线直连回路" }, { key: "wired-smart-light-power", title: "智能灯有线供电" }, { key: "wireless-control", title: "无线控制" }, { key: "unknown", title: "关系待确认" }];
   return <div className="dm-control-groups">
-    {sections.map(section => { const controls = topology.controls.filter(control => control.connection === section.key); return controls.length ? <section key={section.key}><h4>{section.title}</h4><div className="dm-control-grid">{controls.map(control => <ControlButton key={`${section.key}:${control.device.did}:${control.channelSiid}`} control={control} onOpen={onOpenDevice} />)}</div></section> : null; })}
+    {sections.map(section => { const controls = topology.controls.filter(control => control.relation === section.key); const title = section.key === "wired-load" && controls.length > 0 && controls.every(control => control.evidence === "inferred") ? "有线回路（拓扑推定）" : section.title; return controls.length ? <section key={section.key}><h4>{title}</h4><div className="dm-control-grid">{controls.map(control => <ControlButton key={`${section.key}:${control.device.did}:${control.channelSiid}`} control={control} onOpen={onOpenDevice} />)}</div></section> : null; })}
     {topology.lights.length > 0 && <section><h4>{topology.kind === "smart-light-group" ? "智能灯组本体" : "智能灯具本体"}</h4><div className="dm-control-grid">{topology.lights.map(device => <button type="button" className="dm-control-button smart" key={device.did ?? device.id} onClick={() => onOpenDevice(device)}><span>☀</span><div><strong>{device.name}</strong><small>{device.room} · {device.online === false ? "离线" : device.did}</small></div><b>›</b></button>)}</div></section>}
     {topology.kind === "smart-light-group" && !topology.lights[0]?.groupMemberIds?.length && <p className="dm-group-note">灯组成员关系暂未公开；不会根据名称自动把其他灯具认定为成员。</p>}
   </div>;
 }
 
 function ControlButton({ control, onOpen }: { control: LightingControl; onOpen: (device: ManagedDevice, mappedDevice?: ManagedDevice) => void }) {
-  return <button type="button" className={`dm-control-button ${control.connection}`} onClick={() => onOpen(control.device, control.endpoint)}><span>{control.connection === "wired" ? "ϟ" : control.connection === "wireless" ? "⌁" : "?"}</span><div><strong>{control.device.name}</strong><small>{control.device.room} · {channelLabel(control)} · {control.endpoint?.name ?? connectionLabel(control.connection)}{control.inferred ? " · 名称推断" : ""}</small></div><b>›</b></button>;
+  return <button type="button" className={`dm-control-button ${control.connection}`} onClick={() => onOpen(control.device, control.endpoint)}><span>{control.relation === "wired-smart-light-power" ? "ϟ" : control.connection === "wired" ? "↦" : control.connection === "wireless" ? "⌁" : "?"}</span><div><strong>{control.device.name}</strong><small>{control.device.room} · {channelLabel(control)} · {connectionLabel(control)}{control.endpoint ? ` · ${control.endpoint.name}` : ""}{control.inferred ? control.evidenceSource === "split-device" ? " · 拓扑推定" : " · 名称推断" : control.evidence === "unknown" ? " · 待确认" : ""}</small></div><b>›</b></button>;
 }
 
 type CanvasNode = { x: number; y: number; width: number; height: number; title: string; subtitle: string; tone: "wired" | "wireless" | "unknown" | "light"; open?: () => void };
@@ -154,7 +190,7 @@ function LightingCanvas({ topology, onOpenDevice }: { topology: LightingTopology
       context.setTransform(scale, 0, 0, scale, 0, 0); context.clearRect(0, 0, width, height);
       const targetAction = topology.lights[0] ? () => onOpenDevice(topology.lights[0]) : topology.controls.find(control => control.connection === "wired") ? () => { const control = topology.controls.find(item => item.connection === "wired")!; onOpenDevice(control.device, control.endpoint); } : undefined;
       const target: CanvasNode = { x: compact ? (width - nodeWidth) / 2 : width - nodeWidth - 18, y: compact ? height - nodeHeight - 20 : (height - nodeHeight) / 2, width: nodeWidth, height: nodeHeight, title: topology.name, subtitle: `${topology.room} · ${topologyKindLabel(topology)}`, tone: "light", open: targetAction };
-      const controlNodes = controls.length ? controls.map((control, index): CanvasNode => ({ x: compact ? (width - nodeWidth) / 2 : 18, y: 15 + index * 76, width: nodeWidth, height: nodeHeight, title: control.device.name, subtitle: `${connectionLabel(control.connection)} · ${control.endpoint?.name ?? channelLabel(control)}`, tone: control.connection, open: () => onOpenDevice(control.device, control.endpoint) })) : [];
+      const controlNodes = controls.length ? controls.map((control, index): CanvasNode => ({ x: compact ? (width - nodeWidth) / 2 : 18, y: 15 + index * 76, width: nodeWidth, height: nodeHeight, title: `${control.device.name} · ${channelLabel(control)}`, subtitle: `${connectionLabel(control)}${control.endpoint ? ` · ${control.endpoint.name}` : ""}`, tone: control.connection, open: () => onOpenDevice(control.device, control.endpoint) })) : [];
       for (const node of controlNodes) { context.beginPath(); context.setLineDash(node.tone === "wireless" ? [6, 5] : node.tone === "unknown" ? [3, 5] : []); context.strokeStyle = graphColors[node.tone].accent; context.lineWidth = 2; const sx = compact ? node.x + node.width / 2 : node.x + node.width; const sy = compact ? node.y + node.height : node.y + node.height / 2; const ex = compact ? target.x + target.width / 2 : target.x; const ey = compact ? target.y : target.y + target.height / 2; context.moveTo(sx, sy); context.bezierCurveTo(compact ? sx : sx + 35, compact ? sy + 20 : sy, compact ? ex : ex - 35, compact ? ey - 20 : ey, ex, ey); context.stroke(); context.setLineDash([]); }
       for (const node of [...controlNodes, target]) drawNode(context, node);
       nodesRef.current = [...controlNodes, target];

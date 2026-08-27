@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { findSwitchGroupChannel, resolveSwitchMode, switchGroupConnection } from "../lib/switch-channel-mode.ts";
+import { diagnoseSwitchMode, findSwitchGroupChannel, isSwitchModeProperty, resolveSwitchMode, resolveSwitchModeCapability, switchGroupConnection } from "../lib/switch-channel-mode.ts";
 
 const groups = [
   { key: "2", name: "switch", siid: 2, properties: [{ key: "2.2", name: "wireless-mode" }] },
@@ -58,7 +58,66 @@ test("uses the exact mode property returned by the observed Linp and Xiaomi mode
   assert.equal(switchGroupConnection(modeGroup, [modeGroup], { "14.2": 1 }), "wireless");
 });
 
-test("does not turn an unrecognized mode value into a wired channel", () => {
+test("does not turn unrecognized mode values into a known channel", () => {
   assert.equal(resolveSwitchMode({ key: "2.2", name: "mode" }, "vendor-private"), "unknown");
+  assert.equal(resolveSwitchMode({ key: "2.2", name: "mode" }, 2), "unknown");
+  assert.equal(resolveSwitchMode({ key: "2.2", name: "mode" }, 99), "unknown");
   assert.equal(switchGroupConnection(groups[0], groups, {}, { role: "unknown", connectionType: "unknown", channels: [] }), "unknown");
+});
+
+test("represents mixed wired and wireless labels as relay-enabled capability", () => {
+  const property = {
+    key: "2.2",
+    name: "mode",
+    choices: [{ value: 0, label: "有线和无线开关" }],
+  };
+
+  assert.equal(resolveSwitchMode(property, 0), "unknown");
+  assert.equal(resolveSwitchModeCapability(property, 0), "relay-enabled");
+  assert.deepEqual(diagnoseSwitchMode(property, 0), {
+    connection: "unknown",
+    capability: "relay-enabled",
+    reason: null,
+  });
+  assert.equal(switchGroupConnection(
+    { ...groups[0], properties: [property] },
+    [{ ...groups[0], properties: [property] }],
+    { "2.2": 0 },
+    {
+      role: "primary",
+      connectionType: "mixed",
+      channels: [{ channelIndex: 1, channelSiid: 2, role: "primary", connectionType: "mixed" }],
+    },
+  ), "wired");
+});
+
+test("uses the same vendor mode-property names during synchronization and display", () => {
+  for (const name of ["mode", "wireless-mode", "button-mode", "button-type", "switch-mode", "control-mode"]) {
+    assert.equal(isSwitchModeProperty({ name }), true, name);
+  }
+  assert.equal(isSwitchModeProperty({ name: "on" }), false);
+  assert.equal(isSwitchModeProperty({ name: "wireless-enable" }), false);
+});
+
+test("classifies why a channel mode remains unknown", () => {
+  assert.deepEqual(diagnoseSwitchMode(undefined, undefined), {
+    connection: "unknown",
+    capability: "unknown",
+    reason: "mode-property-missing",
+  });
+  assert.deepEqual(diagnoseSwitchMode({ key: "14.2", name: "mode" }, undefined), {
+    connection: "unknown",
+    capability: "unknown",
+    reason: "value-missing",
+  });
+  assert.deepEqual(diagnoseSwitchMode({ key: "14.2", name: "mode" }, 99), {
+    connection: "unknown",
+    capability: "unknown",
+    reason: "value-unrecognized",
+  });
+  assert.deepEqual(diagnoseSwitchMode({ key: "14.2", name: "mode" }, 0), {
+    connection: "wired",
+    capability: "relay-enabled",
+    reason: null,
+  });
 });

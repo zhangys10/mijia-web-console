@@ -1,3 +1,5 @@
+import { parseEmbeddedControlObjectResults, type ChannelControlObjectResult } from "./xiaomi-control-objects.ts";
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -238,7 +240,20 @@ export function mergeXiaomiDeviceRecords(legacyDevices: Array<Record<string, unk
   return [...records.values()];
 }
 
-export async function listDevices(session: XiaomiSession) {
+export type XiaomiDeviceList = {
+  homes: Array<{ id: string; name: string }>;
+  devices: Array<Record<string, unknown>>;
+  controlObjectResults: ChannelControlObjectResult[];
+};
+
+function deviceList(
+  homes: Array<{ id: string; name: string }>,
+  devices: Array<Record<string, unknown>>,
+): XiaomiDeviceList {
+  return { homes, devices, controlObjectResults: parseEmbeddedControlObjectResults(devices) };
+}
+
+export async function listDevices(session: XiaomiSession): Promise<XiaomiDeviceList> {
   let firstError: Error | undefined;
   let homes: Array<Record<string, unknown>> = [];
   const primaryDevices: Array<Record<string, unknown>> = [];
@@ -269,7 +284,7 @@ export async function listDevices(session: XiaomiSession) {
           if (!firstError) firstError = error instanceof Error ? error : new Error("XIAOMI_DEVICE_SYNC_FAILED");
         }
       }
-      if (!firstError) return { homes: homes.map((home) => ({ id: String(home.home_id ?? home.id ?? ""), name: String(home.name ?? home.home_name ?? "我的家") })), devices: primaryDevices };
+      if (!firstError) return deviceList(homes.map((home) => ({ id: String(home.home_id ?? home.id ?? ""), name: String(home.name ?? home.home_name ?? "我的家") })), primaryDevices);
     }
   } catch (error) {
     firstError = error instanceof Error ? error : new Error("XIAOMI_DEVICE_SYNC_FAILED");
@@ -284,7 +299,7 @@ export async function listDevices(session: XiaomiSession) {
     try {
       response = await signedXiaomiRequest(session, path, payload);
     } catch (signedError) {
-      if (primaryDevices.length > 0) return { homes: homes.map(home => ({ id: String(home.home_id ?? home.id ?? ""), name: String(home.name ?? home.home_name ?? "我的家") })), devices: primaryDevices };
+      if (primaryDevices.length > 0) return deviceList(homes.map(home => ({ id: String(home.home_id ?? home.id ?? ""), name: String(home.name ?? home.home_name ?? "我的家") })), primaryDevices);
       const finalError = signedError instanceof Error ? signedError : firstError;
       console.error("[xiaomi-cloud-sync]", JSON.stringify({ region: session.region, primaryError: firstError?.message, legacyEncryptedError: encryptedError instanceof Error ? encryptedError.message : "UNKNOWN_ERROR", legacySignedError: finalError?.message }));
       throw finalError ?? firstError ?? new Error("XIAOMI_DEVICE_SYNC_FAILED");
@@ -302,5 +317,5 @@ export async function listDevices(session: XiaomiSession) {
   const homeMap = new Map<string, { id: string; name: string }>();
   for (const home of homes) homeMap.set(String(home.home_id ?? home.id ?? ""), { id: String(home.home_id ?? home.id ?? ""), name: String(home.name ?? home.home_name ?? "我的家") });
   for (const device of devices) homeMap.set(String(device.homeId), { id: String(device.homeId), name: String(device.homeName) });
-  return { homes: [...homeMap.values()], devices };
+  return deviceList([...homeMap.values()], devices);
 }

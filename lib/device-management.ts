@@ -1,4 +1,13 @@
-import { parseDerivedDeviceId, type DeviceConnection, type DeviceControlChannel, type DeviceTopology } from "./device-topology.ts";
+import {
+  deviceTopologyIdentity,
+  parseDerivedDeviceId,
+  type ControlEvidence,
+  type ControlEvidenceSource,
+  type ControlRelation,
+  type DeviceConnection,
+  type DeviceControlChannel,
+  type DeviceTopology,
+} from "./device-topology.ts";
 
 export type ManagedHardwareRole = "controller" | "switch" | "device";
 
@@ -11,7 +20,7 @@ export type ManagedDevice = {
   room: string;
   kind: string;
   icon: string;
-  on: boolean;
+  on: boolean | null;
   status: string;
   detail: string;
   color: string;
@@ -40,10 +49,13 @@ export type ManagedDeviceRecord<T extends ManagedDevice = ManagedDevice> = {
 export type LightingControl<T extends ManagedDevice = ManagedDevice> = {
   device: T;
   endpoint?: T;
+  target?: T;
   connection: DeviceConnection;
-  relationship: "relay-load" | "wireless-secondary" | "smart-device-power" | "unknown";
+  relation: ControlRelation;
   channelIndex: number | null;
   channelSiid: number | null;
+  evidence: ControlEvidence;
+  evidenceSource: ControlEvidenceSource;
   inferred: boolean;
 };
 
@@ -142,22 +154,63 @@ function channelFor(device: ManagedDevice, owner: ManagedDevice | undefined): De
   return owner?.topology?.channels.find(channel => channel.channelSiid === device.topology?.channelSiid);
 }
 
-function addControl<T extends ManagedDevice>(topology: LightingTopology<T>, owner: T | undefined, endpoint: T, connection: DeviceConnection, inferred: boolean) {
+function connectionForRelation(relation: ControlRelation): DeviceConnection {
+  if (relation === "wireless-control") return "wireless";
+  if (relation === "wired-load" || relation === "wired-smart-light-power") return "wired";
+  return "unknown";
+}
+
+const evidenceRank: Record<ControlEvidence, number> = {
+  unknown: 0,
+  inferred: 1,
+  confirmed: 2,
+};
+
+const evidenceSourceRank: Record<ControlEvidenceSource, number> = {
+  none: 0,
+  "name-match": 1,
+  "miot-property": 2,
+  "split-device": 3,
+  "explicit-control-object": 4,
+  "control-object-query": 5,
+};
+
+function addControl<T extends ManagedDevice>(
+  topology: LightingTopology<T>,
+  owner: T | undefined,
+  endpoint: T | undefined,
+  relation: ControlRelation,
+  inferred: boolean,
+  evidence: ControlEvidence = inferred ? "inferred" : "confirmed",
+  evidenceSource: ControlEvidenceSource = inferred ? "name-match" : "split-device",
+  target?: T,
+) {
   if (!owner) return;
-  const channel = channelFor(endpoint, owner);
-  const relationship = connection === "wireless" ? "wireless-secondary"
-    : topology.kind === "smart-light" || topology.kind === "smart-light-group" ? "smart-device-power"
-      : connection === "wired" ? "relay-load" : "unknown";
-  const exists = topology.controls.some(control => control.device.did === owner.did && control.channelSiid === endpoint.topology?.channelSiid && control.connection === connection);
-  if (!exists) topology.controls.push({
+  const channel = endpoint ? channelFor(endpoint, owner) : owner.topology?.channels.find(item => item.edges.some(edge => edge.relation === relation && edge.targetKey === topology.key));
+  const channelSiid = channel?.channelSiid ?? endpoint?.topology?.channelSiid ?? null;
+  const connection = connectionForRelation(relation);
+  const existing = topology.controls.find(control => control.device.did === owner.did && control.channelSiid === channelSiid && control.relation === relation);
+  const candidate = {
     device: owner,
     endpoint,
+    target,
     connection,
-    relationship,
-    channelIndex: channel?.channelIndex ?? endpoint.topology?.channelIndex ?? null,
-    channelSiid: channel?.channelSiid ?? endpoint.topology?.channelSiid ?? null,
+    relation,
+    channelIndex: channel?.channelIndex ?? endpoint?.topology?.channelIndex ?? null,
+    channelSiid,
+    evidence,
+    evidenceSource,
     inferred,
-  });
+  };
+  if (!existing) {
+    topology.controls.push(candidate);
+    return;
+  }
+  if (
+    evidenceRank[evidence] > evidenceRank[existing.evidence]
+    || evidenceRank[evidence] === evidenceRank[existing.evidence]
+      && evidenceSourceRank[evidenceSource] > evidenceSourceRank[existing.evidenceSource]
+  ) Object.assign(existing, candidate);
 }
 
 function createTopology<T extends ManagedDevice>(key: string, name: string, homeId: string, room: string, kind: LightingTopologyKind): LightingTopology<T> {
@@ -207,7 +260,7 @@ export function buildDeviceManagementModel<T extends ManagedDevice>(devices: T[]
     const key = `${device.homeId}:${device.room}:${targetName(device.name)}:${device.did}`;
     const topology = createTopology<T>(key, device.name, device.homeId, device.room, kind);
     topology.lights.push(device);
-    topology.on = device.online === false ? null : Boolean(device.on);
+    topology.on = device.online === false ? null : device.on;
     topology.online = device.online ?? null;
     topology.stateSource = "smart-device";
     topologies.set(key, topology);
@@ -234,7 +287,15 @@ export function buildDeviceManagementModel<T extends ManagedDevice>(devices: T[]
     }
     topology.loads.push(record.device);
     topology.unresolved ||= connection === "unknown";
-    addControl(topology, record.owner, record.device, connection, Boolean(smart));
+    addControl(
+      topology,
+      record.owner,
+      record.device,
+      connection === "wired"
+        ? smart ? "wired-smart-light-power" : "wired-load"
+        : "unknown",
+      Boolean(smart),
+    );
     if (topology.kind === "ordinary-load" && connection === "wired") {
       topology.on = record.device.on;
       topology.online = record.owner?.online ?? record.device.online ?? null;
@@ -251,7 +312,33 @@ export function buildDeviceManagementModel<T extends ManagedDevice>(devices: T[]
     const topology = candidate ?? topologies.get(key) ?? createTopology<T>(key, displayTargetName(record.device.name), record.device.homeId, room, "unknown");
     if (!candidate) { topology.unresolved = true; topologies.set(key, topology); byName.set(nameKey, [...(byName.get(nameKey) ?? []), topology]); }
     topology.aliases.push(record.device);
-    addControl(topology, record.owner, record.device, "wireless", !candidate || candidate.kind === "smart-light" || candidate.kind === "smart-light-group");
+    addControl(topology, record.owner, record.device, "wireless-control", !candidate || candidate.kind === "smart-light" || candidate.kind === "smart-light-group");
+  }
+
+  const controllerIndex = new Map(controllers.flatMap(controller => controller.did ? [[deviceTopologyIdentity(controller.homeId, controller.did), controller] as const] : []));
+  const deviceIndex = new Map(devices.flatMap(device => device.did ? [[deviceTopologyIdentity(device.homeId, device.did), device] as const] : []));
+  for (const controller of controllers) {
+    for (const channel of controller.topology?.channels ?? []) {
+      for (const edge of channel.edges) {
+        if (edge.relation === "unknown") continue;
+        const targetDevice = edge.targetKey.startsWith(`${edge.homeId}:`) ? deviceIndex.get(edge.targetKey) : undefined;
+        const targetTopology = targetDevice?.did
+          ? [...topologies.values()].find(item => item.homeId === targetDevice.homeId && item.lights.some(light => light.did === targetDevice.did))
+          : [...topologies.values()].find(item => item.key === edge.targetKey);
+        if (!targetTopology) continue;
+        const endpoint = edge.endpointDid ? deviceIndex.get(deviceTopologyIdentity(edge.homeId, edge.endpointDid)) : undefined;
+        addControl(
+          targetTopology,
+          controllerIndex.get(deviceTopologyIdentity(edge.homeId, edge.sourceDid)),
+          endpoint,
+          edge.relation,
+          edge.evidence === "inferred",
+          edge.evidence,
+          edge.evidenceSource,
+          targetDevice,
+        );
+      }
+    }
   }
 
   const sorted = [...topologies.values()].sort((left, right) => left.room.localeCompare(right.room, "zh-CN") || left.name.localeCompare(right.name, "zh-CN"));

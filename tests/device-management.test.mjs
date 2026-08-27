@@ -23,9 +23,9 @@ function runtime(homeId, did, siid, connectionType, reportedOn = false, buttonIn
   };
 }
 
-function records(raw, states = []) {
+function records(raw, states = [], controlObjects = []) {
   const runtimeStates = new Map(states.map(state => [deviceChannelStateKey(state.homeId, state.did, state.siid), state]));
-  const topologies = buildDeviceTopology(raw, runtimeStates);
+  const topologies = buildDeviceTopology(raw, runtimeStates, controlObjects);
   return raw.map((device, index) => {
     const topology = topologyForDevice(topologies, device);
     const parsed = parseDerivedDeviceId(device.did);
@@ -41,7 +41,7 @@ function records(raw, states = []) {
       room: device.roomName,
       kind: classifyDeviceKind(device.model, device.name, device.logicalType ?? ""),
       icon: "☀",
-      on: device.on ?? channel?.reportedOn ?? false,
+      on: Object.hasOwn(device, "on") ? device.on : channel?.reportedOn ?? null,
       status: device.online === false ? "离线" : "在线",
       detail: device.model,
       color: "orange",
@@ -225,7 +225,46 @@ test("links a derived power endpoint to the real smart light and keeps the smart
   assert.equal(target.stateSource, "smart-device");
   assert.equal(target.online, false);
   assert.equal(target.on, null, "an offline smart light must not borrow the relay state");
-  assert.equal(target.controls[0].relationship, "smart-device-power");
+  assert.equal(target.controls[0].relation, "wired-smart-light-power");
+});
+
+test("preserves an online smart light's unknown power state", () => {
+  const raw = [
+    { did: "light", homeId: "fabric", name: "状态未知的智能灯", model: "yeelink.light.ceiling", roomName: "书房", online: true, on: null },
+  ];
+  const target = buildDeviceManagementModel(records(raw)).topologies[0];
+
+  assert.equal(target.online, true);
+  assert.equal(target.on, null);
+});
+
+test("explicit control-object evidence upgrades the matching name-inferred edge", () => {
+  const raw = [
+    { did: "remote", homeId: "fabric", name: "餐厅开关", model: "linp.switch.qh2db4", roomName: "餐厅" },
+    { did: "remote.s2", homeId: "fabric", name: "餐厅吊灯", model: "linp.switch.qh2db4", roomName: "勿关" },
+    { did: "light", homeId: "fabric", name: "餐厅吊灯", model: "yeelink.light.pendant", roomName: "餐厅", online: true, on: true },
+  ];
+  const controlObjects = [{
+    key: "fabric:remote:2:light",
+    homeId: "fabric",
+    sourceDid: "remote",
+    sourceSiid: 2,
+    buttonIndex: 1,
+    targetDid: "light",
+    targetSiid: null,
+    targetName: "餐厅吊灯",
+    targetRoom: "餐厅",
+    targetKind: "smart-light",
+    evidence: "confirmed",
+    evidenceSource: "explicit-control-object",
+  }];
+  const model = buildDeviceManagementModel(records(raw, [runtime("fabric", "remote", 2, "wireless", false, 1)], controlObjects));
+  const control = model.topologies.find(item => item.name === "餐厅吊灯").controls[0];
+
+  assert.equal(control.evidence, "confirmed");
+  assert.equal(control.evidenceSource, "explicit-control-object");
+  assert.equal(control.inferred, false);
+  assert.equal(control.target.did, "light");
 });
 
 test("links wireless derived power aliases to a smart-light group without inventing group members", () => {
@@ -239,7 +278,7 @@ test("links wireless derived power aliases to a smart-light group without invent
 
   assert.equal(target.kind, "smart-light-group");
   assert.deepEqual(target.aliases.map(device => device.did), ["remote.s4"]);
-  assert.equal(target.controls[0].relationship, "wireless-secondary");
+  assert.equal(target.controls[0].relation, "wireless-control");
   assert.deepEqual(model.records.find(record => record.device.did === "group.900").groupMembers, []);
 });
 
