@@ -252,9 +252,12 @@ function decideChannel(
   const trustedSmartTargets = smartTargets.filter(object => object.evidence === "confirmed");
   const hasSmartCandidate = smartTargets.length > 0;
   const hasSmartTarget = trustedSmartTargets.length > 0;
-  const hasOrdinaryLoad = result.objects.some(object => object.targetKind === "ordinary-load");
-  const onlyUnconfigured = result.objects.length === 0 || result.objects.every(object => object.targetKind === "unconfigured");
-  const onlyWiredTargets = result.objects.every(object => object.targetKind === "unconfigured" || object.targetKind === "ordinary-load");
+  const trustedOrdinaryLoads = result.objects.filter(object => object.targetKind === "ordinary-load" && object.evidence === "confirmed");
+  const trustedUnconfigured = result.objects.filter(object => object.targetKind === "unconfigured" && object.evidence === "confirmed");
+  const hasOrdinaryLoad = trustedOrdinaryLoads.length > 0;
+  const onlyUnconfigured = result.objects.length === 0 || trustedUnconfigured.length === result.objects.length;
+  const onlyWiredTargets = trustedOrdinaryLoads.length + trustedUnconfigured.length === result.objects.length;
+  const hasUntrustedCandidate = result.objects.some(object => object.evidence !== "confirmed");
   const relayEnabled = capability === "relay-enabled";
 
   if (hasSmartTarget) {
@@ -275,7 +278,7 @@ function decideChannel(
       return { connection: "wired", classification: "confirmed-wired", relation: "wired-load", relayEnabled: true };
     }
   }
-  if (relayEnabled && hasMappedEndpoint && !hasSmartCandidate) {
+  if (relayEnabled && hasMappedEndpoint && !hasSmartCandidate && !hasUntrustedCandidate) {
     return { connection: "wired", classification: "inferred-wired", relation: "wired-load", relayEnabled: true };
   }
   if (result.status === "failed") {
@@ -455,7 +458,7 @@ export function buildDeviceTopology(
           : controlObject.evidence === "confirmed"
             && ["smart-light", "smart-light-group", "smart-device"].includes(controlObject.targetKind)
             ? "wireless-control" as const
-            : controlObject.targetKind === "ordinary-load"
+            : controlObject.targetKind === "ordinary-load" && controlObject.evidence === "confirmed"
               ? "wired-load" as const
               : "unknown" as const;
         const result = relation ? [edgeFor(controlObject, relation, endpointDid)] : [];

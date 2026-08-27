@@ -219,19 +219,22 @@ test("does not treat an unknown complete control object as an empty binding list
   assert.deepEqual(topology.channels[0].edges.map(edge => edge.relation), ["unknown"]);
 });
 
-test("does not promote an unindexed smart-device candidate to configured", () => {
-  const records = [
-    { did: "switch", homeId: "home", name: "墙壁开关", control_objects: [{ source_siid: 2, target_did: "missing", target_name: "窗帘", target_kind: "smart-device" }] },
-  ];
-  const states = new Map([[deviceChannelStateKey("home", "switch", 2), runtime("home", "switch", 2, "unknown", "relay-enabled")]]);
-  const objects = parseXiaomiControlObjects(records);
-  const topology = buildDeviceTopology(records, states, [completeResult("home", "switch", 2, objects)]).get("home:switch");
+test("does not promote untrusted control-object candidates", () => {
+  for (const targetKind of ["smart-device", "ordinary-load", "unconfigured"]) {
+    const records = [
+      { did: "switch", homeId: "home", name: "墙壁开关", control_objects: [{ source_siid: 2, target_did: "missing", target_name: "候选对象", target_kind: targetKind }] },
+      { did: "switch.s2", homeId: "home", name: "派生端点", roomName: "客厅" },
+    ];
+    const states = new Map([[deviceChannelStateKey("home", "switch", 2), runtime("home", "switch", 2, "unknown", "relay-enabled")]]);
+    const objects = parseXiaomiControlObjects(records).map(object => ({ ...object, evidence: "unknown" }));
+    const topology = buildDeviceTopology(records, states, [completeResult("home", "switch", 2, objects)]).get("home:switch");
 
-  assert.equal(objects[0].evidence, "unknown");
-  assert.equal(topology.channels[0].classification, "unknown");
-  assert.equal(topology.channels[0].connectionType, "unknown");
-  assert.equal(topology.channels[0].evidence, "miot-property");
-  assert.deepEqual(topology.channels[0].edges.map(edge => edge.relation), ["unknown"]);
+    assert.equal(objects[0].evidence, "unknown", targetKind);
+    assert.equal(topology.channels[0].classification, "unknown", targetKind);
+    assert.equal(topology.channels[0].connectionType, "unknown", targetKind);
+    assert.equal(topology.channels[0].evidence, "miot-property", targetKind);
+    assert.deepEqual(topology.channels[0].edges.map(edge => edge.relation), ["unknown"], targetKind);
+  }
 });
 
 test("uses a confirmed same-home embedded target as positive evidence despite incomplete query data", () => {

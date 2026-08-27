@@ -199,7 +199,11 @@ export function parseXiaomiControlObjects(records: RawRecord[]): ButtonControlOb
       const targetSiid = firstPositiveInteger(entry, targetSiidKeys);
       const explicitKind = deviceKind(entry, targetDid ?? "", targetName);
       const targetKind = indexed?.kind ?? (targetDid && lightName.test(targetName) ? "unknown" : explicitKind);
-      const evidence: ControlEvidence = targetDid && indexed ? "confirmed" : targetKind === "unconfigured" ? "confirmed" : "unknown";
+      const evidence: ControlEvidence = targetDid && indexed
+        ? "confirmed"
+        : targetKind === "unconfigured" || targetKind === "ordinary-load"
+          ? "confirmed"
+          : "unknown";
       const identity = `${home}:${sourceDid}:${sourceSiid}:${buttonIndex ?? "-"}:${targetDid ?? "-"}:${targetSiid ?? "-"}:${targetName}`;
       if (seen.has(identity)) continue;
       seen.add(identity);
