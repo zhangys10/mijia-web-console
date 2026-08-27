@@ -29,6 +29,9 @@ test("scene cards open details and use a separate execution button", async () =>
   const sceneCard = source.slice(start, end);
   assert.match(sceneCard, /className="scene-card-open"[^>]*onClick=\{onOpen\}/s);
   assert.match(sceneCard, /className="scene-run"[^>]*onClick=\{\(\)=>onRun\(scene\)\}/s);
+  assert.match(sceneCard, /connected\?"执行":"演示"/);
+  assert.match(sceneCard, /running\?"执行中…"/);
+  assert.match(source, /connection\.connected\?"执行场景":"执行演示"/);
   assert.doesNotMatch(sceneCard, /runScene\(/, "the card component must not execute a scene from its detail action");
   assert.match(source, /selectedScene&&<div className="modal-bg"/, "opening a card must show scene details");
   assert.match(source, /className="scene-modal-run"/, "the detail card must expose an explicit execution action");
