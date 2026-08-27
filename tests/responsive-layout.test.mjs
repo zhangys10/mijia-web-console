@@ -12,6 +12,9 @@ test("keeps typography readable across desktop, tablet and mobile layouts", asyn
   assert.match(styles, /@media\s*\(max-width:\s*560px\)/);
   assert.match(styles, /env\(safe-area-inset-bottom\)/);
   assert.match(styles, /\.actions button\.mobile-account/);
+  assert.match(styles, /\.home-selector\s*\{/);
+  assert.match(styles, /\.active-device-grid\s*\{[^}]*grid-template-columns:/s);
+  assert.match(styles, /\.header-controls\s*\{[^}]*width:\s*100%/s);
   assert.match(styles, /\.associated-device-ids code/);
 });
 

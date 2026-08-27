@@ -11,6 +11,12 @@ import {
 
 export type ManagedHardwareRole = "controller" | "switch" | "device";
 
+export type ManagedPowerControl = {
+  did: string;
+  siid: number;
+  piid: number;
+};
+
 export type ManagedDevice = {
   id: number;
   did?: string;
@@ -35,6 +41,7 @@ export type ManagedDevice = {
   groupMemberIds?: string[];
   groupIds?: string[];
   groupMembers?: ManagedDevice[];
+  powerControl?: ManagedPowerControl;
 };
 
 export type ManagedDeviceCategory = "smart-light" | "controller" | "switch" | "voice-alias" | "wired-load" | "group" | "other";
@@ -82,6 +89,25 @@ export type DeviceManagementModel<T extends ManagedDevice = ManagedDevice> = {
   endpoints: ManagedDeviceRecord<T>[];
   topologies: LightingTopology<T>[];
   totals: { devices: number; lights: number; switches: number; aliases: number; groups: number };
+};
+
+export type ActiveDeviceItem<T extends ManagedDevice = ManagedDevice> = {
+  key: string;
+  name: string;
+  room: string;
+  kind: string;
+  icon: string;
+  color: string;
+  status: string;
+  device: T;
+  mappedDevice?: T;
+  stateDeviceIds: number[];
+  powerControl?: ManagedPowerControl;
+};
+
+export type ActiveDeviceGroup<T extends ManagedDevice = ManagedDevice> = {
+  room: string;
+  items: ActiveDeviceItem<T>[];
 };
 
 const hiddenRoom = /勿关|勿删|语音|隐藏/;
@@ -356,4 +382,62 @@ export function buildDeviceManagementModel<T extends ManagedDevice>(devices: T[]
       groups: records.filter(record => record.category === "group").length,
     },
   };
+}
+
+export function buildActiveDeviceGroups<T extends ManagedDevice>(devices: T[]): ActiveDeviceGroup<T>[] {
+  const model = buildDeviceManagementModel(devices);
+  const items: ActiveDeviceItem<T>[] = [];
+
+  for (const topology of model.topologies) {
+    if (topology.online !== true || topology.on !== true) continue;
+    const stateDevice = topology.stateSource === "smart-device"
+      ? topology.lights.find(device => device.online === true && device.on === true) ?? topology.lights[0]
+      : topology.loads.find(device => device.on === true) ?? topology.loads[0];
+    if (!stateDevice) continue;
+    const control = topology.controls.find(candidate => candidate.endpoint?.id === stateDevice.id)
+      ?? topology.controls.find(candidate => candidate.endpoint)
+      ?? topology.controls[0];
+    const device = topology.stateSource === "smart-device" ? stateDevice : control?.device ?? stateDevice;
+    const mappedDevice = topology.stateSource === "smart-device" ? undefined : control?.endpoint ?? stateDevice;
+    items.push({
+      key: `light:${topology.key}`,
+      name: topology.name,
+      room: topology.room,
+      kind: topology.kind === "smart-light-group" ? "灯组" : "灯光",
+      icon: stateDevice.icon || "☀",
+      color: stateDevice.color || "orange",
+      status: stateDevice.status || "已开启",
+      device,
+      mappedDevice,
+      stateDeviceIds: topology.stateSource === "smart-device"
+        ? [stateDevice.id]
+        : [...new Set(topology.loads.filter(item => item.on === true).map(item => item.id))],
+      powerControl: stateDevice.powerControl,
+    });
+  }
+
+  for (const record of model.records) {
+    if (["smart-light", "group", "controller", "switch"].includes(record.category)) continue;
+    const device = record.device;
+    if (device.online !== true || device.on !== true) continue;
+    items.push({
+      key: `device:${device.homeId}:${device.did ?? device.id}`,
+      name: device.name,
+      room: device.room,
+      kind: device.kind,
+      icon: device.icon,
+      color: device.color,
+      status: device.status,
+      device,
+      stateDeviceIds: [device.id],
+      powerControl: device.powerControl,
+    });
+  }
+
+  const rooms = [...new Set(items.map(item => item.room))]
+    .sort((left, right) => Number(hiddenRoom.test(left)) - Number(hiddenRoom.test(right)) || left.localeCompare(right, "zh-CN"));
+  return rooms.map(room => ({
+    room,
+    items: items.filter(item => item.room === room).sort((left, right) => left.name.localeCompare(right.name, "zh-CN")),
+  }));
 }

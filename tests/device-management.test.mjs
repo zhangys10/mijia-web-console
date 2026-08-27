@@ -6,7 +6,7 @@ import {
   parseDerivedDeviceId,
   topologyForDevice,
 } from "../lib/device-topology.ts";
-import { buildDeviceManagementModel } from "../lib/device-management.ts";
+import { buildActiveDeviceGroups, buildDeviceManagementModel } from "../lib/device-management.ts";
 import { classifyDeviceKind, inferHardwareRole, physicalDeviceId } from "../lib/device-views.ts";
 
 function runtime(homeId, did, siid, connectionType, reportedOn = false, buttonIndex = null) {
@@ -18,6 +18,7 @@ function runtime(homeId, did, siid, connectionType, reportedOn = false, buttonIn
     label: buttonIndex ? `按键 ${buttonIndex}` : `服务 ${siid}`,
     connectionType,
     reportedOn,
+    powerControl: { did, siid, piid: 1 },
     modeValue: connectionType === "wired" ? 0 : connectionType === "wireless" ? 1 : null,
     evidence: connectionType === "unknown" ? "unknown" : "miot-property",
   };
@@ -32,6 +33,7 @@ function records(raw, states = [], controlObjects = []) {
     const channel = parsed
       ? topologies.get(`${device.homeId}:${parsed.physicalDid}`)?.channels.find(item => item.channelSiid === parsed.siid)
       : undefined;
+    const runtimeState = parsed ? runtimeStates.get(deviceChannelStateKey(device.homeId, parsed.physicalDid, parsed.siid)) : undefined;
     return {
       id: index + 1,
       did: device.did,
@@ -50,9 +52,44 @@ function records(raw, states = [], controlObjects = []) {
       hardwareRole: inferHardwareRole(device.model, device.name),
       topology,
       groupMemberIds: device.groupMemberIds,
+      powerControl: device.powerControl ?? runtimeState?.powerControl,
     };
   });
 }
+
+test("builds one active lighting card from wired and wireless representations", () => {
+  const raw = [
+    { did: "main", homeId: "fabric", name: "客厅主控", model: "xiaomi.controller.oh4w", roomName: "客厅" },
+    { did: "main.s2", homeId: "fabric", name: "客厅吊灯", model: "xiaomi.controller.oh4w", roomName: "客厅" },
+    { did: "remote", homeId: "fabric", name: "客厅副控", model: "linp.switch.qh2db4", roomName: "客厅" },
+    { did: "remote.s2", homeId: "fabric", name: "客厅吊灯副控", model: "linp.switch.qh2db4", roomName: "勿关" },
+  ];
+  const groups = buildActiveDeviceGroups(records(raw, [
+    runtime("fabric", "main", 2, "wired", true, 1),
+    runtime("fabric", "remote", 2, "wireless", true, 1),
+  ]));
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].room, "客厅");
+  assert.equal(groups[0].items.length, 1);
+  assert.equal(groups[0].items[0].name, "客厅吊灯");
+  assert.equal(groups[0].items[0].device.did, "main");
+  assert.equal(groups[0].items[0].mappedDevice.did, "main.s2");
+  assert.deepEqual(groups[0].items[0].powerControl, { did: "main", siid: 2, piid: 1 });
+});
+
+test("active device groups include online appliances and exclude stale or control hardware states", () => {
+  const devices = records([
+    { did: "purifier", homeId: "fabric", name: "空气净化器", model: "zhimi.airpurifier.v1", roomName: "主卧", online: true, on: true, powerControl: { did: "purifier", siid: 2, piid: 1 } },
+    { did: "offline-ac", homeId: "fabric", name: "离线空调", model: "xiaomi.aircondition.v1", roomName: "客厅", online: false, on: true },
+    { did: "unknown-fan", homeId: "fabric", name: "状态未知风扇", model: "xiaomi.fan.v1", roomName: "书房", online: true, on: null },
+    { did: "switch", homeId: "fabric", name: "客厅开关", model: "linp.switch.qh2db4", roomName: "客厅", online: true, on: true },
+  ]);
+  const groups = buildActiveDeviceGroups(devices);
+
+  assert.deepEqual(groups.map(group => [group.room, group.items.map(item => item.name)]), [["主卧", ["空气净化器"]]]);
+  assert.deepEqual(groups[0].items[0].powerControl, { did: "purifier", siid: 2, piid: 1 });
+});
 
 test("recognizes only Xiaomi .sN IDs as derived endpoints", () => {
   assert.deepEqual(parseDerivedDeviceId("720449456.s14"), { physicalDid: "720449456", siid: 14 });
