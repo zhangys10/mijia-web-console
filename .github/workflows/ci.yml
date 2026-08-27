@@ -38,8 +38,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Build
+      - name: Build for Cloudflare
         run: npm run build
+
+      - name: Build for Vercel
+        run: npm run build:vercel
 
       - name: Run unit tests
         run: npm run test:unit

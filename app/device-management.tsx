@@ -10,15 +10,10 @@ import {
   type ManagedDeviceRecord,
 } from "../lib/device-management";
 
-type Home = { id: string; name: string };
 type Props = {
   devices: ManagedDevice[];
-  allDevices: ManagedDevice[];
-  homes: Home[];
-  selectedHome: string;
   room: string;
   connected: boolean;
-  onSelectHome: (homeId: string) => void;
   onSelectRoom: (room: string) => void;
   onOpenDevice: (device: ManagedDevice, mappedDevice?: ManagedDevice) => void;
 };
@@ -79,7 +74,7 @@ function channelPreviewPresentation(channel: PreviewChannel, targetKinds: Array<
   return { tone: "unknown", label: channelStatusLabel(channel) };
 }
 
-export default function DeviceManagement({ devices, allDevices, homes, selectedHome, room, connected, onSelectHome, onSelectRoom, onOpenDevice }: Props) {
+export default function DeviceManagement({ devices, room, connected, onSelectRoom, onOpenDevice }: Props) {
   const [view, setView] = useState<"hardware" | "topology">("hardware");
   const [selectedTopology, setSelectedTopology] = useState("");
   const model = useMemo(() => buildDeviceManagementModel(devices), [devices]);
@@ -105,14 +100,13 @@ export default function DeviceManagement({ devices, allDevices, homes, selectedH
       <SummaryCard icon="⌁" value={model.totals.aliases} label="无线派生端点" tone="blue" />
     </section>
 
-    <div className="dm-filter-group"><span className="dm-filter-label">家庭</span><div className="dm-home-list">{homes.map(home => <button key={home.id} type="button" className={`dm-home-card ${home.id === selectedHome ? "selected" : ""}`} onClick={() => onSelectHome(home.id)}><span>⌂</span><strong>{home.name}</strong><small>{allDevices.filter(device => device.homeId === home.id).length} 条米家记录</small></button>)}</div></div>
     <div className="dm-filter-group"><span className="dm-filter-label">房间</span><div className="dm-room-tabs">{rooms.map(item => <button key={item} type="button" className={item === room ? "selected" : ""} onClick={() => onSelectRoom(item)}>{item}</button>)}</div></div>
     <div className="dm-view-bar"><div className="dm-view-tabs" role="tablist" aria-label="设备展示方式">
       <button type="button" role="tab" aria-selected={view === "hardware"} className={view === "hardware" ? "selected" : ""} onClick={() => setView("hardware")}>▦ 开关与硬件</button>
       <button type="button" role="tab" aria-selected={view === "topology"} className={view === "topology" ? "selected" : ""} onClick={() => setView("topology")}>⌁ 实际照明</button>
     </div><p>{view === "hardware" ? "每个物理 DID 只显示一张卡片，派生设备作为对应按键内容展示。" : "同家庭全局查找关联关系，普通灯按有线派生位置归类，智能灯按自身位置归类。"}</p></div>
 
-    {view === "hardware" ? <div className="dm-room-inventory">{groupedRooms.map(group => <section key={`${selectedHome}:${group.name}`} className="dm-room-section"><div className="dm-room-heading"><div><strong>{group.name}</strong>{hiddenRoom.test(group.name) && <span>仅保留真实硬件</span>}</div><small>{group.records.length} 台硬件</small></div><div className="dm-room-grid">{group.records.map(record => <DeviceRecordCard key={`${record.device.homeId}:${record.device.did ?? record.device.id}`} record={record} endpointsById={endpointsById} onOpen={() => onOpenDevice(record.device)} onOpenMapped={(endpoint) => onOpenDevice(record.device, endpoint)} onOpenMember={onOpenDevice} />)}</div></section>)}{!groupedRooms.length && <EmptyState title="这个房间没有实际硬件" detail="开关派生端点不会在本视图中单独显示，请切换到实际照明视图查看控制关系。" />}</div>
+    {view === "hardware" ? <div className="dm-room-inventory">{groupedRooms.map(group => <section key={group.name} className="dm-room-section"><div className="dm-room-heading"><div><strong>{group.name}</strong>{hiddenRoom.test(group.name) && <span>仅保留真实硬件</span>}</div><small>{group.records.length} 台硬件</small></div><div className="dm-room-grid">{group.records.map(record => <DeviceRecordCard key={`${record.device.homeId}:${record.device.did ?? record.device.id}`} record={record} endpointsById={endpointsById} onOpen={() => onOpenDevice(record.device)} onOpenMapped={(endpoint) => onOpenDevice(record.device, endpoint)} onOpenMember={onOpenDevice} />)}</div></section>)}{!groupedRooms.length && <EmptyState title="这个房间没有实际硬件" detail="开关派生端点不会在本视图中单独显示，请切换到实际照明视图查看控制关系。" />}</div>
       : <div className="dm-topology-view">{activeTopology ? <div className="dm-topology-explorer"><aside className="dm-topology-list" aria-label="实际照明目标"><div className="dm-list-heading"><strong>实际照明目标</strong><small>{topologies.length} 个</small></div>{topologies.map(topology => <button type="button" key={topology.key} className={`dm-topology-item ${topology.key === activeTopology.key ? "selected" : ""}`} onClick={() => setSelectedTopology(topology.key)}><span className="dm-light-icon">☀</span><div><strong>{topology.name}</strong><small>{topology.room} · {topologyKindLabel(topology)} · {topology.controls.length} 个控制来源</small></div>{topology.unresolved && <em>待确认</em>}</button>)}</aside>
         <section className="dm-topology-stage"><div className="dm-stage-heading"><div><span>{activeTopology.room} · {topologyKindLabel(activeTopology)}</span><h3>{activeTopology.name}</h3><p>{activeTopology.controls.filter(control => control.connection === "wired").length} 个有线控制 · {activeTopology.controls.filter(control => control.connection === "wireless").length} 个无线控制 · {activeTopology.controls.filter(control => control.connection === "unknown").length} 个关系待确认</p></div><TargetState topology={activeTopology} /></div>
           <LightingCanvas topology={activeTopology} onOpenDevice={onOpenDevice} />
