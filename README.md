@@ -61,6 +61,7 @@ npm run dev
 ```bash
 npm run dev        # 启动 Vite/Vinext 开发服务器
 npm run build      # 生成 Cloudflare Worker 构建产物
+npm run build:vercel # 生成 Vercel 使用的 Next.js 构建产物
 npm run start      # 启动已构建的 Vinext 应用
 npm run typecheck  # 检查应用 TypeScript 类型
 npm run lint       # 运行 ESLint
@@ -77,6 +78,12 @@ npm run build
 ```
 
 部署前，在目标 Cloudflare 环境中安全设置 `XIAOMI_SESSION_SECRET`。不要在命令历史、远程 URL、公开构建日志或版本库文件中传递实际值。具体发布命令可以按使用的 Cloudflare Workers 项目或 CI 流程配置。
+
+### Vercel
+
+仓库中的 `vercel.json` 会让 Vercel 使用原生 Next.js 构建，而不是面向 Cloudflare Workers 的 Vinext 构建。Vercel 项目的 Framework Preset 应为 Next.js，Output Directory 保持为空或默认值，不要设置为 `dist`。
+
+部署前，在 Vercel 项目的 Environment Variables 中设置高熵的 `XIAOMI_SESSION_SECRET`，并为 Production、Preview 等需要登录能力的环境分别配置。配置后重新部署，使 Route Handlers 能够安全加密米家会话。
 
 ## 安全说明
 
