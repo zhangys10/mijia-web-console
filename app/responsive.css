@@ -161,6 +161,30 @@ select {
   white-space: normal;
 }
 
+.scenes > button:disabled,
+.panel-grid button:disabled {
+  cursor: not-allowed;
+  opacity: .58;
+  transform: none;
+  box-shadow: none;
+}
+
+.scene-state {
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  color: #788391;
+  font-size: 12px;
+}
+
+.scene-state.error {
+  border-color: #ffd7c6;
+  background: #fff8f4;
+  color: #c95020;
+}
+
 .home-tabs {
   gap: 12px;
   padding: 2px 1px 8px;

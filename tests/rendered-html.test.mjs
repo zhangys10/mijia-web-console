@@ -32,6 +32,9 @@ test("renders the Xiaomi smart home dashboard", async () => {
   assert.match(html, /<meta name="theme-color" content="#fafbfc"/, "mobile browsers should inherit the dashboard theme");
   assert.match(html, /aria-label="账号与连接"/, "mobile users must retain access to Xiaomi account settings");
   assert.match(html, /扫码连接米家/);
+  assert.match(html, /快捷场景/);
+  assert.match(html, /演示场景/);
+  assert.match(html, /回家/);
   assert.match(html, /设备管理/);
   assert.match(html, /客厅/);
   assert.match(html, /主卧/);
@@ -100,4 +103,55 @@ test("device synchronization requires an authenticated Xiaomi session", async ()
 
   assert.equal(response.status, 401);
   assert.deepEqual(await response.json(), { error: "XIAOMI_NOT_CONNECTED" });
+});
+
+test("reading or running scenes requires an authenticated Xiaomi session", async () => {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("test", `scenes-${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
+  const context = { waitUntil() {}, passThroughOnException() {} };
+
+  for (const request of [
+    new Request("http://localhost/api/xiaomi/scenes?homeId=home-1"),
+    new Request("http://localhost/api/xiaomi/scenes/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ homeId: "home-1", sceneId: "scene-1" }),
+    }),
+  ]) {
+    const response = await worker.fetch(request, env, context);
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: "XIAOMI_NOT_CONNECTED" });
+  }
+});
+
+test("scene APIs reject malformed identifiers before contacting Xiaomi", async () => {
+  process.env.XIAOMI_SESSION_SECRET = "scene-api-test-secret-with-at-least-32-characters";
+  const { seal } = await import("../lib/xiaomi-cloud.ts");
+  const cookie = await seal({
+    userId: "test-user",
+    ssecurity: "unused",
+    serviceToken: "unused",
+    region: "cn",
+    createdAt: Date.now(),
+  });
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("test", `scene-validation-${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
+  const context = { waitUntil() {}, passThroughOnException() {} };
+  const headers = { cookie: `xiaomi_session=${cookie}` };
+
+  const listResponse = await worker.fetch(new Request("http://localhost/api/xiaomi/scenes?homeId=", { headers }), env, context);
+  assert.equal(listResponse.status, 400);
+  assert.deepEqual(await listResponse.json(), { error: "INVALID_HOME_ID" });
+
+  const runResponse = await worker.fetch(new Request("http://localhost/api/xiaomi/scenes/run", {
+    method: "POST",
+    headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify({ homeId: "home-1", sceneId: "bad\nscene" }),
+  }), env, context);
+  assert.equal(runResponse.status, 400);
+  assert.deepEqual(await runResponse.json(), { error: "INVALID_SCENE_COMMAND" });
 });
