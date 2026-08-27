@@ -561,6 +561,38 @@ select {
   color: #c95020;
 }
 
+.scene-center-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -7px 0 18px;
+  padding: 11px 13px;
+  border-radius: 11px;
+  background: #fafbfc;
+}
+
+.scene-center-toolbar span {
+  color: #7d8792;
+  font-size: 11px;
+}
+
+.scene-center-toolbar button {
+  border: 0;
+  border-radius: 9px;
+  background: var(--orange);
+  padding: 9px 13px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.scene-center-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: .46;
+}
+
 .scene-modal {
   width: min(620px, 100%);
   max-height: min(88dvh, 820px);
@@ -846,17 +878,37 @@ select {
   margin: 0 !important;
 }
 
-.scene-modal-run {
-  width: calc(100% - 56px);
-  flex: none;
+.scene-modal-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr;
+  gap: 9px;
   margin: 0 28px 28px;
+}
+
+.scene-modal-actions:has(.scene-modal-run:only-child) {
+  grid-template-columns: 1fr;
+}
+
+.scene-modal-run,
+.scene-modal-edit {
+  width: 100%;
+  flex: none;
   padding: 12px 14px;
-  border: 0;
   border-radius: 10px;
-  background: var(--orange);
-  color: #fff;
   font-weight: 700;
   cursor: pointer;
+}
+
+.scene-modal-run {
+  border: 0;
+  background: var(--orange);
+  color: #fff;
+}
+
+.scene-modal-edit {
+  border: 1px solid #e0e5ea;
+  background: #fff;
+  color: #66727e;
 }
 
 .scene-modal-run:disabled {
@@ -1490,8 +1542,7 @@ select {
     padding: 24px 19px 16px;
   }
 
-  .scene-modal-run {
-    width: calc(100% - 38px);
+  .scene-modal-actions {
     margin: 0 19px calc(18px + env(safe-area-inset-bottom));
   }
 

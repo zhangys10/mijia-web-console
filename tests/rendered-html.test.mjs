@@ -98,7 +98,7 @@ test("device synchronization requires an authenticated Xiaomi session", async ()
   assert.deepEqual(await response.json(), { error: "XIAOMI_NOT_CONNECTED" });
 });
 
-test("reading or running scenes requires an authenticated Xiaomi session", async () => {
+test("reading, running or writing scenes requires an authenticated Xiaomi session", async () => {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `scenes-${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
@@ -111,6 +111,17 @@ test("reading or running scenes requires an authenticated Xiaomi session", async
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ homeId: "home-1", sceneId: "scene-1" }),
+    }),
+    new Request("http://localhost/api/xiaomi/scenes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ homeId: "home-1", name: "测试", actions: [] }),
+    }),
+    new Request("http://localhost/api/xiaomi/scenes/scene-1?homeId=home-1"),
+    new Request("http://localhost/api/xiaomi/scenes/scene-1?homeId=home-1", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ homeId: "home-1", name: "测试", revision: "a".repeat(64) }),
     }),
   ]) {
     const response = await worker.fetch(request, env, context);
