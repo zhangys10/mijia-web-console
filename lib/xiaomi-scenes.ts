@@ -27,22 +27,23 @@ export type ManualSceneActionDetail = {
 
 type HomeIdentity = { id: string };
 
-type RawScene = Record<string, unknown>;
-type XiaomiRequester = (
+export type XiaomiSceneRecord = Record<string, unknown>;
+type RawScene = XiaomiSceneRecord;
+export type XiaomiRequester = (
   session: XiaomiSession,
   path: string,
   data: Record<string, unknown>,
 ) => Promise<Record<string, unknown>>;
 
-const SCENE_LIST_PATH = "/app/appgateway/miot/appsceneservice/AppSceneService/GetSceneList";
-const SCENE_RUN_PATH = "/app/appgateway/miot/appsceneservice/AppSceneService/NewRunScene";
+export const SCENE_LIST_PATH = "/app/appgateway/miot/appsceneservice/AppSceneService/GetSceneList";
+export const SCENE_RUN_PATH = "/app/appgateway/miot/appsceneservice/AppSceneService/NewRunScene";
 
 function record(value: unknown): RawScene | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   return value as RawScene;
 }
 
-function parsedRecord(value: unknown) {
+export function parsedSceneRecord(value: unknown) {
   if (typeof value === "string") {
     try { return record(JSON.parse(value)); } catch { return undefined; }
   }
@@ -74,19 +75,19 @@ function sceneEntries(response: Record<string, unknown>) {
 }
 
 function triggerEntries(scene: RawScene) {
-  const trigger = parsedRecord(scene.scene_trigger ?? scene.trigger);
+  const trigger = parsedSceneRecord(scene.scene_trigger ?? scene.trigger);
   if (Array.isArray(trigger?.triggers)) return trigger.triggers.filter((item): item is RawScene => Boolean(record(item)));
   if (Array.isArray(scene.triggers)) return scene.triggers.filter((item): item is RawScene => Boolean(record(item)));
   return [];
 }
 
-function isManualScene(scene: RawScene) {
-  return triggerEntries(scene).some(trigger => text(trigger.src).toLowerCase() === "user");
+export function isManualSceneRecord(scene: RawScene) {
+  return triggerEntries(scene).some(trigger => text(trigger.src).toLowerCase() === "user" || text(trigger.key).toLowerCase() === "user.click");
 }
 
 function actionEntries(scene: RawScene) {
-  const action = parsedRecord(scene.scene_action ?? scene.action);
-  for (const candidate of [action?.actions, scene.actions, parsedRecord(scene.setting)?.action_list]) {
+  const action = parsedSceneRecord(scene.scene_action ?? scene.action);
+  for (const candidate of [action?.actions, scene.actions, parsedSceneRecord(scene.setting)?.action_list]) {
     if (Array.isArray(candidate)) return candidate.map(item => record(item) ?? { name: text(item) });
   }
   return [];
@@ -118,7 +119,7 @@ function commandLabel(command: string) {
 
 function normalizeActions(scene: RawScene): ManualSceneAction[] {
   return actionEntries(scene).map((action, index) => {
-    const payload = parsedRecord(action.payload_json ?? action.payload);
+    const payload = parsedSceneRecord(action.payload_json ?? action.payload);
     const command = text(payload?.command);
     const label = text(action.name) || text(action.action_name) || commandLabel(command);
     const deviceName = text(payload?.device_name) || text(action.device_name);
@@ -146,7 +147,7 @@ function enabled(value: unknown) {
 export function parseManualScenes(response: Record<string, unknown>, homeId: string): ManualScene[] {
   const scenes = new Map<string, ManualScene>();
   for (const scene of sceneEntries(response)) {
-    if (!isManualScene(scene)) continue;
+    if (!isManualSceneRecord(scene)) continue;
     const id = text(scene.scene_id ?? scene.us_id ?? scene.id);
     const name = text(scene.name ?? scene.scene_name);
     const sceneHomeId = text(scene.home_id) || homeId;
@@ -186,6 +187,18 @@ export async function listManualScenes(
 ) {
   const response = await request(session, SCENE_LIST_PATH, { home_id: homeId });
   return parseManualScenes(response, homeId);
+}
+
+export async function listRawManualScenes(
+  session: XiaomiSession,
+  homeId: string,
+  request: XiaomiRequester = xiaomiRequest,
+) {
+  const response = await request(session, SCENE_LIST_PATH, { home_id: homeId });
+  return sceneEntries(response).filter(scene => {
+    const sceneHomeId = text(scene.home_id) || homeId;
+    return sceneHomeId === homeId && isManualSceneRecord(scene);
+  });
 }
 
 export async function runManualScene(

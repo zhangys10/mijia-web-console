@@ -41,7 +41,8 @@ test("scene cards open details and use a separate execution button", async () =>
   assert.match(sceneCard, /scene-action-detail \$\{detail\.kind\}/, "action properties must receive semantic styling hooks");
   assert.match(sceneCard, /style=\{sceneActionDetailStyle\(detail\)\}/, "numeric light values must control their visual treatment");
   assert.match(sceneCard, /sceneActionDetailGlyph\(detail\.kind\)/, "action properties must have recognizable icons");
-  assert.doesNotMatch(sceneCard, /编辑场景|进入编辑/, "editing belongs to the follow-up PR");
+  assert.match(source, /编辑场景/);
+  assert.match(source, /新建场景/);
   assert.match(styles, /\.scene-action-detail\.power\.on/);
   assert.match(styles, /\.scene-action-detail\.power\.off/);
   assert.match(styles, /\.scene-action-detail\.brightness/);
@@ -49,6 +50,21 @@ test("scene cards open details and use a separate execution button", async () =>
   assert.match(styles, /--scene-detail-level/, "brightness and temperature styles must expose their numeric level");
   assert.match(source, /\(numeric-2700\)\/\(6500-2700\)/, "color temperature must map from warm to cool");
   assert.match(sceneCard, /formatSceneTime\(scene\.updatedAt\)/, "raw Xiaomi timestamps should be formatted for people");
+});
+
+test("scene editor supports safe create and update workflows", async () => {
+  const source = await readFile(new URL("../app/scene-editor.tsx", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../app/scene-editor.css", import.meta.url), "utf8");
+  assert.match(source, /method:sceneId\?"PUT":"POST"/);
+  assert.match(source, /revision:draft\.revision/);
+  assert.match(source, /actionsEditable/);
+  assert.match(source, /动作保持只读/);
+  assert.match(source, /放弃尚未保存的场景修改/);
+  assert.match(source, /设置属性/);
+  assert.doesNotMatch(source, />执行动作</);
+  assert.match(source, /moveAction/);
+  assert.match(styles, /@media\(max-width:760px\)/);
+  assert.match(styles, /env\(safe-area-inset-bottom\)/);
 });
 
 test("real execution reports submission without speculative device updates", async () => {
