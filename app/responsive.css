@@ -499,24 +499,28 @@ select {
 }
 
 .scene-action-detail.brightness {
-  border-color: #f3dfa0;
-  background: #fff8dc;
-  color: #896805;
+  border-color: color-mix(in srgb, var(--scene-detail-accent, #d6a000) 55%, #d9dee3);
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--scene-detail-accent, #d6a000) 26%, #fff) 0 var(--scene-detail-level, 50%),
+    #fffdf5 var(--scene-detail-level, 50%) 100%);
+  color: #655116;
 }
 
 .scene-action-detail.brightness > i {
-  background: #ffedaa;
-  color: #a57500;
+  background: color-mix(in srgb, var(--scene-detail-accent, #d6a000) 24%, #fff);
+  color: color-mix(in srgb, var(--scene-detail-accent, #d6a000) 82%, #574916);
 }
 
 .scene-action-detail.color-temperature {
-  border-color: #d9e5ec;
-  background: linear-gradient(110deg, #eef7ff, #fff8e6);
-  color: #4f6876;
+  border-color: color-mix(in srgb, var(--scene-detail-accent, #86a6bc) 52%, #d8dee3);
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--scene-detail-accent, #86a6bc) 23%, #fff) 0 var(--scene-detail-level, 50%),
+    #f9fbfc var(--scene-detail-level, 50%) 100%);
+  color: #40515d;
 }
 
 .scene-action-detail.color-temperature > i {
-  background: linear-gradient(135deg, #8bc8ff, #ffc967);
+  background: var(--scene-detail-accent, #86a6bc);
   color: #fff;
 }
 

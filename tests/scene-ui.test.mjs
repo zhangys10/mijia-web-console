@@ -39,12 +39,15 @@ test("scene cards open details and use a separate execution button", async () =>
   assert.match(sceneCard, /className="scene-action-list"/);
   assert.match(sceneCard, /actions\.map\(\(action,index\)/, "actions must render in their normalized sequence");
   assert.match(sceneCard, /scene-action-detail \$\{detail\.kind\}/, "action properties must receive semantic styling hooks");
+  assert.match(sceneCard, /style=\{sceneActionDetailStyle\(detail\)\}/, "numeric light values must control their visual treatment");
   assert.match(sceneCard, /sceneActionDetailGlyph\(detail\.kind\)/, "action properties must have recognizable icons");
   assert.doesNotMatch(sceneCard, /编辑场景|进入编辑/, "editing belongs to the follow-up PR");
   assert.match(styles, /\.scene-action-detail\.power\.on/);
   assert.match(styles, /\.scene-action-detail\.power\.off/);
   assert.match(styles, /\.scene-action-detail\.brightness/);
   assert.match(styles, /\.scene-action-detail\.color-temperature/);
+  assert.match(styles, /--scene-detail-level/, "brightness and temperature styles must expose their numeric level");
+  assert.match(source, /\(numeric-2700\)\/\(6500-2700\)/, "color temperature must map from warm to cool");
   assert.match(sceneCard, /formatSceneTime\(scene\.updatedAt\)/, "raw Xiaomi timestamps should be formatted for people");
 });
 

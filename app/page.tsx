@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import DeviceManagement from "./device-management";
 import { isDeviceGroupId } from "../lib/device-groups";
 import type { ManagedDevice } from "../lib/device-management";
@@ -324,13 +324,28 @@ function SceneInformation({scene,homeName}:{scene:ManualScene;homeName:string}){
   <div className="scene-modal-head"><span>{sceneGlyph(scene)}</span><div><small>手动场景</small><h2>{scene.name}</h2><p>{homeName}</p></div></div>
   <div className="scene-details"><div><small>动作数量</small><strong>{scene.actionCount}</strong></div><div><small>场景状态</small><strong>{scene.enabled?"可执行":"已停用"}</strong></div>{scene.updatedAt&&<div><small>更新时间</small><strong>{formatSceneTime(scene.updatedAt)}</strong></div>}</div>
   <section className="scene-flow-section"><div className="scene-flow-title"><div><span>DO</span><strong>动作序列</strong></div><small>按米家场景顺序</small></div>
-    {actions.length?<ol className="scene-action-list">{actions.map((action,index)=><li key={`${action.order}:${action.deviceName||"scene"}:${index}`}><span>{action.order}</span><div><strong>{action.deviceName||action.label}</strong>{action.deviceName&&<small>{action.label}</small>}{action.details.length>0&&<div className="scene-action-details">{action.details.map((detail,detailIndex)=><em className={`scene-action-detail ${detail.kind}${detail.state?` ${detail.state}`:""}`} key={`${detail.kind}:${detail.label}:${detailIndex}`}><i>{sceneActionDetailGlyph(detail.kind)}</i><span>{detail.label}</span><b>{detail.value}</b></em>)}</div>}</div></li>)}</ol>:<div className="scene-action-empty">米家仅返回了动作数量，未提供可展示的动作明细。</div>}
+    {actions.length?<ol className="scene-action-list">{actions.map((action,index)=><li key={`${action.order}:${action.deviceName||"scene"}:${index}`}><span>{action.order}</span><div><strong>{action.deviceName||action.label}</strong>{action.deviceName&&<small>{action.label}</small>}{action.details.length>0&&<div className="scene-action-details">{action.details.map((detail,detailIndex)=><em className={`scene-action-detail ${detail.kind}${detail.state?` ${detail.state}`:""}`} style={sceneActionDetailStyle(detail)} key={`${detail.kind}:${detail.label}:${detailIndex}`}><i>{sceneActionDetailGlyph(detail.kind)}</i><span>{detail.label}</span><b>{detail.value}</b></em>)}</div>}</div></li>)}</ol>:<div className="scene-action-empty">米家仅返回了动作数量，未提供可展示的动作明细。</div>}
   </section>
   <p className="scene-submit-note">下发只表示米家云已接收指令，不代表所有设备已经实际执行。</p>
 </>}
 function SceneStateMessage({loading,error,empty}:{loading?:boolean;error?:string;empty?:boolean}){if(!loading&&!error&&!empty)return null;return <div className={`scene-state${error?" error":""}`}>{loading?"正在读取米家场景…":error?`场景读取失败：${friendlyError(error)}`:"当前家庭没有可用的手动场景"}</div>}
 function sceneGlyph(scene:ManualScene){return scene.icon&&scene.icon.length<=2?scene.icon:"✦"}
 function sceneActionDetailGlyph(kind:ManualScene["actions"][number]["details"][number]["kind"]){return kind==="power"?"⏻":kind==="brightness"?"☀":kind==="color-temperature"?"◐":kind==="delay"?"◷":"≡"}
+type SceneActionDetailStyle=CSSProperties&{"--scene-detail-accent"?:string;"--scene-detail-level"?:string};
+function sceneActionDetailStyle(detail:ManualScene["actions"][number]["details"][number]):SceneActionDetailStyle|undefined{
+  const numeric=Number.parseFloat(detail.value);
+  if(!Number.isFinite(numeric))return undefined;
+  if(detail.kind==="brightness"){
+    const level=Math.min(100,Math.max(0,numeric));
+    return {"--scene-detail-accent":`hsl(43 88% ${Math.round(38+level*.12)}%)`,"--scene-detail-level":`${level}%`};
+  }
+  if(detail.kind==="color-temperature"){
+    const level=Math.min(1,Math.max(0,(numeric-2700)/(6500-2700)));
+    const warm=[244,143,55],cool=[67,145,232];
+    const accent=warm.map((channel,index)=>Math.round(channel+(cool[index]-channel)*level));
+    return {"--scene-detail-accent":`rgb(${accent.join(" ")})`,"--scene-detail-level":`${Math.round(level*100)}%`};
+  }
+}
 function formatSceneTime(value:string){const numeric=Number(value);const timestamp=Number.isFinite(numeric)?numeric<1e12?numeric*1000:numeric:Date.parse(value);if(!Number.isFinite(timestamp))return value;return new Intl.DateTimeFormat("zh-CN",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}).format(new Date(timestamp))}
 function Rule({a,b,c}:{a:string;b:string;c:string}){return <div className="rule"><span>{a}</span><b>如果</b><span>{b}</span><b>就</b><span>{c}</span><i>已启用</i></div>}
 function TopologyBadge({role,connectionType}:{role:DeviceTopology["role"];connectionType?:DeviceTopology["connectionType"]}){if(role==="independent")return null;const label=role==="unknown"||connectionType==="unknown"?"关系待确认":role==="primary"?(connectionType==="mixed"?"有线 / 无线":"有线控制器"):role==="secondary-panel"?"无线控制器":"受控回路";return <span className={`topology-badge ${role} ${connectionType||""}`}>{label}</span>}
