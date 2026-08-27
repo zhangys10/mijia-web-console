@@ -250,7 +250,23 @@ select {
 }
 
 .scene-modal {
-  width: min(480px, 100%);
+  width: min(620px, 100%);
+  max-height: min(88dvh, 820px);
+  display: flex;
+  overflow: hidden;
+  padding: 0;
+  flex-direction: column;
+}
+
+.scene-modal-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 28px 28px 18px;
+}
+
+.scene-modal .close {
+  z-index: 2;
 }
 
 .scene-modal-head {
@@ -285,9 +301,9 @@ select {
 
 .scene-details {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
-  margin: 22px 0 14px;
+  margin: 22px 0 20px;
 }
 
 .scene-details > div {
@@ -311,12 +327,194 @@ select {
   font-size: 14px;
 }
 
+.scene-flow-section {
+  padding: 18px 0;
+  border-top: 1px solid var(--line);
+}
+
+.scene-flow-title,
+.scene-flow-title > div {
+  display: flex;
+  align-items: center;
+}
+
+.scene-flow-title {
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.scene-flow-title > div {
+  gap: 8px;
+}
+
+.scene-flow-title span {
+  border-radius: 7px;
+  background: #fff0e9;
+  padding: 4px 6px;
+  color: #e76531;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.scene-flow-title strong {
+  font-size: 14px;
+}
+
+.scene-flow-title small {
+  color: #929ca8;
+  font-size: 10px;
+}
+
+.scene-trigger-list,
+.scene-condition-list,
+.scene-action-list {
+  display: grid;
+  gap: 8px;
+}
+
+.scene-trigger-row,
+.scene-condition-list > div {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border-radius: 11px;
+  background: #f7f8fa;
+}
+
+.scene-trigger-row > span,
+.scene-condition-list > div > span {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff;
+  color: #e76531;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.scene-trigger-row strong,
+.scene-trigger-row small,
+.scene-condition-list strong,
+.scene-condition-list small {
+  display: block;
+}
+
+.scene-trigger-row strong,
+.scene-condition-list strong {
+  font-size: 12px;
+}
+
+.scene-trigger-row small,
+.scene-condition-list small {
+  margin-top: 3px;
+  color: #87919c;
+  font-size: 10px;
+}
+
+.scene-condition-list {
+  margin-top: 8px;
+}
+
+.scene-condition-empty,
+.scene-action-empty {
+  margin: 9px 0 0;
+  border-radius: 9px;
+  background: #fafbfc;
+  padding: 10px 12px;
+  color: #8a949f;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.scene-action-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scene-action-list > li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 11px;
+  padding-bottom: 10px;
+}
+
+.scene-action-list > li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 30px;
+  bottom: -2px;
+  left: 14px;
+  width: 1px;
+  background: #e5e9ee;
+}
+
+.scene-action-list > li > span {
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #ffd8c6;
+  border-radius: 50%;
+  background: #fff8f4;
+  color: #e76531;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.scene-action-list > li > div {
+  min-width: 0;
+  border: 1px solid #edf0f3;
+  border-radius: 11px;
+  padding: 10px 12px;
+}
+
+.scene-action-list strong,
+.scene-action-list small {
+  display: block;
+}
+
+.scene-action-list strong {
+  font-size: 12px;
+}
+
+.scene-action-list small {
+  margin-top: 3px;
+  color: #7d8792;
+  font-size: 10px;
+}
+
+.scene-action-list li div > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.scene-action-list em {
+  border-radius: 12px;
+  background: #f4f6f8;
+  padding: 4px 7px;
+  color: #65717d;
+  font-size: 9px;
+  font-style: normal;
+}
+
 .scene-submit-note {
-  margin: 0 0 15px !important;
+  margin: 0 !important;
 }
 
 .scene-modal-run {
-  width: 100%;
+  width: calc(100% - 56px);
+  flex: none;
+  margin: 0 28px 28px;
   padding: 12px 14px;
   border: 0;
   border-radius: 10px;
@@ -937,6 +1135,19 @@ select {
     right: 11px;
     width: 44px;
     height: 44px;
+  }
+
+  .scene-modal {
+    padding: 0;
+  }
+
+  .scene-modal-scroll {
+    padding: 24px 19px 16px;
+  }
+
+  .scene-modal-run {
+    width: calc(100% - 38px);
+    margin: 0 19px calc(18px + env(safe-area-inset-bottom));
   }
 
   .setting-row select,

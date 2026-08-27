@@ -28,7 +28,11 @@ test("normalizes only manual scenes for the requested home", () => {
           icon: "home",
           enable: 1,
           scene_trigger: { triggers: [{ src: "user" }] },
-          scene_action: { actions: [{}, {}] },
+          scene_condition: { conditions: [{ order: 1, name: "仅在夜间", value: "生效" }] },
+          scene_action: { actions: [
+            { order: 2, name: "设置灯光", payload_json: { command: "set_properties", device_name: "客厅灯", did: "secret-device", uid: "secret-user", value: [{ siid: 2, piid: 2, value: 80 }, { siid: 2, piid: 3, value: 4000 }] } },
+            { order: 1, name: "开", payload_json: JSON.stringify({ command: "set_properties", device_name: "玄关灯", did: "another-secret", value: [{ siid: 2, piid: 1, value: true }] }) },
+          ] },
           update_time: 1234,
           owner_uid: "must-not-leak",
         },
@@ -59,14 +63,36 @@ test("normalizes only manual scenes for the requested home", () => {
   };
 
   assert.deepEqual(parseManualScenes(response, "100"), [
-    { id: "11", homeId: "100", name: "回家", icon: "home", enabled: true, actionCount: 2, updatedAt: "1234" },
-    { id: "12", homeId: "100", name: "晚安", enabled: false, actionCount: 3 },
+    {
+      id: "11", homeId: "100", name: "回家", icon: "home", enabled: true, actionCount: 2, updatedAt: "1234",
+      triggers: [{ order: 1, label: "手动点击", detail: "由用户在米家或本页面主动触发" }],
+      conditions: [{ order: 1, label: "仅在夜间", detail: "生效" }],
+      actions: [
+        { order: 1, label: "开", deviceName: "玄关灯", details: ["电源：开启"] },
+        { order: 2, label: "设置灯光", deviceName: "客厅灯", details: ["亮度：80%", "色温：4000 K"] },
+      ],
+    },
+    {
+      id: "12", homeId: "100", name: "晚安", enabled: false, actionCount: 3,
+      triggers: [{ order: 1, label: "手动点击", detail: "由用户在米家或本页面主动触发" }],
+      conditions: [],
+      actions: [
+        { order: 1, label: "执行动作", details: [] },
+        { order: 2, label: "执行动作", details: [] },
+        { order: 3, label: "执行动作", details: [] },
+      ],
+    },
   ]);
+  assert.doesNotMatch(JSON.stringify(parseManualScenes(response, "100")), /must-not-leak|secret-device|secret-user|another-secret/);
 });
 
 test("accepts numbered scene maps and rejects unrecognized responses", () => {
   assert.deepEqual(parseManualScenes({ result: { 0: { id: "one", name: "手动", triggers: [{ src: "USER" }] } } }, "home"), [
-    { id: "one", homeId: "home", name: "手动", enabled: true, actionCount: 0 },
+    {
+      id: "one", homeId: "home", name: "手动", enabled: true, actionCount: 0,
+      triggers: [{ order: 1, label: "手动点击", detail: "由用户在米家或本页面主动触发" }],
+      conditions: [], actions: [],
+    },
   ]);
   assert.throws(() => parseManualScenes({ result: { unexpected: [] } }, "home"), /XIAOMI_SCENE_RESPONSE_INVALID/);
 });

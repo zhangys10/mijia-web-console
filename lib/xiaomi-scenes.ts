@@ -8,6 +8,28 @@ export type ManualScene = {
   enabled: boolean;
   actionCount: number;
   updatedAt?: string;
+  triggers: ManualSceneTrigger[];
+  conditions: ManualSceneCondition[];
+  actions: ManualSceneAction[];
+};
+
+export type ManualSceneTrigger = {
+  order: number;
+  label: string;
+  detail?: string;
+};
+
+export type ManualSceneCondition = {
+  order: number;
+  label: string;
+  detail?: string;
+};
+
+export type ManualSceneAction = {
+  order: number;
+  label: string;
+  deviceName?: string;
+  details: string[];
 };
 
 type HomeIdentity = { id: string };
@@ -38,6 +60,12 @@ function text(value: unknown) {
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
 }
 
+function number(value: unknown, fallback: number) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function sceneEntries(response: Record<string, unknown>) {
   const result = response.result;
   if (result === null) return [];
@@ -59,16 +87,97 @@ function triggerEntries(scene: RawScene) {
   return [];
 }
 
+function conditionEntries(scene: RawScene) {
+  const condition = parsedRecord(scene.scene_condition ?? scene.condition);
+  if (Array.isArray(condition?.conditions)) return condition.conditions.filter((item): item is RawScene => Boolean(record(item)));
+  if (Array.isArray(scene.conditions)) return scene.conditions.filter((item): item is RawScene => Boolean(record(item)));
+  return [];
+}
+
 function isManualScene(scene: RawScene) {
   return triggerEntries(scene).some(trigger => text(trigger.src).toLowerCase() === "user");
 }
 
-function actionCount(scene: RawScene) {
+function actionEntries(scene: RawScene) {
   const action = parsedRecord(scene.scene_action ?? scene.action);
   for (const candidate of [action?.actions, scene.actions, parsedRecord(scene.setting)?.action_list]) {
-    if (Array.isArray(candidate)) return candidate.length;
+    if (Array.isArray(candidate)) return candidate.map(item => record(item) ?? { name: text(item) });
   }
-  return 0;
+  return [];
+}
+
+function primitive(value: unknown) {
+  if (typeof value === "boolean") return value ? "开启" : "关闭";
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  return "";
+}
+
+function propertyDetail(value: RawScene) {
+  const siid = number(value.siid, 0);
+  const piid = number(value.piid, 0);
+  const formatted = primitive(value.value);
+  if (!formatted) return "";
+  if (piid === 1 && typeof value.value === "boolean") return `电源：${formatted}`;
+  if (siid === 2 && piid === 2 && typeof value.value === "number") return `亮度：${formatted}%`;
+  if (siid === 2 && piid === 3 && typeof value.value === "number") return `色温：${formatted} K`;
+  return siid && piid ? `属性 ${siid}.${piid}：${formatted}` : formatted;
+}
+
+function triggerLabel(trigger: RawScene) {
+  const key = text(trigger.key).toLowerCase();
+  const source = text(trigger.src).toLowerCase();
+  if (key === "user.click" || source === "user") return "手动点击";
+  if (source === "timer" || key.includes("timer") || key.includes("time")) return "定时触发";
+  if (source === "voice" || key.includes("voice")) return "语音触发";
+  if (source === "location" || key.includes("location")) return "位置触发";
+  return text(trigger.name) || text(trigger.key) || text(trigger.src) || "未知触发方式";
+}
+
+function normalizeTriggers(scene: RawScene): ManualSceneTrigger[] {
+  return triggerEntries(scene).map((trigger, index) => {
+    const label = triggerLabel(trigger);
+    const name = text(trigger.name);
+    const detail = label === "手动点击" ? "由用户在米家或本页面主动触发" : name && name !== label ? name : "";
+    return { order: number(trigger.order, index + 1), label, ...(detail ? { detail } : {}) };
+  }).sort((left, right) => left.order - right.order);
+}
+
+function normalizeConditions(scene: RawScene): ManualSceneCondition[] {
+  return conditionEntries(scene).map((condition, index) => {
+    const payload = parsedRecord(condition.value_json ?? condition.extra_json);
+    const deviceName = text(payload?.device_name ?? condition.device_name);
+    const label = text(condition.name) || text(condition.key) || "设备条件";
+    const value = primitive(condition.value ?? payload?.value);
+    const detail = [deviceName, value].filter(Boolean).join(" · ");
+    return { order: number(condition.order, index + 1), label, ...(detail ? { detail } : {}) };
+  }).sort((left, right) => left.order - right.order);
+}
+
+function commandLabel(command: string) {
+  if (command === "set_properties") return "设置设备属性";
+  if (command === "action") return "执行设备动作";
+  if (command === "delay") return "延时";
+  return command || "执行动作";
+}
+
+function normalizeActions(scene: RawScene): ManualSceneAction[] {
+  return actionEntries(scene).map((action, index) => {
+    const payload = parsedRecord(action.payload_json ?? action.payload);
+    const command = text(payload?.command);
+    const label = text(action.name) || text(action.action_name) || commandLabel(command);
+    const deviceName = text(payload?.device_name) || text(action.device_name);
+    const values = Array.isArray(payload?.value) ? payload.value.filter((item): item is RawScene => Boolean(record(item))) : [];
+    const details = values.map(propertyDetail).filter(Boolean);
+    const delay = number(payload?.delay_time ?? action.delay_time, 0);
+    if (delay > 0) details.unshift(`延时 ${delay} 秒`);
+    if (!details.length && command && label !== commandLabel(command)) details.push(commandLabel(command));
+    return {
+      order: number(action.order, index + 1),
+      label,
+      ...(deviceName ? { deviceName } : {}),
+      details,
+    };
+  }).sort((left, right) => left.order - right.order);
 }
 
 function enabled(value: unknown) {
@@ -88,14 +197,18 @@ export function parseManualScenes(response: Record<string, unknown>, homeId: str
     if (!id || !name || sceneHomeId !== homeId) continue;
     const icon = text(scene.icon ?? scene.icon_url);
     const updatedAt = text(scene.update_time ?? scene.updated_at ?? scene.modify_time);
+    const actions = normalizeActions(scene);
     scenes.set(id, {
       id,
       homeId,
       name,
       ...(icon ? { icon } : {}),
       enabled: enabled(scene.enable ?? scene.enabled ?? scene.status),
-      actionCount: actionCount(scene),
+      actionCount: actions.length,
       ...(updatedAt ? { updatedAt } : {}),
+      triggers: normalizeTriggers(scene),
+      conditions: normalizeConditions(scene),
+      actions,
     });
   }
   return [...scenes.values()];

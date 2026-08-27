@@ -30,6 +30,11 @@ test("scene cards open details and use a separate execution button", async () =>
   assert.doesNotMatch(sceneCard, /runScene\(/, "the card component must not execute a scene from its detail action");
   assert.match(source, /selectedScene&&<div className="modal-bg"/, "opening a card must show scene details");
   assert.match(source, /className="scene-modal-run"/, "the detail card must expose an explicit execution action");
+  assert.match(sceneCard, /触发方式与条件/);
+  assert.match(sceneCard, /没有额外条件，点击后直接按下列顺序下发/);
+  assert.match(sceneCard, /className="scene-action-list"/);
+  assert.match(sceneCard, /actions\.map\(\(action,index\)/, "actions must render in their normalized sequence");
+  assert.match(sceneCard, /formatSceneTime\(scene\.updatedAt\)/, "raw Xiaomi timestamps should be formatted for people");
 });
 
 test("real execution reports submission without speculative device updates", async () => {
