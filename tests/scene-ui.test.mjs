@@ -17,7 +17,19 @@ test("scene cards represent loading, empty, error and duplicate-execution states
   assert.match(source, /当前家庭没有可用的手动场景/);
   assert.match(source, /场景读取失败/);
   assert.match(source, /if\(!scene\.enabled\|\|sceneOperating\)return/);
-  assert.match(source, /disabled=\{!scene\.enabled\|\|Boolean\(sceneOperating\)\}/);
+  assert.match(source, /disabled=\{!scene\.enabled\|\|blocked\}/);
+});
+
+test("scene cards open details and use a separate execution button", async () => {
+  const source = await readFile(pageUrl, "utf8");
+  const start = source.indexOf("function SceneCard");
+  const end = source.indexOf("function SceneStateMessage", start);
+  const sceneCard = source.slice(start, end);
+  assert.match(sceneCard, /className="scene-card-open"[^>]*onClick=\{onOpen\}/s);
+  assert.match(sceneCard, /className="scene-run"[^>]*onClick=\{\(\)=>onRun\(scene\)\}/s);
+  assert.doesNotMatch(sceneCard, /runScene\(/, "the card component must not execute a scene from its detail action");
+  assert.match(source, /selectedScene&&<div className="modal-bg"/, "opening a card must show scene details");
+  assert.match(source, /className="scene-modal-run"/, "the detail card must expose an explicit execution action");
 });
 
 test("real execution reports submission without speculative device updates", async () => {
