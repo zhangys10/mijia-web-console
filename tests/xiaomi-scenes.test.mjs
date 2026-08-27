@@ -71,6 +71,11 @@ test("accepts numbered scene maps and rejects unrecognized responses", () => {
   assert.throws(() => parseManualScenes({ result: { unexpected: [] } }, "home"), /XIAOMI_SCENE_RESPONSE_INVALID/);
 });
 
+test("treats Xiaomi's null result for a home without scenes as an empty list", () => {
+  assert.deepEqual(parseManualScenes({ result: null }, "empty-home"), []);
+  assert.throws(() => parseManualScenes({}, "empty-home"), /XIAOMI_SCENE_RESPONSE_INVALID/);
+});
+
 test("enforces home and scene isolation before execution", () => {
   const scenes = [
     { id: "enabled", homeId: "home-a", name: "回家", enabled: true, actionCount: 1 },

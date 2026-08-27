@@ -40,6 +40,7 @@ function text(value: unknown) {
 
 function sceneEntries(response: Record<string, unknown>) {
   const result = response.result;
+  if (result === null) return [];
   if (Array.isArray(result)) return result.filter((item): item is RawScene => Boolean(record(item)));
   const resultRecord = record(result);
   if (!resultRecord) throw new Error("XIAOMI_SCENE_RESPONSE_INVALID");
