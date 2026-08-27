@@ -8,28 +8,21 @@ export type ManualScene = {
   enabled: boolean;
   actionCount: number;
   updatedAt?: string;
-  triggers: ManualSceneTrigger[];
-  conditions: ManualSceneCondition[];
   actions: ManualSceneAction[];
-};
-
-export type ManualSceneTrigger = {
-  order: number;
-  label: string;
-  detail?: string;
-};
-
-export type ManualSceneCondition = {
-  order: number;
-  label: string;
-  detail?: string;
 };
 
 export type ManualSceneAction = {
   order: number;
   label: string;
   deviceName?: string;
-  details: string[];
+  details: ManualSceneActionDetail[];
+};
+
+export type ManualSceneActionDetail = {
+  kind: "power" | "brightness" | "color-temperature" | "delay" | "property" | "command";
+  label: string;
+  value: string;
+  state?: "on" | "off";
 };
 
 type HomeIdentity = { id: string };
@@ -87,13 +80,6 @@ function triggerEntries(scene: RawScene) {
   return [];
 }
 
-function conditionEntries(scene: RawScene) {
-  const condition = parsedRecord(scene.scene_condition ?? scene.condition);
-  if (Array.isArray(condition?.conditions)) return condition.conditions.filter((item): item is RawScene => Boolean(record(item)));
-  if (Array.isArray(scene.conditions)) return scene.conditions.filter((item): item is RawScene => Boolean(record(item)));
-  return [];
-}
-
 function isManualScene(scene: RawScene) {
   return triggerEntries(scene).some(trigger => text(trigger.src).toLowerCase() === "user");
 }
@@ -116,41 +102,11 @@ function propertyDetail(value: RawScene) {
   const siid = number(value.siid, 0);
   const piid = number(value.piid, 0);
   const formatted = primitive(value.value);
-  if (!formatted) return "";
-  if (piid === 1 && typeof value.value === "boolean") return `电源：${formatted}`;
-  if (siid === 2 && piid === 2 && typeof value.value === "number") return `亮度：${formatted}%`;
-  if (siid === 2 && piid === 3 && typeof value.value === "number") return `色温：${formatted} K`;
-  return siid && piid ? `属性 ${siid}.${piid}：${formatted}` : formatted;
-}
-
-function triggerLabel(trigger: RawScene) {
-  const key = text(trigger.key).toLowerCase();
-  const source = text(trigger.src).toLowerCase();
-  if (key === "user.click" || source === "user") return "手动点击";
-  if (source === "timer" || key.includes("timer") || key.includes("time")) return "定时触发";
-  if (source === "voice" || key.includes("voice")) return "语音触发";
-  if (source === "location" || key.includes("location")) return "位置触发";
-  return text(trigger.name) || text(trigger.key) || text(trigger.src) || "未知触发方式";
-}
-
-function normalizeTriggers(scene: RawScene): ManualSceneTrigger[] {
-  return triggerEntries(scene).map((trigger, index) => {
-    const label = triggerLabel(trigger);
-    const name = text(trigger.name);
-    const detail = label === "手动点击" ? "由用户在米家或本页面主动触发" : name && name !== label ? name : "";
-    return { order: number(trigger.order, index + 1), label, ...(detail ? { detail } : {}) };
-  }).sort((left, right) => left.order - right.order);
-}
-
-function normalizeConditions(scene: RawScene): ManualSceneCondition[] {
-  return conditionEntries(scene).map((condition, index) => {
-    const payload = parsedRecord(condition.value_json ?? condition.extra_json);
-    const deviceName = text(payload?.device_name ?? condition.device_name);
-    const label = text(condition.name) || text(condition.key) || "设备条件";
-    const value = primitive(condition.value ?? payload?.value);
-    const detail = [deviceName, value].filter(Boolean).join(" · ");
-    return { order: number(condition.order, index + 1), label, ...(detail ? { detail } : {}) };
-  }).sort((left, right) => left.order - right.order);
+  if (!formatted) return undefined;
+  if (piid === 1 && typeof value.value === "boolean") return { kind: "power" as const, label: "电源", value: formatted, state: value.value ? "on" as const : "off" as const };
+  if (siid === 2 && piid === 2 && typeof value.value === "number") return { kind: "brightness" as const, label: "亮度", value: `${formatted}%` };
+  if (siid === 2 && piid === 3 && typeof value.value === "number") return { kind: "color-temperature" as const, label: "色温", value: `${formatted} K` };
+  return { kind: "property" as const, label: siid && piid ? `属性 ${siid}.${piid}` : "属性", value: formatted };
 }
 
 function commandLabel(command: string) {
@@ -167,10 +123,10 @@ function normalizeActions(scene: RawScene): ManualSceneAction[] {
     const label = text(action.name) || text(action.action_name) || commandLabel(command);
     const deviceName = text(payload?.device_name) || text(action.device_name);
     const values = Array.isArray(payload?.value) ? payload.value.filter((item): item is RawScene => Boolean(record(item))) : [];
-    const details = values.map(propertyDetail).filter(Boolean);
+    const details: ManualSceneActionDetail[] = values.map(propertyDetail).filter((item): item is NonNullable<ReturnType<typeof propertyDetail>> => Boolean(item));
     const delay = number(payload?.delay_time ?? action.delay_time, 0);
-    if (delay > 0) details.unshift(`延时 ${delay} 秒`);
-    if (!details.length && command && label !== commandLabel(command)) details.push(commandLabel(command));
+    if (delay > 0) details.unshift({ kind: "delay", label: "延时", value: `${delay} 秒` });
+    if (!details.length && command && label !== commandLabel(command)) details.push({ kind: "command", label: "方式", value: commandLabel(command) });
     return {
       order: number(action.order, index + 1),
       label,
@@ -206,8 +162,6 @@ export function parseManualScenes(response: Record<string, unknown>, homeId: str
       enabled: enabled(scene.enable ?? scene.enabled ?? scene.status),
       actionCount: actions.length,
       ...(updatedAt ? { updatedAt } : {}),
-      triggers: normalizeTriggers(scene),
-      conditions: normalizeConditions(scene),
       actions,
     });
   }

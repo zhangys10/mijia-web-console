@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const pageUrl = new URL("../app/page.tsx", import.meta.url);
+const stylesUrl = new URL("../app/responsive.css", import.meta.url);
 
 test("connected scene UI never falls back to demo data", async () => {
   const source = await readFile(pageUrl, "utf8");
@@ -22,6 +23,7 @@ test("scene cards represent loading, empty, error and duplicate-execution states
 
 test("scene cards open details and use a separate execution button", async () => {
   const source = await readFile(pageUrl, "utf8");
+  const styles = await readFile(stylesUrl, "utf8");
   const start = source.indexOf("function SceneCard");
   const end = source.indexOf("function SceneStateMessage", start);
   const sceneCard = source.slice(start, end);
@@ -30,10 +32,16 @@ test("scene cards open details and use a separate execution button", async () =>
   assert.doesNotMatch(sceneCard, /runScene\(/, "the card component must not execute a scene from its detail action");
   assert.match(source, /selectedScene&&<div className="modal-bg"/, "opening a card must show scene details");
   assert.match(source, /className="scene-modal-run"/, "the detail card must expose an explicit execution action");
-  assert.match(sceneCard, /触发方式与条件/);
-  assert.match(sceneCard, /没有额外条件，点击后直接按下列顺序下发/);
+  assert.doesNotMatch(sceneCard, /触发方式与条件|手动点击/, "manual triggers should not occupy scene detail space");
   assert.match(sceneCard, /className="scene-action-list"/);
   assert.match(sceneCard, /actions\.map\(\(action,index\)/, "actions must render in their normalized sequence");
+  assert.match(sceneCard, /scene-action-detail \$\{detail\.kind\}/, "action properties must receive semantic styling hooks");
+  assert.match(sceneCard, /sceneActionDetailGlyph\(detail\.kind\)/, "action properties must have recognizable icons");
+  assert.doesNotMatch(sceneCard, /编辑场景|进入编辑/, "editing belongs to the follow-up PR");
+  assert.match(styles, /\.scene-action-detail\.power\.on/);
+  assert.match(styles, /\.scene-action-detail\.power\.off/);
+  assert.match(styles, /\.scene-action-detail\.brightness/);
+  assert.match(styles, /\.scene-action-detail\.color-temperature/);
   assert.match(sceneCard, /formatSceneTime\(scene\.updatedAt\)/, "raw Xiaomi timestamps should be formatted for people");
 });
 

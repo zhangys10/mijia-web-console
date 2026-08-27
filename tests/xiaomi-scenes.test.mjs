@@ -65,17 +65,13 @@ test("normalizes only manual scenes for the requested home", () => {
   assert.deepEqual(parseManualScenes(response, "100"), [
     {
       id: "11", homeId: "100", name: "回家", icon: "home", enabled: true, actionCount: 2, updatedAt: "1234",
-      triggers: [{ order: 1, label: "手动点击", detail: "由用户在米家或本页面主动触发" }],
-      conditions: [{ order: 1, label: "仅在夜间", detail: "生效" }],
       actions: [
-        { order: 1, label: "开", deviceName: "玄关灯", details: ["电源：开启"] },
-        { order: 2, label: "设置灯光", deviceName: "客厅灯", details: ["亮度：80%", "色温：4000 K"] },
+        { order: 1, label: "开", deviceName: "玄关灯", details: [{ kind: "power", label: "电源", value: "开启", state: "on" }] },
+        { order: 2, label: "设置灯光", deviceName: "客厅灯", details: [{ kind: "brightness", label: "亮度", value: "80%" }, { kind: "color-temperature", label: "色温", value: "4000 K" }] },
       ],
     },
     {
       id: "12", homeId: "100", name: "晚安", enabled: false, actionCount: 3,
-      triggers: [{ order: 1, label: "手动点击", detail: "由用户在米家或本页面主动触发" }],
-      conditions: [],
       actions: [
         { order: 1, label: "执行动作", details: [] },
         { order: 2, label: "执行动作", details: [] },
@@ -90,8 +86,7 @@ test("accepts numbered scene maps and rejects unrecognized responses", () => {
   assert.deepEqual(parseManualScenes({ result: { 0: { id: "one", name: "手动", triggers: [{ src: "USER" }] } } }, "home"), [
     {
       id: "one", homeId: "home", name: "手动", enabled: true, actionCount: 0,
-      triggers: [{ order: 1, label: "手动点击", detail: "由用户在米家或本页面主动触发" }],
-      conditions: [], actions: [],
+      actions: [],
     },
   ]);
   assert.throws(() => parseManualScenes({ result: { unexpected: [] } }, "home"), /XIAOMI_SCENE_RESPONSE_INVALID/);

@@ -36,10 +36,10 @@ const demo:Device[]=[
 ];
 
 const demoScenes:ManualScene[]=[
-  {id:"demo-home",homeId:"demo",name:"回家",icon:"⌂",enabled:true,actionCount:2,triggers:[{order:1,label:"手动点击",detail:"由用户主动触发"}],conditions:[],actions:[{order:1,label:"开启",deviceName:"玄关灯",details:["电源：开启"]},{order:2,label:"舒适模式",deviceName:"客厅空调",details:["温度：24°C"]}]},
-  {id:"demo-away",homeId:"demo",name:"离家",icon:"↗",enabled:true,actionCount:2,triggers:[{order:1,label:"手动点击",detail:"由用户主动触发"}],conditions:[],actions:[{order:1,label:"关闭全部照明",deviceName:"全屋灯具",details:["电源：关闭"]},{order:2,label:"布防",deviceName:"家庭安防",details:[]}]},
-  {id:"demo-movie",homeId:"demo",name:"观影",icon:"▷",enabled:true,actionCount:3,triggers:[{order:1,label:"手动点击",detail:"由用户主动触发"}],conditions:[],actions:[{order:1,label:"关闭",deviceName:"客厅主灯",details:["电源：关闭"]},{order:2,label:"调暗",deviceName:"电视背景灯",details:["亮度：20%"]},{order:3,label:"关闭",deviceName:"客厅窗帘",details:[]}]},
-  {id:"demo-night",homeId:"demo",name:"晚安",icon:"☾",enabled:true,actionCount:3,triggers:[{order:1,label:"手动点击",detail:"由用户主动触发"}],conditions:[],actions:[{order:1,label:"关闭全部照明",deviceName:"全屋灯具",details:["电源：关闭"]},{order:2,label:"睡眠模式",deviceName:"主卧空调",details:["温度：26°C"]},{order:3,label:"上锁",deviceName:"智能门锁",details:[]}]},
+  {id:"demo-home",homeId:"demo",name:"回家",icon:"⌂",enabled:true,actionCount:2,actions:[{order:1,label:"开启",deviceName:"玄关灯",details:[{kind:"power",label:"电源",value:"开启",state:"on"}]},{order:2,label:"舒适模式",deviceName:"客厅空调",details:[{kind:"property",label:"温度",value:"24°C"}]}]},
+  {id:"demo-away",homeId:"demo",name:"离家",icon:"↗",enabled:true,actionCount:2,actions:[{order:1,label:"关闭全部照明",deviceName:"全屋灯具",details:[{kind:"power",label:"电源",value:"关闭",state:"off"}]},{order:2,label:"布防",deviceName:"家庭安防",details:[]}]},
+  {id:"demo-movie",homeId:"demo",name:"观影",icon:"▷",enabled:true,actionCount:3,actions:[{order:1,label:"关闭",deviceName:"客厅主灯",details:[{kind:"power",label:"电源",value:"关闭",state:"off"}]},{order:2,label:"调暗",deviceName:"电视背景灯",details:[{kind:"brightness",label:"亮度",value:"20%"}]},{order:3,label:"关闭",deviceName:"客厅窗帘",details:[]}]},
+  {id:"demo-night",homeId:"demo",name:"晚安",icon:"☾",enabled:true,actionCount:3,actions:[{order:1,label:"关闭全部照明",deviceName:"全屋灯具",details:[{kind:"power",label:"电源",value:"关闭",state:"off"}]},{order:2,label:"睡眠模式",deviceName:"主卧空调",details:[{kind:"property",label:"温度",value:"26°C"}]},{order:3,label:"上锁",deviceName:"智能门锁",details:[]}]},
 ];
 
 const regionLabels:Record<string,string>={cn:"中国大陆",sg:"新加坡",de:"欧洲",us:"美国",ru:"俄罗斯",i2:"印度"};
@@ -320,20 +320,17 @@ function SceneCard({scene,tone,connected,running,blocked,compact,onOpen,onRun}:{
   <button type="button" className="scene-card-open" aria-label={`查看场景 ${scene.name}`} onClick={onOpen}><span className={tone}>{sceneGlyph(scene)}</span><div><strong>{scene.name}</strong><small>{scene.enabled?`${scene.actionCount} 个动作 · 查看详情`:"已停用 · 查看详情"}</small></div><b>›</b></button>
   <button type="button" className="scene-run" aria-label={`${connected?"下发":"演示"}场景 ${scene.name}`} disabled={!scene.enabled||blocked} onClick={()=>onRun(scene)}>{running?"正在下发…":connected?"下发":"演示"}</button>
 </article>}
-function SceneInformation({scene,homeName}:{scene:ManualScene;homeName:string}){const triggers=scene.triggers??[],conditions=scene.conditions??[],actions=scene.actions??[];return <>
+function SceneInformation({scene,homeName}:{scene:ManualScene;homeName:string}){const actions=scene.actions??[];return <>
   <div className="scene-modal-head"><span>{sceneGlyph(scene)}</span><div><small>手动场景</small><h2>{scene.name}</h2><p>{homeName}</p></div></div>
   <div className="scene-details"><div><small>动作数量</small><strong>{scene.actionCount}</strong></div><div><small>场景状态</small><strong>{scene.enabled?"可执行":"已停用"}</strong></div>{scene.updatedAt&&<div><small>更新时间</small><strong>{formatSceneTime(scene.updatedAt)}</strong></div>}</div>
-  <section className="scene-flow-section"><div className="scene-flow-title"><div><span>IF</span><strong>触发方式与条件</strong></div><small>{triggers.length} 个触发 · {conditions.length} 个条件</small></div>
-    <div className="scene-trigger-list">{(triggers.length?triggers:[{order:1,label:"手动点击",detail:"由用户主动触发"}]).map((trigger,index)=><div className="scene-trigger-row" key={`${trigger.order}:${trigger.label}:${index}`}><span>{trigger.order}</span><div><strong>{trigger.label}</strong>{trigger.detail&&<small>{trigger.detail}</small>}</div></div>)}</div>
-    {conditions.length?<div className="scene-condition-list">{conditions.map((condition,index)=><div key={`${condition.order}:${condition.label}:${index}`}><span>且</span><div><strong>{condition.label}</strong>{condition.detail&&<small>{condition.detail}</small>}</div></div>)}</div>:<p className="scene-condition-empty">没有额外条件，点击后直接按下列顺序下发。</p>}
-  </section>
-  <section className="scene-flow-section"><div className="scene-flow-title"><div><span>DO</span><strong>执行动作</strong></div><small>按米家场景顺序</small></div>
-    {actions.length?<ol className="scene-action-list">{actions.map((action,index)=><li key={`${action.order}:${action.deviceName||"scene"}:${index}`}><span>{action.order}</span><div><strong>{action.deviceName||action.label}</strong>{action.deviceName&&<small>{action.label}</small>}{action.details.length>0&&<div>{action.details.map((detail,detailIndex)=><em key={`${detail}:${detailIndex}`}>{detail}</em>)}</div>}</div></li>)}</ol>:<div className="scene-action-empty">米家仅返回了动作数量，未提供可展示的动作明细。</div>}
+  <section className="scene-flow-section"><div className="scene-flow-title"><div><span>DO</span><strong>动作序列</strong></div><small>按米家场景顺序</small></div>
+    {actions.length?<ol className="scene-action-list">{actions.map((action,index)=><li key={`${action.order}:${action.deviceName||"scene"}:${index}`}><span>{action.order}</span><div><strong>{action.deviceName||action.label}</strong>{action.deviceName&&<small>{action.label}</small>}{action.details.length>0&&<div className="scene-action-details">{action.details.map((detail,detailIndex)=><em className={`scene-action-detail ${detail.kind}${detail.state?` ${detail.state}`:""}`} key={`${detail.kind}:${detail.label}:${detailIndex}`}><i>{sceneActionDetailGlyph(detail.kind)}</i><span>{detail.label}</span><b>{detail.value}</b></em>)}</div>}</div></li>)}</ol>:<div className="scene-action-empty">米家仅返回了动作数量，未提供可展示的动作明细。</div>}
   </section>
   <p className="scene-submit-note">下发只表示米家云已接收指令，不代表所有设备已经实际执行。</p>
 </>}
 function SceneStateMessage({loading,error,empty}:{loading?:boolean;error?:string;empty?:boolean}){if(!loading&&!error&&!empty)return null;return <div className={`scene-state${error?" error":""}`}>{loading?"正在读取米家场景…":error?`场景读取失败：${friendlyError(error)}`:"当前家庭没有可用的手动场景"}</div>}
 function sceneGlyph(scene:ManualScene){return scene.icon&&scene.icon.length<=2?scene.icon:"✦"}
+function sceneActionDetailGlyph(kind:ManualScene["actions"][number]["details"][number]["kind"]){return kind==="power"?"⏻":kind==="brightness"?"☀":kind==="color-temperature"?"◐":kind==="delay"?"◷":"≡"}
 function formatSceneTime(value:string){const numeric=Number(value);const timestamp=Number.isFinite(numeric)?numeric<1e12?numeric*1000:numeric:Date.parse(value);if(!Number.isFinite(timestamp))return value;return new Intl.DateTimeFormat("zh-CN",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}).format(new Date(timestamp))}
 function Rule({a,b,c}:{a:string;b:string;c:string}){return <div className="rule"><span>{a}</span><b>如果</b><span>{b}</span><b>就</b><span>{c}</span><i>已启用</i></div>}
 function TopologyBadge({role,connectionType}:{role:DeviceTopology["role"];connectionType?:DeviceTopology["connectionType"]}){if(role==="independent")return null;const label=role==="unknown"||connectionType==="unknown"?"关系待确认":role==="primary"?(connectionType==="mixed"?"有线 / 无线":"有线控制器"):role==="secondary-panel"?"无线控制器":"受控回路";return <span className={`topology-badge ${role} ${connectionType||""}`}>{label}</span>}
