@@ -67,7 +67,7 @@ npm test
 ```
 
 - `npm test` 会先构建应用，再运行 `tests/*.test.mjs`，用于验证 Cloudflare Worker 构建产物和全部测试。
-- 开发中可先用 `node --test tests/<相关文件>.test.mjs` 运行定向测试，但它不能替代最终的 `npm test`。
+- 开发中可先用 `npm run test:unit -- tests/<相关文件>.test.mjs` 运行定向测试，但它不能替代最终的 `npm test`。
 - 纯文档改动可以不运行构建和测试，但仍需检查 Markdown 内容、链接和 `git diff`。
 - 不得删除、跳过或放宽测试来让失败消失，除非产品行为已明确改变，并同时更新实现依据和相关文档。
 
