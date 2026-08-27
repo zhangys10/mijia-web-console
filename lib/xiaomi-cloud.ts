@@ -232,6 +232,23 @@ export function collectXiaomiHomes(result: Record<string, unknown> | undefined) 
   return homes;
 }
 
+export type XiaomiHome = { id: string; name: string };
+
+export async function listHomes(session: XiaomiSession): Promise<XiaomiHome[]> {
+  const response = await xiaomiRequest(session, "/app/v2/homeroom/gethome", {
+    fg: true,
+    fetch_share: true,
+    fetch_share_dev: true,
+    limit: 300,
+    app_ver: 7,
+  });
+  const homes = collectXiaomiHomes(response.result as Record<string, unknown> | undefined);
+  return homes.map(home => ({
+    id: String(home.home_id ?? home.id ?? ""),
+    name: String(home.name ?? home.home_name ?? "我的家"),
+  }));
+}
+
 export function mergeXiaomiDeviceRecords(legacyDevices: Array<Record<string, unknown>>, primaryDevices: Array<Record<string, unknown>>) {
   const records = new Map<string, Record<string, unknown>>();
   const key = (device: Record<string, unknown>) => `${String(device.homeId ?? device.home_id ?? "default")}:${String(device.did ?? "")}:${String(device.name ?? device.model ?? "")}`;
@@ -241,13 +258,13 @@ export function mergeXiaomiDeviceRecords(legacyDevices: Array<Record<string, unk
 }
 
 export type XiaomiDeviceList = {
-  homes: Array<{ id: string; name: string }>;
+  homes: XiaomiHome[];
   devices: Array<Record<string, unknown>>;
   controlObjectResults: ChannelControlObjectResult[];
 };
 
 function deviceList(
-  homes: Array<{ id: string; name: string }>,
+  homes: XiaomiHome[],
   devices: Array<Record<string, unknown>>,
 ): XiaomiDeviceList {
   return { homes, devices, controlObjectResults: parseEmbeddedControlObjectResults(devices) };
