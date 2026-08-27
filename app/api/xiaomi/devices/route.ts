@@ -9,7 +9,7 @@ import {
   topologyForDevice,
   type DeviceChannelRuntimeState,
 } from "../../../../lib/device-topology";
-import { classifyDeviceKind, inferHardwareRole } from "../../../../lib/device-views";
+import { inferHardwareRole } from "../../../../lib/device-views";
 import { getMiotCapabilities, type MiotCapabilityGroup, type MiotCapabilityProperty } from "../../../../lib/miot-spec";
 import { diagnoseSwitchMode, isSwitchModeProperty } from "../../../../lib/switch-channel-mode";
 import { listDevices, unseal, xiaomiRequest, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
@@ -73,11 +73,7 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
   const candidates = devices.filter(device => {
     const did = text(device.did);
     if (!did || parseDerivedDeviceId(did)) return false;
-    const model = deviceModel(device);
-    const name = text(device.name);
-    const kind = classifyDeviceKind(model, name, text(device.type ?? device.device_type));
-    const role = inferHardwareRole(model, name);
-    return isDeviceGroupId(did) || role === "controller" || role === "switch" || kind === "light" || kind === "lamp";
+    return Boolean(deviceModel(device));
   });
   const specificationKeys = new Map<string, { model: string; urn?: string }>();
   for (const device of candidates) {
@@ -161,7 +157,7 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
         }
       });
     }
-    if (isDeviceGroupId(did) || ["light", "lamp"].includes(classifyDeviceKind(model, text(device.name)))) {
+    if (role === "device" || isDeviceGroupId(did)) {
       const on = groups.flatMap(group => group.properties).find(property => property.name === "on" && property.readable);
       if (on) {
         deviceOnDescriptors.push({ device, property: on });
@@ -253,18 +249,22 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
       connectionType,
       modeCapability: diagnostic.capability,
       reportedOn: typeof onValue === "boolean" ? onValue : null,
+      powerControl: descriptor.on?.writable ? { did, siid: descriptor.on.siid, piid: descriptor.on.piid } : undefined,
       modeValue: modeValue ?? null,
       evidence: diagnostic.capability === "unknown" ? "unknown" : "miot-property",
     });
   }
 
-  const deviceOn = new Map<string, boolean>();
+  const devicePower = new Map<string, { value: boolean; powerControl?: { did: string; siid: number; piid: number } }>();
   for (const descriptor of deviceOnDescriptors) {
     const did = text(descriptor.device.did);
     const value = values.get(propertyKey(did, descriptor.property.siid, descriptor.property.piid));
-    if (typeof value === "boolean") deviceOn.set(deviceTopologyIdentity(deviceHome(descriptor.device), did), value);
+    if (typeof value === "boolean") devicePower.set(deviceTopologyIdentity(deviceHome(descriptor.device), did), {
+      value,
+      powerControl: descriptor.property.writable ? { did, siid: descriptor.property.siid, piid: descriptor.property.piid } : undefined,
+    });
   }
-  return { channels, deviceOn };
+  return { channels, devicePower };
 }
 
 export async function GET() {
@@ -298,7 +298,8 @@ export async function GET() {
       const status = device.isOnline ?? device.is_online ?? device.online;
       const memberStates = members.map(member => member.isOnline ?? member.is_online ?? member.online).filter(member => member !== undefined);
       const channelState = parsed ? runtime.channels.get(deviceChannelStateKey(homeId, parsed.physicalDid, parsed.siid)) : undefined;
-      const on = runtime.deviceOn.get(deviceTopologyIdentity(homeId, did)) ?? channelState?.reportedOn ?? null;
+      const devicePower = runtime.devicePower.get(deviceTopologyIdentity(homeId, did));
+      const on = devicePower?.value ?? channelState?.reportedOn ?? null;
       return {
         did,
         name: text(device.name ?? device.model) || "未命名设备",
@@ -317,6 +318,7 @@ export async function GET() {
         urn: deviceUrn(device) ?? null,
         groupMemberIds: groupMembers.get(did) ?? [],
         groupIds: [...groupMembers].filter(([, ids]) => ids.includes(did)).map(([groupId]) => groupId),
+        powerControl: devicePower?.powerControl ?? channelState?.powerControl ?? null,
         topology: mappedTopology ?? null,
       };
     });

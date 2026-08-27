@@ -121,6 +121,7 @@ export type DeviceChannelRuntimeState = {
   connectionType: DeviceConnection;
   modeCapability?: SwitchModeCapability;
   reportedOn: boolean | null;
+  powerControl?: { did: string; siid: number; piid: number };
   modeValue: boolean | number | string | null;
   evidence: DeviceChannelEvidence;
 };
