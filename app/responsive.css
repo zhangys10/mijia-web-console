@@ -593,6 +593,47 @@ select {
   opacity: .46;
 }
 
+.scene-page {
+  min-height: 520px;
+  padding: 25px 28px 28px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+}
+
+.scene-page-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 26px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.scene-page-toolbar > button {
+  border: 1px solid #e1e6ea;
+  border-radius: 9px;
+  background: #fff;
+  padding: 9px 12px;
+  color: #687480;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.scene-page-toolbar > div {
+  display: flex;
+  gap: 8px;
+}
+
+.scene-page-toolbar .scene-modal-run,
+.scene-page-toolbar .scene-modal-edit {
+  width: auto;
+  padding: 10px 15px;
+  font-size: 11px;
+}
+
 .scene-modal {
   width: min(620px, 100%);
   max-height: min(88dvh, 820px);
@@ -715,9 +756,40 @@ select {
   gap: 8px;
 }
 
+.scene-action-groups,
 .scene-action-rooms {
   display: grid;
   gap: 16px;
+}
+
+.scene-action-group {
+  border: 1px solid #e9edf1;
+  border-radius: 13px;
+  background: #fafbfc;
+  padding: 12px;
+}
+
+.scene-action-group > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.scene-action-group > header strong {
+  color: #4f5b67;
+  font-size: 11px;
+}
+
+.scene-action-group > header small {
+  color: #929ca8;
+  font-size: 9px;
+}
+
+.scene-action-group .scene-action-room {
+  border-left: 2px solid #ffe0d2;
+  padding-left: 10px;
 }
 
 .scene-action-room > header {
@@ -1553,6 +1625,31 @@ select {
 
   .panel-grid {
     grid-template-columns: 1fr;
+  }
+
+  .scene-page {
+    min-height: 0;
+    padding: 19px;
+  }
+
+  .scene-page-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    margin-bottom: 22px;
+  }
+
+  .scene-page-toolbar > button {
+    align-self: flex-start;
+  }
+
+  .scene-page-toolbar > div {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr;
+  }
+
+  .scene-page-toolbar .scene-modal-run,
+  .scene-page-toolbar .scene-modal-edit {
+    width: 100%;
   }
 
   .rule {

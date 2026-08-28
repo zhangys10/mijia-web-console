@@ -162,6 +162,9 @@ test("maps batch light values by semantic names instead of copying device-specif
     { siid: 3, piid: 8, value: 35, label: "亮度" },
   ]);
   assert.equal(mapScenePropertySemantics(semantics, [{ name: "light", properties: target[0].properties.slice(0, 1) }]), undefined);
+  const switchSemantics = [{ serviceName: "switch", propertyName: "on", label: "开关", value: false }];
+  const switches = [2, 3].map(siid => ({ name: "switch", properties: [{ name: "on", label: "开关", siid, piid: 1, format: "bool", readable: true, writable: true }] }));
+  assert.deepEqual(mapScenePropertySemantics(switchSemantics, switches, { name: "switch", siid: 3 }), [{ siid: 3, piid: 1, value: false, label: "开关" }]);
 });
 
 test("submits the exact AppSceneService Edit endpoint and recognizes returned ids", async () => {

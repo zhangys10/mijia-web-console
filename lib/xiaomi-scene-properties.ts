@@ -76,10 +76,10 @@ export function scenePropertySemantics(
   return semantics;
 }
 
-export function mapScenePropertySemantics(semantics: ScenePropertySemantic[], groups: SceneMappableGroup[]) {
+export function mapScenePropertySemantics(semantics: ScenePropertySemantic[], groups: SceneMappableGroup[], preferredService?: { name: string; siid: number }) {
   const mapped: Array<{ siid: number; piid: number; value: ScenePropertyValue; label: string }> = [];
   for (const semantic of semantics) {
-    const group = groups.find(item => item.name === semantic.serviceName && item.properties.some(property => property.name === semantic.propertyName));
+    const group = groups.find(item => item.name === semantic.serviceName && item.properties.some(property => property.name === semantic.propertyName) && (preferredService?.name !== semantic.serviceName || item.properties.some(property => property.siid === preferredService.siid)));
     const property = group?.properties.find(item => item.name === semantic.propertyName);
     if (!group || !property || !isSceneWritableProperty(group.name, property) || !isScenePropertyValueSupported(property, semantic.value)) return undefined;
     mapped.push({ siid: property.siid, piid: property.piid, value: semantic.value, label: property.label });

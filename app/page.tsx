@@ -72,6 +72,7 @@ export default function Home(){
       if(generation!==sceneGeneration.current)return;
       const items=Array.isArray(data.scenes)?data.scenes as ManualScene[]:[];
       setScenesByHome(states=>({...states,[homeId]:{loading:false,items}}));
+      setSelectedScene(current=>current?.homeId===homeId?items.find(item=>item.id===current.id)??null:current);
     }catch(error){
       if(generation!==sceneGeneration.current)return;
       const reason=error instanceof Error?error.message:"UNKNOWN_ERROR";
@@ -108,7 +109,7 @@ export default function Home(){
   function selectHome(homeId:string){
     if(homeId===selectedHome)return;
     specRequest.current++;
-    setSelectedHome(homeId);setSelectedScene(null);setSelectedDevice(null);setFocusedMapping(null);setRoom("全屋");
+    setSelectedHome(homeId);setSelectedScene(null);setSceneEditor(null);setSelectedDevice(null);setFocusedMapping(null);setRoom("全屋");
     if(connection.connected)void loadScenes(homeId);
   }
 
@@ -252,6 +253,7 @@ export default function Home(){
     setScenesByHome(states=>{const state=states[scene.homeId]??{loading:false,items:[]};const exists=state.items.some(item=>item.id===scene.id);return{...states,[scene.homeId]:{loading:false,items:exists?state.items.map(item=>item.id===scene.id?scene:item):[...state.items,scene]}}});
     setSelectedScene(scene);setSceneEditor(null);message(`${scene.name}${sceneEditor?.sceneId?"已更新":"已创建"}`);
   }
+  function openScene(scene:ManualScene){setSelectedScene(scene);setSceneEditor(null);setTab("场景")}
   function openLogin(){setAuthOpen(true);if(!connection.connected&&!qr.imageUrl&&!qr.loading)void startLogin()}
   async function logout(){await fetch("/api/xiaomi/status",{method:"DELETE"});polling.current=false;specRequest.current++;sceneGeneration.current++;setConnection({loading:false,connected:false});setDevices(demo);setHomes([{id:"demo",name:"我的家"}]);setSelectedHome("demo");setScenesByHome({demo:{loading:false,items:demoScenes}});setSceneOperating("");setSelectedScene(null);setSceneEditor(null);setSelectedDevice(null);setFocusedMapping(null);setDeviceSpec({loading:false,groups:[]});setQr({loading:false});setAuthOpen(false);message("已断开米家云连接")}
 
@@ -263,17 +265,10 @@ export default function Home(){
     {tab==="首页"?<>
       <Title title="当前运行" sub={`${currentHome?.name??"当前家庭"} · ${activeDeviceCount} 台设备正在运行`} action="管理设备 →" onAction={()=>setTab("设备")}/>
       <ActiveDeviceList groups={activeDeviceGroups} connected={connection.connected} operating={operating} onOpen={(device,mappedDevice)=>void openDevice(device,mappedDevice)} onClose={item=>void closeActiveDevice(item)} onManage={()=>setTab("设备")}/>
-      <Title title="快捷场景" sub={connection.connected?"当前家庭的真实手动场景":"演示场景 · 连接米家后显示真实数据"} action="管理场景 →" onAction={()=>setTab("场景")}/><SceneStateMessage loading={connection.connected&&sceneState.loading} error={connection.connected?sceneState.error:undefined}/><section className="scenes">{quickScenes.map((scene,index)=><SceneCard key={scene.id} scene={scene} tone={["orange","blue","violet","indigo"][index%4]} connected={connection.connected} running={sceneOperating===scene.id} blocked={Boolean(sceneOperating)} compact onOpen={()=>setSelectedScene(scene)} onRun={item=>void runScene(item)}/>)}</section>{!sceneState.loading&&!sceneState.error&&quickScenes.length===0&&<SceneStateMessage empty/>}
-    </>:tab==="设备"?<DeviceManagement key={selectedHome} devices={homeDevices} room={room} connected={connection.connected} onSelectRoom={setRoom} onOpenDevice={(device,mappedDevice)=>void openDevice(device,mappedDevice)}/>:tab==="场景"?<Panel title="场景中心" text={connection.connected?"查看、执行并管理当前家庭的真实手动场景。":"当前为演示数据；连接米家后才能新建和编辑。"}><div className="scene-center-toolbar"><span>{connection.connected?`${currentHome?.name||"当前家庭"} · ${currentScenes.length} 个场景`:"演示模式下不会写入米家云"}</span><button type="button" disabled={!connection.connected||selectedHome==="demo"} onClick={()=>{setSelectedScene(null);setSceneEditor({})}}>＋ 新建场景</button></div><SceneStateMessage loading={connection.connected&&sceneState.loading} error={connection.connected?sceneState.error:undefined} empty={!sceneState.loading&&currentScenes.length===0}/><div className="panel-grid scene-list">{currentScenes.map((scene,index)=><SceneCard key={scene.id} scene={scene} tone={["orange","blue","violet","indigo"][index%4]} connected={connection.connected} running={sceneOperating===scene.id} blocked={Boolean(sceneOperating)} onOpen={()=>setSelectedScene(scene)} onRun={item=>void runScene(item)}/>)}</div></Panel>:tab==="自动化"?<Panel title="自动化" text={`${currentHome?.name??"当前家庭"} · 根据时间、环境和设备状态，让家自动响应。`}><Rule a="日落后" b="有人回家" c="打开玄关灯"/><Rule a="每日 23:30" b="门锁已上锁" c="执行晚安"/></Panel>:<Panel title="家庭能耗" text={`${currentHome?.name??"当前家庭"} · 查看设备用电趋势，发现节能空间。`}><div className="chart">{[44,62,52,78,68,90,64].map((height,index)=><i key={index} style={{height:`${height}%`}}/>)}</div><div className="labels">{["周一","周二","周三","周四","周五","周六","今天"].map(day=><span key={day}>{day}</span>)}</div></Panel>}</section>
+      <Title title="快捷场景" sub={connection.connected?"当前家庭的真实手动场景":"演示场景 · 连接米家后显示真实数据"} action="管理场景 →" onAction={()=>setTab("场景")}/><SceneStateMessage loading={connection.connected&&sceneState.loading} error={connection.connected?sceneState.error:undefined}/><section className="scenes">{quickScenes.map((scene,index)=><SceneCard key={scene.id} scene={scene} tone={["orange","blue","violet","indigo"][index%4]} connected={connection.connected} running={sceneOperating===scene.id} blocked={Boolean(sceneOperating)} compact onOpen={()=>openScene(scene)} onRun={item=>void runScene(item)}/>)}</section>{!sceneState.loading&&!sceneState.error&&quickScenes.length===0&&<SceneStateMessage empty/>}
+    </>:tab==="设备"?<DeviceManagement key={selectedHome} devices={homeDevices} room={room} connected={connection.connected} onSelectRoom={setRoom} onOpenDevice={(device,mappedDevice)=>void openDevice(device,mappedDevice)}/>:tab==="场景"?sceneEditor?<SceneEditor homeId={selectedHome} homeName={homes.find(home=>home.id===selectedHome)?.name||"当前家庭"} devices={homeDevices} sceneId={sceneEditor.sceneId} onClose={()=>setSceneEditor(null)} onSaved={sceneSaved}/>:selectedScene?<SceneDetailPage scene={selectedScene} homeName={homes.find(home=>home.id===selectedScene.homeId)?.name||"当前家庭"} devices={homeDevices} connected={connection.connected} running={sceneOperating===selectedScene.id} blocked={Boolean(sceneOperating)} onBack={()=>setSelectedScene(null)} onEdit={()=>setSceneEditor({sceneId:selectedScene.id})} onRun={()=>void runScene(selectedScene)}/>:<Panel title="场景中心" text={connection.connected?"查看、执行并管理当前家庭的真实手动场景。":"当前为演示数据；连接米家后才能新建和编辑。"}><div className="scene-center-toolbar"><span>{connection.connected?`${currentHome?.name||"当前家庭"} · ${currentScenes.length} 个场景`:"演示模式下不会写入米家云"}</span><button type="button" disabled={!connection.connected||selectedHome==="demo"} onClick={()=>{setSelectedScene(null);setSceneEditor({})}}>＋ 新建场景</button></div><SceneStateMessage loading={connection.connected&&sceneState.loading} error={connection.connected?sceneState.error:undefined} empty={!sceneState.loading&&currentScenes.length===0}/><div className="panel-grid scene-list">{currentScenes.map((scene,index)=><SceneCard key={scene.id} scene={scene} tone={["orange","blue","violet","indigo"][index%4]} connected={connection.connected} running={sceneOperating===scene.id} blocked={Boolean(sceneOperating)} onOpen={()=>openScene(scene)} onRun={item=>void runScene(item)}/>)}</div></Panel>:tab==="自动化"?<Panel title="自动化" text={`${currentHome?.name??"当前家庭"} · 根据时间、环境和设备状态，让家自动响应。`}><Rule a="日落后" b="有人回家" c="打开玄关灯"/><Rule a="每日 23:30" b="门锁已上锁" c="执行晚安"/></Panel>:<Panel title="家庭能耗" text={`${currentHome?.name??"当前家庭"} · 查看设备用电趋势，发现节能空间。`}><div className="chart">{[44,62,52,78,68,90,64].map((height,index)=><i key={index} style={{height:`${height}%`}}/>)}</div><div className="labels">{["周一","周二","周三","周四","周五","周六","今天"].map(day=><span key={day}>{day}</span>)}</div></Panel>}</section>
 
     <aside className="rightbar"><div className={`api ${connection.connected?"cloud-live":""}`}><div className="api-title"><span>⌁</span><div><strong>米家云</strong><small>{connection.connected?`${regionLabels[connection.region||"cn"]} · 已连接`:"扫码授权 · 直接连接"}</small></div></div><p>{connection.error?`最近同步失败：${friendlyError(connection.error)}`:connection.connected?`已连接小米账号 ${connection.userId}，可以同步家庭、房间与设备。`:"使用米家 App 扫描官方账号二维码登录，无需 Home Assistant，也无需输入账号密码。"}</p><button disabled={syncing} onClick={connection.connected?()=>void syncDevices():openLogin}>{syncing?"正在同步设备…":connection.connected?"立即同步设备":"扫码连接米家"} <b>→</b></button></div><Title title="最近动态" sub={`${currentHome?.name??"当前家庭"} · 设备记录`} action="···"/><div className="timeline"><Activity icon="⌂" tone="orange" title="执行「回家」场景" text="3 台设备已响应" time="2 分钟前"/><Activity icon="✓" tone="green" title="智能门锁已上锁" text="通过指纹 · 家庭成员" time="18 分钟前"/><Activity icon="↗" tone="blue" title="空调已调至 24°C" text="自动化 · 舒适温度" time="1 小时前"/><Activity icon="◎" tone="violet" title="扫拖机器人完成清洁" text="清洁 42㎡ · 用时 38 分钟" time="3 小时前"/></div><button className="all">查看全部动态</button><div className="home-status"><div><strong>{currentHome?.name??"家庭状态"}</strong><span>{connection.connected?"米家云在线":"演示数据"}</span></div><section><Status icon="◈" n={String(homeDevices.length)} label="设备总数"/><Status icon="ϟ" n={String(activeDeviceCount)} label="运行中"/><Status icon="⌁" n={String(rooms.length-1)} label="房间"/></section></div></aside>
-
-    {selectedScene&&<div className="modal-bg" onMouseDown={()=>setSelectedScene(null)}><div className="modal scene-modal" onMouseDown={event=>event.stopPropagation()}>
-      <button className="close" aria-label="关闭场景详情" onClick={()=>setSelectedScene(null)}>×</button>
-      <div className="scene-modal-scroll"><SceneInformation scene={selectedScene} homeName={homes.find(home=>home.id===selectedScene.homeId)?.name||"当前家庭"} devices={homeDevices}/></div>
-      <div className="scene-modal-actions">{connection.connected&&<button className="scene-modal-edit" onClick={()=>setSceneEditor({sceneId:selectedScene.id})}>编辑场景</button>}<button className="scene-modal-run" disabled={!selectedScene.enabled||Boolean(sceneOperating)} aria-busy={sceneOperating===selectedScene.id} onClick={()=>void runScene(selectedScene)}>{sceneOperating===selectedScene.id?"执行中…":connection.connected?"执行场景":"执行演示"}</button></div>
-    </div></div>}
-    {sceneEditor&&<SceneEditor homeId={selectedHome} homeName={homes.find(home=>home.id===selectedHome)?.name||"当前家庭"} devices={homeDevices} sceneId={sceneEditor.sceneId} onClose={()=>setSceneEditor(null)} onSaved={sceneSaved}/>}
 
     {selectedDevice&&<div className="modal-bg" onMouseDown={()=>{specRequest.current++;setSelectedDevice(null)}}><div className="modal device-modal" onMouseDown={event=>event.stopPropagation()}>
       <button className="close" onClick={()=>{specRequest.current++;setSelectedDevice(null)}}>×</button>
@@ -376,11 +371,12 @@ function SceneCard({scene,tone,connected,running,blocked,compact,onOpen,onRun}:{
   <button type="button" className="scene-card-open" aria-label={`查看场景 ${scene.name}`} onClick={onOpen}><span className={tone}>{sceneGlyph(scene)}</span><div><strong>{scene.name}</strong><small>{scene.enabled?`${scene.actionCount} 个动作 · 查看详情`:"已停用 · 查看详情"}</small></div><b>›</b></button>
   <button type="button" className="scene-run" aria-label={`${connected?"执行":"演示"}场景 ${scene.name}`} disabled={!scene.enabled||blocked} onClick={()=>onRun(scene)}>{running?"执行中…":connected?"执行":"演示"}</button>
 </article>}
-function SceneInformation({scene,homeName,devices}:{scene:ManualScene;homeName:string;devices:Device[]}){const actions=scene.actions,rooms=useMemo(()=>groupManualSceneActions(actions,devices),[actions,devices]);return <>
+function SceneDetailPage({scene,homeName,devices,connected,running,blocked,onBack,onEdit,onRun}:{scene:ManualScene;homeName:string;devices:Device[];connected:boolean;running:boolean;blocked:boolean;onBack:()=>void;onEdit:()=>void;onRun:()=>void}){return <section className="scene-page" aria-label="场景详情"><header className="scene-page-toolbar"><button type="button" onClick={onBack}>← 返回场景列表</button><div>{connected&&<button type="button" className="scene-modal-edit" onClick={onEdit}>编辑场景</button>}<button type="button" className="scene-modal-run" disabled={!scene.enabled||blocked} aria-busy={running} onClick={onRun}>{running?"执行中…":connected?"执行场景":"执行演示"}</button></div></header><SceneInformation scene={scene} homeName={homeName} devices={devices}/></section>}
+function SceneInformation({scene,homeName,devices}:{scene:ManualScene;homeName:string;devices:Device[]}){const actions=scene.actions,groups=useMemo(()=>groupManualSceneActions(actions,devices),[actions,devices]);return <>
   <div className="scene-modal-head"><span>{sceneGlyph(scene)}</span><div><small>手动场景</small><h2>{scene.name}</h2><p>{homeName}</p></div></div>
   <div className="scene-details"><div><small>动作数量</small><strong>{scene.actionCount}</strong></div><div><small>场景状态</small><strong>{scene.enabled?"可执行":"已停用"}</strong></div>{scene.updatedAt&&<div><small>更新时间</small><strong>{formatSceneTime(scene.updatedAt)}</strong></div>}</div>
-  <section className="scene-flow-section"><div className="scene-flow-title"><div><span>DO</span><strong>动作序列</strong></div><small>按房间归类 · 保留动作编号</small></div>
-    {actions.length?<div className="scene-action-rooms">{rooms.map(room=><section className="scene-action-room" key={room.room}><header><strong>{room.room}</strong><small>{room.actionCount} 个动作</small></header><ol className="scene-action-list">{room.items.map((item,index)=><SceneActionItem item={item} key={`${room.room}:${item.kind==="light-batch"?item.actions[0]?.order:item.action.order}:${index}`}/>)}</ol></section>)}</div>:<div className="scene-action-empty">米家仅返回了动作数量，未提供可展示的动作明细。</div>}
+  <section className="scene-flow-section"><div className="scene-flow-title"><div><span>DO</span><strong>动作序列</strong></div><small>先按属性和值归类 · 再按房间显示 · 保留动作编号</small></div>
+    {actions.length?<div className="scene-action-groups">{groups.map(group=><section className="scene-action-group" key={group.key}><header><strong>{group.label}</strong><small>{group.actionCount} 个动作</small></header><div className="scene-action-rooms">{group.rooms.map(room=><section className="scene-action-room" key={room.room}><header><strong>{room.room}</strong><small>{room.actionCount} 个动作</small></header><ol className="scene-action-list">{room.items.map((item,index)=><SceneActionItem item={item} key={`${group.key}:${room.room}:${item.kind==="light-batch"?item.actions[0]?.order:item.action.order}:${index}`}/>)}</ol></section>)}</div></section>)}</div>:<div className="scene-action-empty">米家仅返回了动作数量，未提供可展示的动作明细。</div>}
   </section>
   <p className="scene-submit-note">下发只表示米家云已接收指令，不代表所有设备已经实际执行。</p>
 </>}
@@ -388,10 +384,29 @@ function SceneActionItem({item}:{item:ManualSceneActionItem}){
   if(item.kind==="light-batch")return <li className="scene-action-batch"><span>{item.actions[0]?.order}</span><div><strong>{item.state?`${item.state==="on"?"打开":"关闭"} ${item.actions.length} 盏灯`:`批量设置 ${item.actions.length} 盏灯`}</strong><small>{item.state?item.state==="on"?"统一开启":"统一关闭":"相同属性设置"} · 可展开查看设备</small><SceneActionDetails action={item.actions[0]}/><details><summary>查看 {item.deviceNames.length} 台设备</summary><div>{item.deviceNames.map((name,index)=><span key={`${name}:${index}`}>{name}</span>)}</div></details></div></li>;
   const action=item.action;return <li><span>{action.order}</span><div><strong>{action.deviceName||action.label}</strong>{action.deviceName&&<small>{action.label}</small>}<SceneActionDetails action={action}/></div></li>;
 }
-function SceneActionDetails({action}:{action:ManualScene["actions"][number]}){return action.details.length?<div className="scene-action-details">{action.details.map((detail,detailIndex)=><em className={`scene-action-detail ${detail.kind}${detail.state?` ${detail.state}`:""}`} style={sceneActionDetailStyle(detail)} key={`${detail.kind}:${detail.label}:${detailIndex}`}><i>{sceneActionDetailGlyph(detail.kind)}</i><span>{detail.label}</span><b>{detail.value}</b></em>)}</div>:null}
+function SceneActionDetails({action}:{action:ManualScene["actions"][number]}){return action.details.length?<div className="scene-action-details">{action.details.map((detail,detailIndex)=><em className={`scene-action-detail ${detail.kind}${detail.state?` ${detail.state}`:""}`} style={sceneActionDetailStyle(detail)} key={`${detail.kind}:${detail.label}:${detailIndex}`}><i>{sceneActionDetailGlyph(detail)}</i><span>{detail.label}</span><b>{detail.value}</b></em>)}</div>:null}
 function SceneStateMessage({loading,error,empty}:{loading?:boolean;error?:string;empty?:boolean}){if(!loading&&!error&&!empty)return null;return <div className={`scene-state${error?" error":""}`}>{loading?"正在读取米家场景…":error?`场景读取失败：${friendlyError(error)}`:"当前家庭没有可用的手动场景"}</div>}
 function sceneGlyph(scene:ManualScene){return scene.icon&&scene.icon.length<=2?scene.icon:"✦"}
-function sceneActionDetailGlyph(kind:ManualScene["actions"][number]["details"][number]["kind"]){return kind==="power"?"⏻":kind==="brightness"?"☀":kind==="color-temperature"?"◐":kind==="delay"?"◷":"≡"}
+function sceneActionDetailGlyph(detail:ManualScene["actions"][number]["details"][number]){
+  if(detail.kind==="power")return "⏻";
+  if(detail.kind==="brightness")return "☀";
+  if(detail.kind==="color-temperature")return "◐";
+  if(detail.kind==="delay")return "◷";
+  const semantic=`${detail.label} ${detail.value}`.toLowerCase();
+  if(/制冷|cool/.test(semantic))return "❄";
+  if(/制热|heat/.test(semantic))return "♨";
+  if(/除湿|dry|湿度|humidity/.test(semantic))return "◌";
+  if(/送风|风速|风量|fan/.test(semantic))return "≋";
+  if(/目标温度|温度|temperature/.test(semantic))return "°";
+  if(/工作模式|模式|mode/.test(semantic))return "◈";
+  if(/颜色|色彩|color/.test(semantic))return "●";
+  if(/音量|声音|volume/.test(semantic))return "♪";
+  if(/窗帘|开合度|位置|position/.test(semantic))return "↕";
+  if(/门锁|上锁|解锁|lock/.test(semantic))return "▣";
+  if(/电量|电池|battery/.test(semantic))return "ϟ";
+  if(detail.kind==="command")return "▶";
+  return "≡";
+}
 type SceneActionDetailStyle=CSSProperties&{"--scene-detail-accent"?:string;"--scene-detail-level"?:string};
 function sceneActionDetailStyle(detail:ManualScene["actions"][number]["details"][number]):SceneActionDetailStyle|undefined{
   const numeric=Number.parseFloat(detail.value);

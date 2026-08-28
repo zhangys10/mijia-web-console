@@ -12,6 +12,7 @@ type SpecProperty = { key:string;name:string;label:string;siid:number;piid:numbe
 type SpecGroup = { key:string;name:string;label:string;properties:SpecProperty[] };
 type Specification = { loading:boolean;groups:SpecGroup[];error?:string };
 type SelectedProperty = ScenePropertySemantic & { key:string;groupLabel:string;capability:SpecProperty };
+type TargetOption = { key:string;device:ManagedDevice & {did:string};preferredService?:{name:string;siid:number};groupLabel?:string };
 type Props = {
   homeId: string;
   homeName: string;
@@ -60,6 +61,7 @@ function deviceKindGroup(kind:string) {
 
 function isLightGroup(device:ManagedDevice|undefined){return Boolean(device?.did&&/^group\./i.test(device.did))}
 function targetKindLabel(device:ManagedDevice){return isLightGroup(device)?"灯组":deviceKindLabel(device.kind)}
+function targetOptionKey(did:string,preferredService?:{name:string;siid:number}){return preferredService?`${did}::${preferredService.name}:${preferredService.siid}`:did}
 
 async function fetchDeviceSpecification(device:ManagedDevice):Promise<Specification>{
   try{
@@ -89,14 +91,14 @@ export default function SceneEditor({ homeId, homeName, devices, sceneId, onClos
   const [error,setError]=useState("");
   const [dirty,setDirty]=useState(false);
   const [actionsDirty,setActionsDirty]=useState(false);
-  const [composerOpen,setComposerOpen]=useState(!sceneId);
+  const [composerOpen,setComposerOpen]=useState(false);
   const [working,setWorking]=useState<SceneDraftAction|undefined>();
   const [workingIndices,setWorkingIndices]=useState<number[]>([]);
-  const [selectedDids,setSelectedDids]=useState<string[]>([]);
+  const [selectedTargetKeys,setSelectedTargetKeys]=useState<string[]>([]);
   const [selectedProperties,setSelectedProperties]=useState<SelectedProperty[]>([]);
   const [pendingProperties,setPendingProperties]=useState<SceneDraftAction["properties"]>();
   const [deviceSpecs,setDeviceSpecs]=useState<Record<string,Specification>>({});
-  const [specsLoading,setSpecsLoading]=useState(composerOpen);
+  const [specsLoading,setSpecsLoading]=useState(false);
   const [specReload,setSpecReload]=useState(0);
   const [specsError,setSpecsError]=useState("");
   const [composerError,setComposerError]=useState("");
@@ -109,9 +111,10 @@ export default function SceneEditor({ homeId, homeName, devices, sceneId, onClos
   const deviceKinds=useMemo(()=>Array.from(new Set(candidates.map(device=>deviceKindGroup(device.kind)))).sort((left,right)=>deviceKindLabel(left).localeCompare(deviceKindLabel(right),"zh-CN")),[candidates]);
   const selectedSemantics=useMemo(()=>selectedProperties.map(({serviceName,propertyName,label,value})=>({serviceName,propertyName,label,value})),[selectedProperties]);
   const propertyCatalog=useMemo(()=>{const catalog=new Map<string,{key:string;serviceName:string;propertyName:string;groupLabel:string;label:string;capability:SpecProperty}>();for(const device of candidates){const specification=deviceSpecs[device.did];for(const group of specification?.groups??[]){for(const property of group.properties){if(!isSceneWritableProperty(group.name,property))continue;const key=`${group.name}:${property.name}`;if(!catalog.has(key))catalog.set(key,{key,serviceName:group.name,propertyName:property.name,groupLabel:group.label,label:property.label,capability:property})}}}return [...catalog.values()].sort((left,right)=>left.groupLabel.localeCompare(right.groupLabel,"zh-CN")||left.label.localeCompare(right.label,"zh-CN"))},[candidates,deviceSpecs]);
-  const capableCandidates=useMemo(()=>candidates.filter(device=>supportsSemantics(deviceSpecs[device.did],selectedSemantics)),[candidates,deviceSpecs,selectedSemantics]);
-  const filteredCandidates=useMemo(()=>capableCandidates.filter(device=>(!deviceRoom||device.room===deviceRoom)&&(!deviceKind||deviceKindGroup(device.kind)===deviceKind)),[capableCandidates,deviceKind,deviceRoom]);
-  const actionRooms=useMemo(()=>groupSceneDraftActions(draft?.actions??[],devices.filter(device=>device.homeId===homeId)),[devices,draft?.actions,homeId]);
+  const targetOptions=useMemo<TargetOption[]>(()=>candidates.flatMap(device=>{const specification=deviceSpecs[device.did];if(!specification||specification.error)return [];if(!selectedSemantics.length)return supportsSemantics(specification,[])?[{key:device.did,device}]:[];const repeatedService=selectedSemantics.map(semantic=>semantic.serviceName).find(name=>specification.groups.filter(group=>group.name===name).length>1);if(!repeatedService)return mapScenePropertySemantics(selectedSemantics,specification.groups)?[{key:device.did,device}]:[];return specification.groups.filter(group=>group.name===repeatedService).flatMap(group=>{const siid=group.properties[0]?.siid;if(!siid)return [];const preferredService={name:repeatedService,siid};return mapScenePropertySemantics(selectedSemantics,specification.groups,preferredService)?[{key:targetOptionKey(device.did,preferredService),device,preferredService,groupLabel:group.label}]:[]})}),[candidates,deviceSpecs,selectedSemantics]);
+  const filteredTargetOptions=useMemo(()=>targetOptions.filter(option=>(!deviceRoom||option.device.room===deviceRoom)&&(!deviceKind||deviceKindGroup(option.device.kind)===deviceKind)),[deviceKind,deviceRoom,targetOptions]);
+  const groupableActions=useMemo(()=>(draft?.actions??[]).map(action=>{if(action.kind!=="set-properties"||!action.properties?.length)return action;const specification=deviceSpecs[action.did],semantics=specification&&scenePropertySemantics(action.properties,specification.groups),device=candidates.find(item=>item.did===action.did);if(!semantics||!specification)return action;const switchGroup=specification.groups.find(group=>group.name==="switch"&&action.properties?.some(property=>group.properties.some(candidate=>candidate.siid===property.siid&&candidate.piid===property.piid)));return {...action,...(switchGroup?{deviceName:`${device?.name??action.deviceName} · ${switchGroup.label}`}:{ }),properties:action.properties.map((property,index)=>({...property,label:semantics[index]?.label??property.label}))}}),[candidates,deviceSpecs,draft?.actions]);
+  const actionGroups=useMemo(()=>groupSceneDraftActions(groupableActions,devices.filter(device=>device.homeId===homeId)),[devices,groupableActions,homeId]);
 
   useEffect(()=>{
     let active=true;
@@ -124,32 +127,31 @@ export default function SceneEditor({ homeId, homeName, devices, sceneId, onClos
   },[homeId,sceneId]);
 
   useEffect(()=>{
-    if(!composerOpen)return;
+    if(!composerOpen&&!sceneId)return;
     let active=true;const id=++requestId.current;
     const byModel=new Map<string,Promise<Specification>>();
     for(const device of candidates){const key=`${device.detail}:${device.urn??""}`;if(!byModel.has(key))byModel.set(key,fetchDeviceSpecification(device))}
     void Promise.all(candidates.map(async device=>{const specification=await byModel.get(`${device.detail}:${device.urn??""}`)!;return [device.did,specification] as const})).then(entries=>{if(active&&id===requestId.current){setDeviceSpecs(Object.fromEntries(entries));if(!entries.some(([,item])=>!item.error))setSpecsError("暂时无法读取可用于场景的设备能力。")}}).finally(()=>{if(active&&id===requestId.current)setSpecsLoading(false)});
     return()=>{active=false};
-  },[candidates,composerOpen,specReload]);
+  },[candidates,composerOpen,sceneId,specReload]);
 
   useEffect(()=>{
     if(!pendingProperties||!working||specsLoading)return;
-    let active=true;void Promise.resolve().then(()=>{if(!active)return;const specification=deviceSpecs[working.did];const semantics=specification&&scenePropertySemantics(pendingProperties,specification.groups);if(!specification||!semantics){setComposerError("无法识别原动作中的属性，该动作暂不能批量修改。");setPendingProperties(undefined);return}const selections=semantics.flatMap(semantic=>{const group=specification.groups.find(item=>item.name===semantic.serviceName),property=group?.properties.find(item=>item.name===semantic.propertyName);return group&&property?[{...semantic,key:`${semantic.serviceName}:${semantic.propertyName}`,groupLabel:group.label,capability:property}]:[]});setSelectedProperties(selections);setSelectedDids(current=>current.filter(did=>supportsSemantics(deviceSpecs[did],semantics)));setPendingProperties(undefined)});return()=>{active=false};
-  },[deviceSpecs,pendingProperties,specsLoading,working]);
+    let active=true;void Promise.resolve().then(()=>{if(!active)return;const specification=deviceSpecs[working.did];const semantics=specification&&scenePropertySemantics(pendingProperties,specification.groups);if(!specification||!semantics){setComposerError("无法识别原动作中的属性，该动作暂不能批量修改。");setPendingProperties(undefined);return}const selections=semantics.flatMap(semantic=>{const group=specification.groups.find(item=>item.name===semantic.serviceName),property=group?.properties.find(item=>item.name===semantic.propertyName);return group&&property?[{...semantic,key:`${semantic.serviceName}:${semantic.propertyName}`,groupLabel:group.label,capability:property}]:[]});const keys=workingIndices.flatMap(index=>{const action=draft?.actions[index];if(!action||action.kind==="unsupported"||!action.properties?.length)return [];const actionSpec=deviceSpecs[action.did],actionSemantics=actionSpec&&scenePropertySemantics(action.properties,actionSpec.groups);if(!actionSpec||!actionSemantics)return [];const serviceName=actionSemantics[0]?.serviceName,group=actionSpec.groups.find(item=>item.name===serviceName&&action.properties?.some(property=>item.properties.some(candidate=>candidate.siid===property.siid&&candidate.piid===property.piid)));const repeated=serviceName&&actionSpec.groups.filter(item=>item.name===serviceName).length>1,preferredService=repeated&&group?{name:serviceName,siid:group.properties[0]?.siid}:undefined;return [targetOptionKey(action.did,preferredService?.siid?preferredService:undefined)]});setSelectedProperties(selections);setSelectedTargetKeys(Array.from(new Set(keys)));setPendingProperties(undefined)});return()=>{active=false};
+  },[deviceSpecs,draft?.actions,pendingProperties,specsLoading,working,workingIndices]);
 
-  function selectDevice(did:string){
-    const device=candidates.find(item=>item.did===did);if(!device?.did)return;
-    setSelectedDids(current=>current.includes(did)?current.filter(item=>item!==did):[...current,did]);setComposerError("");
+  function selectTarget(key:string){
+    if(!targetOptions.some(option=>option.key===key))return;
+    setSelectedTargetKeys(current=>current.includes(key)?current.filter(item=>item!==key):[...current,key]);setComposerError("");
   }
 
   function startAdd(){
-    setComposerOpen(true);setSpecsLoading(true);setSpecReload(current=>current+1);setSpecsError("");setWorkingIndices([]);setSelectedDids([]);setSelectedProperties([]);setPendingProperties(undefined);setWorking(undefined);setAddPropertyKey("");setDeviceRoom("");setDeviceKind("");setComposerError("");
+    setComposerOpen(true);setSpecsLoading(true);setSpecReload(current=>current+1);setSpecsError("");setWorkingIndices([]);setSelectedTargetKeys([]);setSelectedProperties([]);setPendingProperties(undefined);setWorking(undefined);setAddPropertyKey("");setDeviceRoom("");setDeviceKind("");setComposerError("");
   }
 
   function startEdit(action:SceneDraftAction,indices:number[]){
     const device=candidates.find(item=>item.did===action.did);
-    const dids=indices.flatMap(index=>{const item=draft?.actions[index];return item&&item.kind!=="unsupported"?[item.did]:[]});
-    setComposerOpen(true);setSpecsLoading(true);setSpecReload(current=>current+1);setSpecsError("");setWorkingIndices(indices);setSelectedDids(Array.from(new Set(dids)));setSelectedProperties([]);setPendingProperties(structuredClone(action.properties));setWorking({...structuredClone(action),...(device?{deviceName:device.name,model:device.detail}:{})});setAddPropertyKey("");setComposerError("");
+    setComposerOpen(true);setSpecsLoading(true);setSpecReload(current=>current+1);setSpecsError("");setWorkingIndices(indices);setSelectedTargetKeys([]);setSelectedProperties([]);setPendingProperties(structuredClone(action.properties));setWorking({...structuredClone(action),...(device?{deviceName:device.name,model:device.detail}:{})});setAddPropertyKey("");setComposerError("");
     if(device){setDeviceRoom(device.room);setDeviceKind(deviceKindGroup(device.kind))}
   }
 
@@ -164,38 +166,39 @@ export default function SceneEditor({ homeId, homeName, devices, sceneId, onClos
 
   function updateSelectedProperties(next:SelectedProperty[]){
     const semantics=next.map(({serviceName,propertyName,label,value})=>({serviceName,propertyName,label,value}));
-    const compatible=selectedDids.filter(did=>supportsSemantics(deviceSpecs[did],semantics));
-    setSelectedProperties(next);setSelectedDids(compatible);setComposerError(compatible.length<selectedDids.length?`已取消 ${selectedDids.length-compatible.length} 个不支持当前属性或数值的目标。`:"");
+    const compatible=selectedTargetKeys.filter(key=>{const option=targetOptions.find(item=>item.key===key),specification=option&&deviceSpecs[option.device.did];return Boolean(option&&specification&&mapScenePropertySemantics(semantics,specification.groups,option.preferredService))});
+    setSelectedProperties(next);setSelectedTargetKeys(compatible);setComposerError(compatible.length<selectedTargetKeys.length?`已取消 ${selectedTargetKeys.length-compatible.length} 个不支持当前属性或数值的目标。`:"");
   }
 
   async function commitWorking(){
     if(!draft||saving||!selectedProperties.length)return;
-    const targets=selectedDids.flatMap(did=>{const device=candidates.find(item=>item.did===did);return device?[device]:[]});
+    const targets=selectedTargetKeys.flatMap(key=>{const option=targetOptions.find(item=>item.key===key);return option?[option]:[]});
     if(!targets.length)return;
     const semantics=selectedProperties.map(({serviceName,propertyName,label,value})=>({serviceName,propertyName,label,value}));
     const nextCount=draft.actions.length-workingIndices.length+targets.length;
     if(nextCount>64){setComposerError("场景最多支持 64 个真实动作，请减少目标设备。");return}
     setSaving(true);setComposerError("");
     try{
-      const existing=new Map(workingIndices.flatMap(index=>{const action=draft.actions[index];return action&&action.kind!=="unsupported"?[[action.did,action] as const]:[]}));
-      const expanded:SceneDraftAction[]=targets.map(device=>{
-        const specification=deviceSpecs[device.did];
+      const existing=new Map(workingIndices.flatMap(index=>{const action=draft.actions[index];if(!action||action.kind==="unsupported"||!action.properties?.length)return [];const specification=deviceSpecs[action.did],semantics=specification&&scenePropertySemantics(action.properties,specification.groups),serviceName=semantics?.[0]?.serviceName,group=specification?.groups.find(item=>item.name===serviceName&&action.properties?.some(property=>item.properties.some(candidate=>candidate.siid===property.siid&&candidate.piid===property.piid))),preferred=serviceName&&group&&specification!.groups.filter(item=>item.name===serviceName).length>1?{name:serviceName,siid:group.properties[0]?.siid}:undefined;return [[targetOptionKey(action.did,preferred?.siid?preferred:undefined),action] as const]}));
+      const expanded:SceneDraftAction[]=targets.map(option=>{
+        const device=option.device,specification=deviceSpecs[device.did];
         if(!specification||specification.error)throw new Error(`${device.name} 的设备能力暂不可用`);
-        const properties=mapScenePropertySemantics(semantics,specification.groups);
+        const properties=mapScenePropertySemantics(semantics,specification.groups,option.preferredService);
         if(!properties)throw new Error(`${device.name} 不支持全部所选属性`);
-        const source=existing.get(device.did!);
-        return {clientId:source?.clientId||newActionId(),...(source?.sourceIndex===undefined?{}:{sourceIndex:source.sourceIndex}),kind:"set-properties",did:device.did!,deviceName:device.name,model:device.detail,label:"设置设备属性",properties};
+        const source=existing.get(option.key);
+        return {clientId:source?.clientId||newActionId(),...(source?.sourceIndex===undefined?{}:{sourceIndex:source.sourceIndex}),kind:"set-properties",did:device.did,deviceName:option.groupLabel?`${device.name} · ${option.groupLabel}`:device.name,model:device.detail,label:"设置设备属性",properties};
       });
       const removed=new Set(workingIndices),actions=draft.actions.filter((_,index)=>!removed.has(index));
       const insertion=workingIndices.length?Math.min(...workingIndices):actions.length;
       actions.splice(insertion,0,...expanded);
-      setDraft({...draft,actions});setComposerOpen(false);setWorking(undefined);setWorkingIndices([]);setSelectedDids([]);setSelectedProperties([]);setDirty(true);setActionsDirty(true);
+      setDraft({...draft,actions});setComposerOpen(false);setWorking(undefined);setWorkingIndices([]);setSelectedTargetKeys([]);setSelectedProperties([]);setDirty(true);setActionsDirty(true);
     }catch(reason){setComposerError(reason instanceof Error?reason.message:"批量动作生成失败")}
     finally{setSaving(false)}
   }
 
   function removeActions(indices:number[]){if(!draft)return;const removed=new Set(indices);setDraft({...draft,actions:draft.actions.filter((_,item)=>!removed.has(item))});setDirty(true);setActionsDirty(true)}
   function moveAction(index:number,direction:-1|1){if(!draft)return;const target=index+direction;if(target<0||target>=draft.actions.length)return;const actions=[...draft.actions];[actions[index],actions[target]]=[actions[target],actions[index]];setDraft({...draft,actions});setDirty(true);setActionsDirty(true)}
+  function cancelComposer(){setComposerOpen(false);setWorking(undefined);setWorkingIndices([]);setSelectedTargetKeys([]);setSelectedProperties([]);setPendingProperties(undefined);setComposerError("")}
   function close(){if(!dirty||window.confirm("放弃尚未保存的场景修改？"))onClose()}
 
   async function save(){
@@ -214,30 +217,32 @@ export default function SceneEditor({ homeId, homeName, devices, sceneId, onClos
     finally{setSaving(false)}
   }
 
-  return <div className="modal-bg scene-editor-bg" onMouseDown={close}><section className="scene-editor" role="dialog" aria-modal="true" aria-label={sceneId?"编辑场景":"新建场景"} onMouseDown={event=>event.stopPropagation()}>
-    <header><div><span>{sceneId?"EDIT SCENE":"NEW SCENE"}</span><h2>{sceneId?"编辑手动场景":"新建手动场景"}</h2><p>{homeName} · 保存后同步到米家云</p></div><button type="button" aria-label="关闭场景编辑器" onClick={close}>×</button></header>
+  return <section className="scene-editor scene-editor-page" aria-label={sceneId?"编辑场景":"新建场景"}>
+    <header><button type="button" className="scene-page-back" onClick={composerOpen?cancelComposer:close}>← {composerOpen?"返回场景编辑":"返回场景"}</button><div><span>{composerOpen?workingIndices.length?"EDIT ACTION":"NEW ACTION":sceneId?"EDIT SCENE":"NEW SCENE"}</span><h2>{composerOpen?workingIndices.length?"修改动作":"添加动作":sceneId?"编辑手动场景":"新建手动场景"}</h2><p>{homeName} · {composerOpen?"完成动作设置后返回场景编辑":"保存后同步到米家云"}</p></div></header>
     {loading?<div className="scene-editor-state">正在读取可编辑场景…</div>:!draft?<div className="scene-editor-state error">{error||"场景读取失败"}</div>:<>
       <div className="scene-editor-scroll">
+        {!composerOpen&&<>
         <section className="scene-editor-basics"><label><span>场景名称</span><input maxLength={50} value={draft.name} placeholder="例如：回家模式" onChange={event=>{setDraft({...draft,name:event.target.value});setDirty(true)}}/></label></section>
         {!draft.actionsEditable&&<div className="scene-editor-warning"><strong>动作保持只读</strong><p>这个场景包含当前版本无法安全重建的动作。你仍可修改名称，原始动作会完整保留。</p></div>}
         <section className="scene-editor-actions"><div className="scene-editor-section-title"><div><span>DO</span><div><strong>动作序列</strong><small>{draft.actions.length} 个真实动作</small></div></div>{draft.actionsEditable&&<button type="button" onClick={startAdd}>＋ 添加动作</button>}</div>
-          <div className="scene-editor-action-rooms">{actionRooms.map(room=><section key={room.room}><header><strong>{room.room}</strong><small>{room.actionCount} 个动作</small></header><ol>{room.items.map(item=>{const action=item.actions[0],index=item.indices[0],editable=item.actions.every(candidate=>candidate.kind!=="unsupported"&&candidates.some(device=>device.did===candidate.did));if(!action||index===undefined)return null;return <li className={item.collapsible?"batch":""} key={item.actions.map(candidate=>candidate.clientId).join(":")}><b>{item.collapsible?item.actions.length:index+1}</b><div><strong>{item.collapsible?item.state?`${item.state==="on"?"打开":"关闭"} ${item.actions.length} 盏灯`:`批量设置 ${item.actions.length} 盏灯`:action.deviceName||action.label}</strong><small>{item.collapsible?`${item.actions.map(candidate=>candidate.deviceName).filter(Boolean).join("、")}`:actionSummary(action)}{!editable&&action.kind!=="unsupported"?" · 仅可保留或删除":""}</small></div>{draft.actionsEditable&&action.kind!=="unsupported"&&<div className="scene-action-tools">{editable&&!item.collapsible&&<><button type="button" disabled={index===0} onClick={()=>moveAction(index,-1)}>↑</button><button type="button" disabled={index===draft.actions.length-1} onClick={()=>moveAction(index,1)}>↓</button></>}{editable&&<button type="button" onClick={()=>startEdit(action,item.indices)}>修改</button>}<button type="button" onClick={()=>removeActions(item.indices)}>删除</button></div>}</li>})}</ol></section>)}</div>
+          <div className="scene-editor-action-groups">{actionGroups.map(group=><section key={group.key}><header><strong>{group.label}</strong><small>{group.actionCount} 个动作</small></header><div className="scene-editor-action-rooms">{group.rooms.map(room=><section key={room.room}><header><strong>{room.room}</strong><small>{room.actionCount} 个动作</small></header><ol>{room.items.map(item=>{const action=item.actions[0],index=item.indices[0],editable=item.actions.every(candidate=>candidate.kind!=="unsupported"&&candidates.some(device=>device.did===candidate.did));if(!action||index===undefined)return null;return <li className={item.collapsible?"batch":""} key={item.actions.map(candidate=>candidate.clientId).join(":")}><b>{item.collapsible?item.actions.length:index+1}</b><div><strong>{item.collapsible?item.state?`${item.state==="on"?"打开":"关闭"} ${item.actions.length} 盏灯`:`批量设置 ${item.actions.length} 盏灯`:action.deviceName||action.label}</strong><small>{item.collapsible?`${item.actions.map(candidate=>candidate.deviceName).filter(Boolean).join("、")}`:actionSummary(action)}{!editable&&action.kind!=="unsupported"?" · 仅可保留或删除":""}</small></div>{draft.actionsEditable&&action.kind!=="unsupported"&&<div className="scene-action-tools">{editable&&!item.collapsible&&<><button type="button" disabled={index===0} onClick={()=>moveAction(index,-1)}>↑</button><button type="button" disabled={index===draft.actions.length-1} onClick={()=>moveAction(index,1)}>↓</button></>}{editable&&<button type="button" onClick={()=>startEdit(action,item.indices)}>修改</button>}<button type="button" onClick={()=>removeActions(item.indices)}>删除</button></div>}</li>})}</ol></section>)}</div></section>)}</div>
           {!draft.actions.length&&<div className="scene-editor-empty">还没有动作。选择设备并加入至少一个动作后才能创建场景。</div>}
         </section>
-        {draft.actionsEditable&&composerOpen&&<section className={`scene-action-composer ${selectedProperties.length||selectedDids.length?"active":""}`}><div className="scene-editor-section-title"><div><span>＋</span><div><strong>{workingIndices.length?"修改批量动作":"添加批量动作"}</strong><small>先设置属性与状态，再选择所有支持的设备或灯组</small></div></div></div>
+        </>}
+        {draft.actionsEditable&&composerOpen&&<section className={`scene-action-composer scene-action-page ${selectedProperties.length||selectedTargetKeys.length?"active":""}`}><div className="scene-editor-section-title"><div><span>＋</span><div><strong>{workingIndices.length?"修改批量动作":"添加批量动作"}</strong><small>先设置属性与状态，再选择所有支持的设备、灯组或具体按键</small></div></div></div>
           {specsLoading&&<div className="scene-composer-state">正在汇总当前家庭的可写设备能力…</div>}{specsError&&<div className="scene-composer-state error">{specsError}</div>}
           {!specsLoading&&<><div className="scene-kind-tabs"><button type="button" className="selected" disabled={!propertyCatalog.length}>设置批量属性</button><small>共发现 {propertyCatalog.length} 项标准可写属性</small></div>{!propertyCatalog.length&&<div className="scene-composer-state">当前设备没有适合加入手动场景的标准可写属性。</div>}
             <div className="scene-property-list">{selectedProperties.map((property,index)=><div key={property.key}><div><strong>{property.groupLabel} · {property.label}</strong><button type="button" onClick={()=>updateSelectedProperties(selectedProperties.filter((_,item)=>item!==index))}>移除</button></div><PropertyValueEditor property={property.capability} value={property.value} onChange={value=>setPropertyValue(index,value)}/></div>)}</div>
             <div className="scene-add-property"><select value={addPropertyKey} onChange={event=>setAddPropertyKey(event.target.value)}><option value="">选择要批量设置的属性</option>{Array.from(new Set(propertyCatalog.map(item=>item.groupLabel))).map(groupLabel=>{const properties=propertyCatalog.filter(item=>item.groupLabel===groupLabel&&!selectedProperties.some(selected=>selected.key===item.key));return properties.length?<optgroup key={groupLabel} label={groupLabel}>{properties.map(property=>{const count=candidates.filter(device=>supportsSemantics(deviceSpecs[device.did],[{serviceName:property.serviceName,propertyName:property.propertyName,label:property.label,value:firstValue(property.capability)}])).length;return <option key={property.key} value={property.key}>{property.label} · {count} 台支持</option>})}</optgroup>:null})}</select><button type="button" disabled={!addPropertyKey} onClick={addProperty}>加入</button></div>
             <p className="scene-device-help">属性变化后，下方仅保留同时支持全部已选属性和当前数值的目标。</p>
-            <div className="scene-device-picker"><div className="scene-device-filters"><label><span>按房间筛选</span><select value={deviceRoom} onChange={event=>setDeviceRoom(event.target.value)}><option value="">全部房间</option>{deviceRooms.map(room=><option key={room} value={room}>{room}</option>)}</select></label><label><span>按类型筛选</span><select value={deviceKind} onChange={event=>setDeviceKind(event.target.value)}><option value="">全部类型</option>{deviceKinds.map(kind=><option key={kind} value={kind}>{deviceKindLabel(kind)}</option>)}</select></label></div><div className="scene-device-result-title"><span>目标设备与灯组</span><small>{selectedDids.length?`已选 ${selectedDids.length} 个目标`:`${filteredCandidates.length} 个目标支持当前设置`}</small></div><div className="scene-device-options" role="listbox" aria-label="目标设备与灯组" aria-multiselectable="true">{filteredCandidates.map(device=>{const selected=selectedDids.includes(device.did);return <button type="button" role="option" aria-selected={selected} className={selected?"selected":""} key={device.did} onClick={()=>selectDevice(device.did)}><span className="scene-device-icon">{device.icon}</span><span><strong>{device.name}</strong><small>{device.room} · {targetKindLabel(device)}{device.online===false?" · 离线":""}</small></span><i>{selected?"✓":"＋"}</i></button>})}</div>{!filteredCandidates.length&&<div className="scene-device-empty">没有设备或灯组同时支持当前属性和值，请调整设置。</div>}</div>
-            {composerError&&<div className="scene-composer-state error" role="alert">{composerError}</div>}<div className="scene-composer-actions"><button type="button" onClick={()=>{setComposerOpen(false);setWorking(undefined);setWorkingIndices([]);setSelectedDids([]);setSelectedProperties([])}}>取消</button><button type="button" className="primary" disabled={saving||!selectedProperties.length||!selectedDids.length} onClick={()=>void commitWorking()}>{saving?"正在校验设备…":workingIndices.length?`保存 ${selectedDids.length} 个目标动作`:`加入 ${selectedDids.length} 个目标`}</button></div></>}
+            <div className="scene-device-picker"><div className="scene-device-filters"><label><span>按房间筛选</span><select value={deviceRoom} onChange={event=>setDeviceRoom(event.target.value)}><option value="">全部房间</option>{deviceRooms.map(room=><option key={room} value={room}>{room}</option>)}</select></label><label><span>按类型筛选</span><select value={deviceKind} onChange={event=>setDeviceKind(event.target.value)}><option value="">全部类型</option>{deviceKinds.map(kind=><option key={kind} value={kind}>{deviceKindLabel(kind)}</option>)}</select></label></div><div className="scene-device-result-title"><span>目标设备、灯组与按键</span><small>{selectedTargetKeys.length?`已选 ${selectedTargetKeys.length} 个目标`:`${filteredTargetOptions.length} 个目标支持当前设置`}</small></div><div className="scene-device-options" role="listbox" aria-label="目标设备、灯组与按键" aria-multiselectable="true">{filteredTargetOptions.map(option=>{const device=option.device,selected=selectedTargetKeys.includes(option.key);return <button type="button" role="option" aria-selected={selected} className={selected?"selected":""} key={option.key} onClick={()=>selectTarget(option.key)}><span className="scene-device-icon">{device.icon}</span><span><strong>{device.name}{option.groupLabel?` · ${option.groupLabel}`:""}</strong><small>{device.room} · {option.groupLabel?"开关按键":targetKindLabel(device)}{device.online===false?" · 离线":""}</small></span><i>{selected?"✓":"＋"}</i></button>})}</div>{!filteredTargetOptions.length&&<div className="scene-device-empty">没有设备、灯组或按键同时支持当前属性和值，请调整设置。</div>}</div>
+            {composerError&&<div className="scene-composer-state error" role="alert">{composerError}</div>}<div className="scene-composer-actions"><button type="button" onClick={cancelComposer}>取消</button><button type="button" className="primary" disabled={saving||!selectedProperties.length||!selectedTargetKeys.length} onClick={()=>void commitWorking()}>{saving?"正在校验设备…":workingIndices.length?`保存 ${selectedTargetKeys.length} 个目标动作`:`加入 ${selectedTargetKeys.length} 个目标`}</button></div></>}
         </section>}
       </div>
       {error&&<div className="scene-editor-error" role="alert">{error}</div>}
-      <footer><p>保存表示米家云已返回成功并能重新读取到场景。</p><div><button type="button" onClick={close}>取消</button><button type="button" className="primary" disabled={saving||!draft.name.trim()||!sceneId&&!draft.actions.length} onClick={()=>void save()}>{saving?"正在保存…":sceneId?"保存修改":"创建场景"}</button></div></footer>
+      {!composerOpen&&<footer><p>保存表示米家云已返回成功并能重新读取到场景。</p><div><button type="button" onClick={close}>取消</button><button type="button" className="primary" disabled={saving||!draft.name.trim()||!sceneId&&!draft.actions.length} onClick={()=>void save()}>{saving?"正在保存…":sceneId?"保存修改":"创建场景"}</button></div></footer>}
     </>}
-  </section></div>
+  </section>
 }
 
 function PropertyValueEditor({property,value,onChange}:{property?:SpecProperty;value:SceneValue;onChange:(value:SceneValue)=>void}){
