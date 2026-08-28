@@ -15,6 +15,7 @@ export type ManualSceneAction = {
   order: number;
   label: string;
   deviceName?: string;
+  room?: string;
   details: ManualSceneActionDetail[];
 };
 
@@ -99,12 +100,26 @@ function primitive(value: unknown) {
   return "";
 }
 
-function propertyDetail(value: RawScene) {
+function isAirConditioner(device: RawScene | undefined, deviceName: string) {
+  const identity = [device?.model, device?.logicalType, device?.logical_type, device?.name, device?.device_name, deviceName].map(text).join(" ").toLowerCase();
+  return /air[-_ ]?condition|acpartner|\baircon\b|空调/.test(identity);
+}
+
+function airConditionerMode(value: unknown) {
+  const modes = new Map<unknown, string>([[1, "制冷"], [2, "除湿"], [4, "送风"], [8, "制热"]]);
+  return modes.get(value) ?? primitive(value);
+}
+
+function propertyDetail(value: RawScene, device?: RawScene, deviceName = "") {
   const siid = number(value.siid, 0);
   const piid = number(value.piid, 0);
   const formatted = primitive(value.value);
   if (!formatted) return undefined;
   if (piid === 1 && typeof value.value === "boolean") return { kind: "power" as const, label: "电源", value: formatted, state: value.value ? "on" as const : "off" as const };
+  if (siid === 2 && isAirConditioner(device, deviceName)) {
+    if (piid === 2 && typeof value.value === "number") return { kind: "property" as const, label: "工作模式", value: airConditionerMode(value.value) };
+    if (piid === 4 && typeof value.value === "number") return { kind: "property" as const, label: "目标温度", value: `${formatted}°C` };
+  }
   if (siid === 2 && piid === 2 && typeof value.value === "number") return { kind: "brightness" as const, label: "亮度", value: `${formatted}%` };
   if (siid === 2 && piid === 3 && typeof value.value === "number") return { kind: "color-temperature" as const, label: "色温", value: `${formatted} K` };
   return { kind: "property" as const, label: siid && piid ? `属性 ${siid}.${piid}` : "属性", value: formatted };
@@ -117,14 +132,17 @@ function commandLabel(command: string) {
   return command || "执行动作";
 }
 
-function normalizeActions(scene: RawScene): ManualSceneAction[] {
+function normalizeActions(scene: RawScene, roomsByDid: Map<string, string>, devicesByDid: Map<string, RawScene>): ManualSceneAction[] {
   return actionEntries(scene).map((action, index) => {
     const payload = parsedSceneRecord(action.payload_json ?? action.payload);
     const command = text(payload?.command);
     const label = text(action.name) || text(action.action_name) || commandLabel(command);
     const deviceName = text(payload?.device_name) || text(action.device_name);
+    const did = text(payload?.did ?? action.did);
+    const room = roomsByDid.get(did);
+    const device = devicesByDid.get(did);
     const values = Array.isArray(payload?.value) ? payload.value.filter((item): item is RawScene => Boolean(record(item))) : [];
-    const details: ManualSceneActionDetail[] = values.map(propertyDetail).filter((item): item is NonNullable<ReturnType<typeof propertyDetail>> => Boolean(item));
+    const details: ManualSceneActionDetail[] = values.map(value => propertyDetail(value, device, deviceName)).filter((item): item is NonNullable<ReturnType<typeof propertyDetail>> => Boolean(item));
     const delay = number(payload?.delay_time ?? action.delay_time, 0);
     if (delay > 0) details.unshift({ kind: "delay", label: "延时", value: `${delay} 秒` });
     if (!details.length && command && label !== commandLabel(command)) details.push({ kind: "command", label: "方式", value: commandLabel(command) });
@@ -132,6 +150,7 @@ function normalizeActions(scene: RawScene): ManualSceneAction[] {
       order: number(action.order, index + 1),
       label,
       ...(deviceName ? { deviceName } : {}),
+      ...(room ? { room } : {}),
       details,
     };
   }).sort((left, right) => left.order - right.order);
@@ -144,7 +163,18 @@ function enabled(value: unknown) {
   return !["0", "false", "disabled", "off"].includes(String(value).toLowerCase());
 }
 
-export function parseManualScenes(response: Record<string, unknown>, homeId: string): ManualScene[] {
+export function parseManualScenes(response: Record<string, unknown>, homeId: string, devices: XiaomiSceneRecord[] = []): ManualScene[] {
+  const devicesByDid = new Map(devices.flatMap(device => {
+    const deviceHomeId = text(device.homeId ?? device.home_id);
+    const did = text(device.did);
+    return deviceHomeId === homeId && did ? [[did, device] as const] : [];
+  }));
+  const roomsByDid = new Map(devices.flatMap(device => {
+    const deviceHomeId = text(device.homeId ?? device.home_id);
+    const did = text(device.did);
+    const room = text(device.roomName ?? device.room_name);
+    return deviceHomeId === homeId && did && room ? [[did, room] as const] : [];
+  }));
   const scenes = new Map<string, ManualScene>();
   for (const scene of sceneEntries(response)) {
     if (!isManualSceneRecord(scene)) continue;
@@ -154,7 +184,7 @@ export function parseManualScenes(response: Record<string, unknown>, homeId: str
     if (!id || !name || sceneHomeId !== homeId) continue;
     const icon = text(scene.icon ?? scene.icon_url);
     const updatedAt = text(scene.update_time ?? scene.updated_at ?? scene.modify_time);
-    const actions = normalizeActions(scene);
+    const actions = normalizeActions(scene, roomsByDid, devicesByDid);
     scenes.set(id, {
       id,
       homeId,

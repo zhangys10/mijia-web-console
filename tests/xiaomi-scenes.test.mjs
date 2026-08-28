@@ -32,6 +32,7 @@ test("normalizes only manual scenes for the requested home", () => {
           scene_action: { actions: [
             { order: 2, name: "设置灯光", payload_json: { command: "set_properties", device_name: "客厅灯", did: "secret-device", uid: "secret-user", value: [{ siid: 2, piid: 2, value: 80 }, { siid: 2, piid: 3, value: 4000 }] } },
             { order: 1, name: "开", payload_json: JSON.stringify({ command: "set_properties", device_name: "玄关灯", did: "another-secret", value: [{ siid: 2, piid: 1, value: true }] }) },
+            { order: 3, name: "设置空调", payload_json: { command: "set_properties", device_name: "次卧空调", did: "ac-secret", value: [{ siid: 2, piid: 2, value: 1 }, { siid: 2, piid: 1, value: true }, { siid: 2, piid: 4, value: 24 }] } },
           ] },
           update_time: 1234,
           owner_uid: "must-not-leak",
@@ -62,12 +63,19 @@ test("normalizes only manual scenes for the requested home", () => {
     },
   };
 
-  assert.deepEqual(parseManualScenes(response, "100"), [
+  const devices = [
+    { did: "another-secret", homeId: "100", roomName: "玄关" },
+    { did: "secret-device", homeId: "100", roomName: "客厅" },
+    { did: "ac-secret", homeId: "100", roomName: "次卧", model: "xiaomi.aircondition.ma1", name: "次卧空调" },
+    { did: "secret-device", homeId: "200", roomName: "其他家庭" },
+  ];
+  assert.deepEqual(parseManualScenes(response, "100", devices), [
     {
-      id: "11", homeId: "100", name: "回家", icon: "home", enabled: true, actionCount: 2, updatedAt: "1234",
+      id: "11", homeId: "100", name: "回家", icon: "home", enabled: true, actionCount: 3, updatedAt: "1234",
       actions: [
-        { order: 1, label: "开", deviceName: "玄关灯", details: [{ kind: "power", label: "电源", value: "开启", state: "on" }] },
-        { order: 2, label: "设置灯光", deviceName: "客厅灯", details: [{ kind: "brightness", label: "亮度", value: "80%" }, { kind: "color-temperature", label: "色温", value: "4000 K" }] },
+        { order: 1, label: "开", deviceName: "玄关灯", room: "玄关", details: [{ kind: "power", label: "电源", value: "开启", state: "on" }] },
+        { order: 2, label: "设置灯光", deviceName: "客厅灯", room: "客厅", details: [{ kind: "brightness", label: "亮度", value: "80%" }, { kind: "color-temperature", label: "色温", value: "4000 K" }] },
+        { order: 3, label: "设置空调", deviceName: "次卧空调", room: "次卧", details: [{ kind: "property", label: "工作模式", value: "制冷" }, { kind: "power", label: "电源", value: "开启", state: "on" }, { kind: "property", label: "目标温度", value: "24°C" }] },
       ],
     },
     {
@@ -79,7 +87,7 @@ test("normalizes only manual scenes for the requested home", () => {
       ],
     },
   ]);
-  assert.doesNotMatch(JSON.stringify(parseManualScenes(response, "100")), /must-not-leak|secret-device|secret-user|another-secret/);
+  assert.doesNotMatch(JSON.stringify(parseManualScenes(response, "100", devices)), /must-not-leak|secret-device|secret-user|another-secret|ac-secret|其他家庭/);
 });
 
 test("accepts numbered scene maps and rejects unrecognized responses", () => {

@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { listDevices, listHomes, unseal, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
-import { assertHomeAccess, listManualScenes, listRawManualScenes, parseManualScenes } from "../../../../lib/xiaomi-scenes";
+import { assertHomeAccess, listRawManualScenes, parseManualScenes } from "../../../../lib/xiaomi-scenes";
 import { assertBasicSceneDraft, buildCreatePayload, createEditorDraft, sceneDraftMatchesWrite, sceneIdFromEditResponse, sceneRecordId, submitSceneEdit, validateSceneDraftCapabilities } from "../../../../lib/xiaomi-scene-editor";
 
 function validIdentifier(value: string | null) {
@@ -18,7 +18,8 @@ export async function GET(request: NextRequest) {
     const homes = await listHomes(session);
     try { assertHomeAccess(homes, homeId!); }
     catch { return NextResponse.json({ error: "XIAOMI_HOME_NOT_FOUND" }, { status: 404 }); }
-    const scenes = await listManualScenes(session, homeId!);
+    const [rawScenes, devices] = await Promise.all([listRawManualScenes(session, homeId!), listDevices(session).catch(() => ({ devices: [] }))]);
+    const scenes = parseManualScenes({ result: rawScenes }, homeId!, devices.devices);
     return NextResponse.json({ ok: true, homeId, scenes, capturedAt: new Date().toISOString() });
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest) {
       if (candidate && sceneDraftMatchesWrite(await createEditorDraft(candidate, draft.homeId), validated)) created = candidate;
     }
     if (!created) throw new Error("XIAOMI_SCENE_WRITE_NOT_VISIBLE");
-    const scenes = parseManualScenes({ result: { scene_info_list: [created] } }, draft.homeId);
+    const scenes = parseManualScenes({ result: { scene_info_list: [created] } }, draft.homeId, devices.devices);
     return NextResponse.json({ ok: true, scene: scenes[0], created: true }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
