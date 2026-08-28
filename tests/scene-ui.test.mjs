@@ -39,7 +39,7 @@ test("scene cards open details and use a separate execution button", async () =>
   assert.match(sceneCard, /className="scene-action-list"/);
   assert.match(sceneCard, /groupManualSceneActions\(actions,devices\)/, "actions must be grouped using current-home devices");
   assert.match(sceneCard, /className="scene-action-room"/);
-  assert.match(sceneCard, /item\.kind==="power-lights"/, "power-only lights must use the folded presentation");
+  assert.match(sceneCard, /item\.kind==="light-batch"/, "identical light batches must use the folded presentation");
   assert.match(sceneCard, /scene-action-detail \$\{detail\.kind\}/, "action properties must receive semantic styling hooks");
   assert.match(sceneCard, /style=\{sceneActionDetailStyle\(detail\)\}/, "numeric light values must control their visual treatment");
   assert.match(sceneCard, /sceneActionDetailGlyph\(detail\.kind\)/, "action properties must have recognizable icons");
@@ -66,11 +66,14 @@ test("scene editor supports safe create and update workflows", async () => {
   assert.match(source, /按房间筛选/);
   assert.match(source, /按类型筛选/);
   assert.match(source, /className="scene-device-options" role="listbox"/);
-  assert.match(source, /aria-multiselectable=\{isLightDevice/);
+  assert.match(source, /aria-multiselectable="true"/);
   assert.match(source, /selectedDids\.includes\(device\.did\)/);
-  assert.match(source, /Promise\.all\(targets\.map/, "each selected device must load and validate its own specification");
+  assert.match(source, /byModel=new Map<string,Promise<Specification>>/, "capabilities should be deduplicated by model");
+  assert.match(source, /supportsSemantics\(deviceSpecs\[device\.did\],selectedSemantics\)/, "targets must be filtered by selected properties and values");
   assert.match(source, /mapScenePropertySemantics\(semantics,specification\.groups\)/, "batch properties must map by MIoT semantic name");
   assert.match(source, /source\?\.sourceIndex/, "editing a folded group must preserve source action identities");
+  assert.match(source, /isLightGroup\(device\)\?"灯组"/, "light groups must be visible as targets");
+  assert.doesNotMatch(source, /!\/\^group\\\.\*\/i/, "light groups must not be excluded from editable targets");
   assert.match(source, /isSceneWritableProperty\(group\.name,property\)/);
   assert.doesNotMatch(source, /group\.properties\.filter\(property=>property\.writable/);
   assert.doesNotMatch(source, />执行动作</);

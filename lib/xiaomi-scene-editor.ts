@@ -1,7 +1,6 @@
 import { xiaomiRequest, type XiaomiSession } from "./xiaomi-cloud.ts";
 import { getMiotCapabilities } from "./miot-spec.ts";
 import { parseDerivedDeviceId } from "./device-topology.ts";
-import { isDeviceGroupId } from "./device-groups.ts";
 import { isScenePropertyValueSupported, isSceneWritableProperty } from "./xiaomi-scene-properties.ts";
 import {
   parsedSceneRecord,
@@ -389,7 +388,7 @@ export async function validateSceneDraftCapabilities(
   const actions: SceneDraftAction[] = [];
   for (const action of draft.actions) {
     const device = byDid.get(action.did);
-    const virtualTarget = Boolean(parseDerivedDeviceId(action.did) || isDeviceGroupId(action.did));
+    const virtualTarget = Boolean(parseDerivedDeviceId(action.did));
     if (!device || deviceHomeId(device) !== draft.homeId || virtualTarget && !(allowExistingVirtualTargets && action.sourceIndex !== undefined)) throw new Error("XIAOMI_SCENE_DEVICE_NOT_FOUND");
     const model = deviceModel(device);
     if (!model) throw new Error("XIAOMI_SCENE_DEVICE_UNSUPPORTED");

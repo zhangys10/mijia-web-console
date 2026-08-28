@@ -4,7 +4,7 @@ import type { ManualSceneAction } from "./xiaomi-scenes.ts";
 
 export type ManualSceneActionItem =
   | { kind: "action"; action: ManualSceneAction }
-  | { kind: "power-lights"; state: "on" | "off"; actions: ManualSceneAction[]; deviceNames: string[] };
+  | { kind: "light-batch"; state?: "on" | "off"; actions: ManualSceneAction[]; deviceNames: string[] };
 
 export type ManualSceneActionRoom = {
   room: string;
@@ -48,6 +48,20 @@ function manualPowerState(action: ManualSceneAction) {
   return action.details.length === 1 && detail?.kind === "power" && detail.state ? detail.state : undefined;
 }
 
+function valueKey(value: unknown) {
+  return `${typeof value}:${String(value)}`;
+}
+
+function manualActionSignature(action: ManualSceneAction) {
+  if (!action.details.length) return undefined;
+  return action.details.map(detail => `${detail.kind}:${detail.label}:${detail.state ?? ""}:${detail.value}`).join("|");
+}
+
+function draftActionSignature(action: SceneEditorDraft["actions"][number]) {
+  if (action.kind !== "set-properties" || !action.properties?.length) return undefined;
+  return action.properties.map(property => `${property.label || `${property.siid}.${property.piid}`}:${valueKey(property.value)}`).join("|");
+}
+
 function draftPowerState(action: SceneEditorDraft["actions"][number]): "on" | "off" | undefined {
   if (action.kind !== "set-properties" || action.properties?.length !== 1) return undefined;
   const property = action.properties[0];
@@ -67,7 +81,7 @@ export function groupManualSceneActions(actions: ManualSceneAction[], devices: D
   const entries = actions.map(action => {
     const sameRoomMatches = action.deviceName && action.room ? devices.filter(device => device.name === action.deviceName && device.room === action.room) : [];
     const device = sameRoomMatches.length === 1 ? sameRoomMatches[0] : action.deviceName ? byName.get(action.deviceName) : undefined;
-    return { action, device, room: action.room || device?.room || unassignedRoom, state: manualPowerState(action) };
+    return { action, device, room: action.room || device?.room || unassignedRoom, state: manualPowerState(action), signature: manualActionSignature(action) };
   });
   const rooms = roomOrder(Array.from(new Set(entries.map(entry => entry.room))));
   return rooms.map(room => {
@@ -76,11 +90,11 @@ export function groupManualSceneActions(actions: ManualSceneAction[], devices: D
     const items: ManualSceneActionItem[] = [];
     for (const entry of roomEntries) {
       if (consumed.has(entry.action)) continue;
-      if (isLight(entry.device) && entry.state) {
-        const matches = roomEntries.filter(candidate => !consumed.has(candidate.action) && isLight(candidate.device) && candidate.state === entry.state);
+      if (isLight(entry.device) && entry.signature) {
+        const matches = roomEntries.filter(candidate => !consumed.has(candidate.action) && isLight(candidate.device) && candidate.signature === entry.signature);
         if (matches.length > 1 && new Set(matches.map(match => match.action.deviceName)).size === matches.length) {
           matches.forEach(match => consumed.add(match.action));
-          items.push({ kind: "power-lights", state: entry.state, actions: matches.map(match => match.action), deviceNames: matches.map(match => match.action.deviceName ?? match.action.label) });
+          items.push({ kind: "light-batch", ...(entry.state ? { state: entry.state } : {}), actions: matches.map(match => match.action), deviceNames: matches.map(match => match.action.deviceName ?? match.action.label) });
           continue;
         }
       }
@@ -95,7 +109,7 @@ export function groupSceneDraftActions(actions: SceneEditorDraft["actions"], dev
   const byDid = new Map(devices.flatMap(device => device.did ? [[device.did, device] as const] : []));
   const entries = actions.map((action, index) => {
     const device = action.kind === "unsupported" ? undefined : byDid.get(action.did);
-    return { action, index, device, room: device?.room || unassignedRoom, state: draftPowerState(action) };
+    return { action, index, device, room: device?.room || unassignedRoom, state: draftPowerState(action), signature: draftActionSignature(action) };
   });
   const rooms = roomOrder(Array.from(new Set(entries.map(entry => entry.room))));
   return rooms.map(room => {
@@ -104,8 +118,8 @@ export function groupSceneDraftActions(actions: SceneEditorDraft["actions"], dev
     const items: SceneDraftActionItem[] = [];
     for (const entry of roomEntries) {
       if (consumed.has(entry.index)) continue;
-      if (isLight(entry.device) && entry.state) {
-        const matches = roomEntries.filter(candidate => !consumed.has(candidate.index) && isLight(candidate.device) && candidate.state === entry.state);
+      if (isLight(entry.device) && entry.signature) {
+        const matches = roomEntries.filter(candidate => !consumed.has(candidate.index) && isLight(candidate.device) && candidate.signature === entry.signature);
         if (matches.length > 1 && new Set(matches.map(match => match.action.kind === "unsupported" ? "" : match.action.did)).size === matches.length) {
           matches.forEach(match => consumed.add(match.index));
           items.push({ indices: matches.map(match => match.index), actions: matches.map(match => match.action), collapsible: true, state: entry.state });

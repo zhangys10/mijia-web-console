@@ -26,7 +26,7 @@ test("groups scene details by room and folds same-state power-only lights", () =
     manual(4, "客厅空调", [power("off")]),
   ], devices);
   assert.deepEqual(rooms.map(room => [room.room, room.actionCount]), [["客厅", 3], ["主卧", 1]]);
-  assert.equal(rooms[0].items[0].kind, "power-lights");
+  assert.equal(rooms[0].items[0].kind, "light-batch");
   assert.deepEqual(rooms[0].items[0].deviceNames, ["灯带", "射灯"]);
   assert.equal(rooms[0].items[1].kind, "action", "non-light power actions must remain separate");
 });
@@ -50,7 +50,19 @@ test("uses a sanitized server room to disambiguate same-name devices without exp
   ], ambiguous);
   assert.equal(rooms.length, 1);
   assert.equal(rooms[0].room, "客厅");
-  assert.equal(rooms[0].items[0].kind, "power-lights");
+  assert.equal(rooms[0].items[0].kind, "light-batch");
+});
+
+test("folds identical multi-property light batches but not different values", () => {
+  const details = [power("on"), { kind: "brightness", label: "亮度", value: "35%" }, { kind: "color-temperature", label: "色温", value: "4000 K" }];
+  const rooms = groupManualSceneActions([
+    manual(1, "灯带", details),
+    manual(2, "射灯", structuredClone(details)),
+    manual(3, "床头灯", [power("on"), { kind: "brightness", label: "亮度", value: "50%" }]),
+  ], devices);
+  assert.equal(rooms.find(room => room.room === "客厅").items[0].kind, "light-batch");
+  assert.equal(rooms.find(room => room.room === "客厅").items[0].state, undefined);
+  assert.equal(rooms.find(room => room.room === "主卧").items[0].kind, "action");
 });
 
 test("editor groups use DID identity and keep the underlying action indices", () => {
