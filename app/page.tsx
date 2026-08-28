@@ -9,6 +9,7 @@ import { classifyDeviceKind, findPhysicalDevice, inferHardwareRole, isControlDev
 import { buildBindingActionParameters, listSwitchBindingTargets, type BindingAction, type SwitchBindingCapability, type SwitchBindingTarget } from "../lib/switch-bindings";
 import { findSwitchGroupChannel, switchGroupConnection, switchGroupMatches } from "../lib/switch-channel-mode";
 import type { ManualScene } from "../lib/xiaomi-scenes";
+import { groupManualSceneActions, type ManualSceneActionItem } from "../lib/scene-action-groups";
 import SceneEditor from "./scene-editor";
 
 type Device = ManagedDevice;
@@ -269,7 +270,7 @@ export default function Home(){
 
     {selectedScene&&<div className="modal-bg" onMouseDown={()=>setSelectedScene(null)}><div className="modal scene-modal" onMouseDown={event=>event.stopPropagation()}>
       <button className="close" aria-label="关闭场景详情" onClick={()=>setSelectedScene(null)}>×</button>
-      <div className="scene-modal-scroll"><SceneInformation scene={selectedScene} homeName={homes.find(home=>home.id===selectedScene.homeId)?.name||"当前家庭"}/></div>
+      <div className="scene-modal-scroll"><SceneInformation scene={selectedScene} homeName={homes.find(home=>home.id===selectedScene.homeId)?.name||"当前家庭"} devices={homeDevices}/></div>
       <div className="scene-modal-actions">{connection.connected&&<button className="scene-modal-edit" onClick={()=>setSceneEditor({sceneId:selectedScene.id})}>编辑场景</button>}<button className="scene-modal-run" disabled={!selectedScene.enabled||Boolean(sceneOperating)} aria-busy={sceneOperating===selectedScene.id} onClick={()=>void runScene(selectedScene)}>{sceneOperating===selectedScene.id?"执行中…":connection.connected?"执行场景":"执行演示"}</button></div>
     </div></div>}
     {sceneEditor&&<SceneEditor homeId={selectedHome} homeName={homes.find(home=>home.id===selectedHome)?.name||"当前家庭"} devices={homeDevices} sceneId={sceneEditor.sceneId} onClose={()=>setSceneEditor(null)} onSaved={sceneSaved}/>}
@@ -375,14 +376,19 @@ function SceneCard({scene,tone,connected,running,blocked,compact,onOpen,onRun}:{
   <button type="button" className="scene-card-open" aria-label={`查看场景 ${scene.name}`} onClick={onOpen}><span className={tone}>{sceneGlyph(scene)}</span><div><strong>{scene.name}</strong><small>{scene.enabled?`${scene.actionCount} 个动作 · 查看详情`:"已停用 · 查看详情"}</small></div><b>›</b></button>
   <button type="button" className="scene-run" aria-label={`${connected?"执行":"演示"}场景 ${scene.name}`} disabled={!scene.enabled||blocked} onClick={()=>onRun(scene)}>{running?"执行中…":connected?"执行":"演示"}</button>
 </article>}
-function SceneInformation({scene,homeName}:{scene:ManualScene;homeName:string}){const actions=scene.actions??[];return <>
+function SceneInformation({scene,homeName,devices}:{scene:ManualScene;homeName:string;devices:Device[]}){const actions=scene.actions,rooms=useMemo(()=>groupManualSceneActions(actions,devices),[actions,devices]);return <>
   <div className="scene-modal-head"><span>{sceneGlyph(scene)}</span><div><small>手动场景</small><h2>{scene.name}</h2><p>{homeName}</p></div></div>
   <div className="scene-details"><div><small>动作数量</small><strong>{scene.actionCount}</strong></div><div><small>场景状态</small><strong>{scene.enabled?"可执行":"已停用"}</strong></div>{scene.updatedAt&&<div><small>更新时间</small><strong>{formatSceneTime(scene.updatedAt)}</strong></div>}</div>
-  <section className="scene-flow-section"><div className="scene-flow-title"><div><span>DO</span><strong>动作序列</strong></div><small>按米家场景顺序</small></div>
-    {actions.length?<ol className="scene-action-list">{actions.map((action,index)=><li key={`${action.order}:${action.deviceName||"scene"}:${index}`}><span>{action.order}</span><div><strong>{action.deviceName||action.label}</strong>{action.deviceName&&<small>{action.label}</small>}{action.details.length>0&&<div className="scene-action-details">{action.details.map((detail,detailIndex)=><em className={`scene-action-detail ${detail.kind}${detail.state?` ${detail.state}`:""}`} style={sceneActionDetailStyle(detail)} key={`${detail.kind}:${detail.label}:${detailIndex}`}><i>{sceneActionDetailGlyph(detail.kind)}</i><span>{detail.label}</span><b>{detail.value}</b></em>)}</div>}</div></li>)}</ol>:<div className="scene-action-empty">米家仅返回了动作数量，未提供可展示的动作明细。</div>}
+  <section className="scene-flow-section"><div className="scene-flow-title"><div><span>DO</span><strong>动作序列</strong></div><small>按房间归类 · 保留动作编号</small></div>
+    {actions.length?<div className="scene-action-rooms">{rooms.map(room=><section className="scene-action-room" key={room.room}><header><strong>{room.room}</strong><small>{room.actionCount} 个动作</small></header><ol className="scene-action-list">{room.items.map((item,index)=><SceneActionItem item={item} key={`${room.room}:${item.kind==="power-lights"?item.actions[0]?.order:item.action.order}:${index}`}/>)}</ol></section>)}</div>:<div className="scene-action-empty">米家仅返回了动作数量，未提供可展示的动作明细。</div>}
   </section>
   <p className="scene-submit-note">下发只表示米家云已接收指令，不代表所有设备已经实际执行。</p>
 </>}
+function SceneActionItem({item}:{item:ManualSceneActionItem}){
+  if(item.kind==="power-lights")return <li className="scene-action-batch"><span>{item.actions[0]?.order}</span><div><strong>{item.state==="on"?"打开":"关闭"} {item.actions.length} 盏灯</strong><small>{item.state==="on"?"统一开启":"统一关闭"} · 可展开查看设备</small><SceneActionDetails action={item.actions[0]}/><details><summary>查看 {item.deviceNames.length} 台设备</summary><div>{item.deviceNames.map((name,index)=><span key={`${name}:${index}`}>{name}</span>)}</div></details></div></li>;
+  const action=item.action;return <li><span>{action.order}</span><div><strong>{action.deviceName||action.label}</strong>{action.deviceName&&<small>{action.label}</small>}<SceneActionDetails action={action}/></div></li>;
+}
+function SceneActionDetails({action}:{action:ManualScene["actions"][number]}){return action.details.length?<div className="scene-action-details">{action.details.map((detail,detailIndex)=><em className={`scene-action-detail ${detail.kind}${detail.state?` ${detail.state}`:""}`} style={sceneActionDetailStyle(detail)} key={`${detail.kind}:${detail.label}:${detailIndex}`}><i>{sceneActionDetailGlyph(detail.kind)}</i><span>{detail.label}</span><b>{detail.value}</b></em>)}</div>:null}
 function SceneStateMessage({loading,error,empty}:{loading?:boolean;error?:string;empty?:boolean}){if(!loading&&!error&&!empty)return null;return <div className={`scene-state${error?" error":""}`}>{loading?"正在读取米家场景…":error?`场景读取失败：${friendlyError(error)}`:"当前家庭没有可用的手动场景"}</div>}
 function sceneGlyph(scene:ManualScene){return scene.icon&&scene.icon.length<=2?scene.icon:"✦"}
 function sceneActionDetailGlyph(kind:ManualScene["actions"][number]["details"][number]["kind"]){return kind==="power"?"⏻":kind==="brightness"?"☀":kind==="color-temperature"?"◐":kind==="delay"?"◷":"≡"}

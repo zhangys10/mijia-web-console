@@ -2,7 +2,7 @@ import { xiaomiRequest, type XiaomiSession } from "./xiaomi-cloud.ts";
 import { getMiotCapabilities } from "./miot-spec.ts";
 import { parseDerivedDeviceId } from "./device-topology.ts";
 import { isDeviceGroupId } from "./device-groups.ts";
-import { isSceneWritableProperty } from "./xiaomi-scene-properties.ts";
+import { isScenePropertyValueSupported, isSceneWritableProperty } from "./xiaomi-scene-properties.ts";
 import {
   parsedSceneRecord,
   type XiaomiRequester,
@@ -377,23 +377,11 @@ function deviceUrn(device: XiaomiSceneRecord) {
   return typeof value === "string" && value.startsWith("urn:") ? value : undefined;
 }
 
-function validPropertyValue(property: Awaited<ReturnType<CapabilityLoader>>["groups"][number]["properties"][number], value: SceneValue) {
-  if (property.format === "bool" && typeof value !== "boolean") return false;
-  if (["float", "int8", "int16", "int32", "uint8", "uint16", "uint32"].includes(property.format) && typeof value !== "number") return false;
-  if (property.format === "string" && typeof value !== "string") return false;
-  if (property.choices?.length && !property.choices.some(choice => choice.value === value)) return false;
-  if (property.range) {
-    if (typeof value !== "number" || value < property.range.min || value > property.range.max) return false;
-    const steps = (value - property.range.min) / property.range.step;
-    if (Math.abs(steps - Math.round(steps)) > 1e-7) return false;
-  }
-  return true;
-}
-
 export async function validateSceneDraftCapabilities(
   draft: SceneWriteDraft,
   devices: XiaomiSceneRecord[],
   loadCapabilities: CapabilityLoader = getMiotCapabilities,
+  allowExistingVirtualTargets = false,
 ) {
   if (!draft.actions) return draft;
   const byDid = new Map(devices.map(device => [text(device.did), device]));
@@ -401,7 +389,8 @@ export async function validateSceneDraftCapabilities(
   const actions: SceneDraftAction[] = [];
   for (const action of draft.actions) {
     const device = byDid.get(action.did);
-    if (!device || deviceHomeId(device) !== draft.homeId || parseDerivedDeviceId(action.did) || isDeviceGroupId(action.did)) throw new Error("XIAOMI_SCENE_DEVICE_NOT_FOUND");
+    const virtualTarget = Boolean(parseDerivedDeviceId(action.did) || isDeviceGroupId(action.did));
+    if (!device || deviceHomeId(device) !== draft.homeId || virtualTarget && !(allowExistingVirtualTargets && action.sourceIndex !== undefined)) throw new Error("XIAOMI_SCENE_DEVICE_NOT_FOUND");
     const model = deviceModel(device);
     if (!model) throw new Error("XIAOMI_SCENE_DEVICE_UNSUPPORTED");
     const urn = deviceUrn(device);
@@ -415,7 +404,7 @@ export async function validateSceneDraftCapabilities(
       for (const requested of action.properties ?? []) {
         const group = specification.groups.find(item => item.siid === requested.siid);
         const property = group?.properties.find(item => item.piid === requested.piid);
-        if (!group || !property || !isSceneWritableProperty(group.name, property) || !validPropertyValue(property, requested.value)) throw new Error("XIAOMI_SCENE_PROPERTY_UNSUPPORTED");
+        if (!group || !property || !isSceneWritableProperty(group.name, property) || !isScenePropertyValueSupported(property, requested.value)) throw new Error("XIAOMI_SCENE_PROPERTY_UNSUPPORTED");
       }
     } else throw new Error("XIAOMI_SCENE_ACTION_UNSUPPORTED");
     actions.push({

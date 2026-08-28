@@ -13,7 +13,7 @@ import {
   submitSceneEdit,
   validateSceneDraftCapabilities,
 } from "../lib/xiaomi-scene-editor.ts";
-import { isSceneWritableProperty } from "../lib/xiaomi-scene-properties.ts";
+import { isScenePropertyValueSupported, isSceneWritableProperty, mapScenePropertySemantics, scenePropertySemantics } from "../lib/xiaomi-scene-properties.ts";
 
 const modernScene = {
   scene_id: "scene-1",
@@ -126,6 +126,11 @@ test("validates scene drafts and checks device MIoT capabilities server-side", a
   assert.throws(() => assertBasicSceneDraft({ homeId: "home-1", name: "不支持", actions: [{ clientId: "one", kind: "invoke-action", did: "light-1", deviceName: "灯", model: "vendor.light.v1", label: "切换", siid: 2, aiid: 1 }] }, false), /INVALID_SCENE_ACTION/);
   await assert.rejects(validateSceneDraftCapabilities({ ...draft, homeId: "home-2" }, [{ did: "light-1", homeId: "home-1", model: "vendor.light.v1" }], async () => { throw new Error("must not load"); }), /XIAOMI_SCENE_DEVICE_NOT_FOUND/);
   await assert.rejects(validateSceneDraftCapabilities({ ...draft, actions: [{ ...draft.actions[0], properties: [{ siid: 2, piid: 1, value: "not-boolean" }] }] }, [{ did: "light-1", homeId: "home-1", model: "vendor.light.v1" }], async () => ({ model: "vendor.light.v1", urn: "urn:test", description: "灯", groups: [{ key: "2", name: "light", label: "灯", siid: 2, properties: [{ key: "2.1", name: "on", label: "开关", siid: 2, piid: 1, format: "bool", readable: true, writable: true, notify: true }], actions: [], events: [] }] })), /XIAOMI_SCENE_PROPERTY_UNSUPPORTED/);
+  const virtualDraft = { ...draft, actions: [{ ...draft.actions[0], did: "group.light-1", sourceIndex: 0 }] };
+  const virtualDevices = [{ did: "group.light-1", homeId: "home-1", name: "灯组", model: "vendor.light.v1" }];
+  const loader = async () => ({ model: "vendor.light.v1", urn: "urn:test", description: "灯", groups: [{ key: "2", name: "light", label: "灯", siid: 2, properties: [{ key: "2.1", name: "on", label: "开关", siid: 2, piid: 1, format: "bool", readable: true, writable: true, notify: true }], actions: [], events: [] }] });
+  await assert.rejects(validateSceneDraftCapabilities(virtualDraft, virtualDevices, loader), /XIAOMI_SCENE_DEVICE_NOT_FOUND/, "new scenes cannot forge virtual targets");
+  await assert.doesNotReject(validateSceneDraftCapabilities(virtualDraft, virtualDevices, loader, true), "an authenticated update may preserve an original virtual target");
 });
 
 test("exposes only standard user-facing properties with a safe value editor", () => {
@@ -135,6 +140,26 @@ test("exposes only standard user-facing properties with a safe value editor", ()
   assert.equal(isSceneWritableProperty("custom-service", { ...property, name: "on", format: "bool", range: undefined }), false);
   assert.equal(isSceneWritableProperty("light", { ...property, readable: false }), false);
   assert.equal(isSceneWritableProperty("light", { ...property, range: undefined }), false);
+  assert.equal(isScenePropertyValueSupported(property, 50), true);
+  assert.equal(isScenePropertyValueSupported(property, 50.5), false, "range step must be enforced");
+  assert.equal(isScenePropertyValueSupported(property, 101), false);
+});
+
+test("maps batch light values by semantic names instead of copying device-specific MIoT ids", () => {
+  const reference = [{ name: "light", properties: [
+    { name: "on", label: "开关", siid: 2, piid: 1, format: "bool", readable: true, writable: true },
+    { name: "brightness", label: "亮度", siid: 2, piid: 2, format: "uint8", readable: true, writable: true, range: { min: 1, max: 100, step: 1 } },
+  ] }];
+  const target = [{ name: "light", properties: [
+    { name: "on", label: "开关", siid: 3, piid: 5, format: "bool", readable: true, writable: true },
+    { name: "brightness", label: "亮度", siid: 3, piid: 8, format: "uint8", readable: true, writable: true, range: { min: 1, max: 100, step: 1 } },
+  ] }];
+  const semantics = scenePropertySemantics([{ siid: 2, piid: 1, value: true }, { siid: 2, piid: 2, value: 35 }], reference);
+  assert.deepEqual(mapScenePropertySemantics(semantics, target), [
+    { siid: 3, piid: 5, value: true, label: "开关" },
+    { siid: 3, piid: 8, value: 35, label: "亮度" },
+  ]);
+  assert.equal(mapScenePropertySemantics(semantics, [{ name: "light", properties: target[0].properties.slice(0, 1) }]), undefined);
 });
 
 test("submits the exact AppSceneService Edit endpoint and recognizes returned ids", async () => {

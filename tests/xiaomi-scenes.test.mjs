@@ -62,12 +62,17 @@ test("normalizes only manual scenes for the requested home", () => {
     },
   };
 
-  assert.deepEqual(parseManualScenes(response, "100"), [
+  const devices = [
+    { did: "another-secret", homeId: "100", roomName: "玄关" },
+    { did: "secret-device", homeId: "100", roomName: "客厅" },
+    { did: "secret-device", homeId: "200", roomName: "其他家庭" },
+  ];
+  assert.deepEqual(parseManualScenes(response, "100", devices), [
     {
       id: "11", homeId: "100", name: "回家", icon: "home", enabled: true, actionCount: 2, updatedAt: "1234",
       actions: [
-        { order: 1, label: "开", deviceName: "玄关灯", details: [{ kind: "power", label: "电源", value: "开启", state: "on" }] },
-        { order: 2, label: "设置灯光", deviceName: "客厅灯", details: [{ kind: "brightness", label: "亮度", value: "80%" }, { kind: "color-temperature", label: "色温", value: "4000 K" }] },
+        { order: 1, label: "开", deviceName: "玄关灯", room: "玄关", details: [{ kind: "power", label: "电源", value: "开启", state: "on" }] },
+        { order: 2, label: "设置灯光", deviceName: "客厅灯", room: "客厅", details: [{ kind: "brightness", label: "亮度", value: "80%" }, { kind: "color-temperature", label: "色温", value: "4000 K" }] },
       ],
     },
     {
@@ -79,7 +84,7 @@ test("normalizes only manual scenes for the requested home", () => {
       ],
     },
   ]);
-  assert.doesNotMatch(JSON.stringify(parseManualScenes(response, "100")), /must-not-leak|secret-device|secret-user|another-secret/);
+  assert.doesNotMatch(JSON.stringify(parseManualScenes(response, "100", devices)), /must-not-leak|secret-device|secret-user|another-secret|其他家庭/);
 });
 
 test("accepts numbered scene maps and rejects unrecognized responses", () => {

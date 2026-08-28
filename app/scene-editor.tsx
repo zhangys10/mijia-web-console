@@ -4,8 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ManagedDevice } from "../lib/device-management";
 import type { ManualScene } from "../lib/xiaomi-scenes";
 import type { SceneDraftAction, SceneEditorDraft, SceneValue } from "../lib/xiaomi-scene-editor";
-import { isSceneWritableProperty } from "../lib/xiaomi-scene-properties";
+import { isSceneWritableProperty, mapScenePropertySemantics, scenePropertySemantics } from "../lib/xiaomi-scene-properties";
 import { parseDerivedDeviceId } from "../lib/device-topology";
+import { groupSceneDraftActions } from "../lib/scene-action-groups";
 
 type SpecProperty = { key:string;name:string;label:string;siid:number;piid:number;format:string;readable:boolean;writable:boolean;unit?:string;choices?:Array<{value:SceneValue;label:string}>;range?:{min:number;max:number;step:number} };
 type SpecGroup = { key:string;name:string;label:string;properties:SpecProperty[] };
@@ -56,6 +57,8 @@ function deviceKindGroup(kind:string) {
   return kind;
 }
 
+function isLightDevice(device:ManagedDevice|undefined){return device?.kind==="light"||device?.kind==="lamp"}
+
 function actionSummary(action: SceneEditorDraft["actions"][number]) {
   if (action.kind === "set-properties") return `${action.properties?.length ?? 0} 个设备属性`;
   if (action.kind === "invoke-action") return action.label;
@@ -71,8 +74,10 @@ export default function SceneEditor({ homeId, homeName, devices, sceneId, onClos
   const [actionsDirty,setActionsDirty]=useState(false);
   const [composerOpen,setComposerOpen]=useState(!sceneId);
   const [working,setWorking]=useState<SceneDraftAction|undefined>();
-  const [workingIndex,setWorkingIndex]=useState<number|undefined>();
+  const [workingIndices,setWorkingIndices]=useState<number[]>([]);
+  const [selectedDids,setSelectedDids]=useState<string[]>([]);
   const [spec,setSpec]=useState<Specification>({loading:false,groups:[]});
+  const [composerError,setComposerError]=useState("");
   const [addPropertyKey,setAddPropertyKey]=useState("");
   const [deviceRoom,setDeviceRoom]=useState("");
   const [deviceKind,setDeviceKind]=useState("");
@@ -81,6 +86,7 @@ export default function SceneEditor({ homeId, homeName, devices, sceneId, onClos
   const deviceRooms=useMemo(()=>Array.from(new Set(candidates.map(device=>device.room))).sort((left,right)=>left.localeCompare(right,"zh-CN")),[candidates]);
   const deviceKinds=useMemo(()=>Array.from(new Set(candidates.map(device=>deviceKindGroup(device.kind)))).sort((left,right)=>deviceKindLabel(left).localeCompare(deviceKindLabel(right),"zh-CN")),[candidates]);
   const filteredCandidates=useMemo(()=>candidates.filter(device=>(!deviceRoom||device.room===deviceRoom)&&(!deviceKind||deviceKindGroup(device.kind)===deviceKind)),[candidates,deviceKind,deviceRoom]);
+  const actionRooms=useMemo(()=>groupSceneDraftActions(draft?.actions??[],devices.filter(device=>device.homeId===homeId)),[devices,draft?.actions,homeId]);
   const writable=spec.groups.flatMap(group=>group.properties.filter(property=>isSceneWritableProperty(group.name,property)));
 
   useEffect(()=>{
@@ -93,30 +99,41 @@ export default function SceneEditor({ homeId, homeName, devices, sceneId, onClos
     return()=>{active=false};
   },[homeId,sceneId]);
 
-  async function loadSpecification(device:ManagedDevice){
-    const id=++requestId.current;
-    setSpec({loading:true,groups:[]});setAddPropertyKey("");
+  async function fetchSpecification(device:ManagedDevice):Promise<Specification>{
     try{
       const query=new URLSearchParams({model:device.detail});if(device.urn)query.set("urn",device.urn);
       const response=await fetch(`/api/xiaomi/spec?${query}`);const data=await response.json();
       if(!response.ok||!data.ok)throw new Error(data.error||"MIOT_SPEC_UNAVAILABLE");
-      if(id===requestId.current)setSpec({loading:false,groups:Array.isArray(data.groups)?data.groups:[]});
-    }catch(reason){if(id===requestId.current)setSpec({loading:false,groups:[],error:reason instanceof Error?reason.message:"MIOT_SPEC_UNAVAILABLE"})}
+      return {loading:false,groups:Array.isArray(data.groups)?data.groups:[]};
+    }catch(reason){return {loading:false,groups:[],error:reason instanceof Error?reason.message:"MIOT_SPEC_UNAVAILABLE"}}
+  }
+
+  async function loadSpecification(device:ManagedDevice){
+    const id=++requestId.current;
+    setSpec({loading:true,groups:[]});setAddPropertyKey("");setComposerError("");
+    const result=await fetchSpecification(device);
+    if(id===requestId.current)setSpec(result);
   }
 
   function selectDevice(did:string){
     const device=candidates.find(item=>item.did===did);if(!device?.did)return;
+    const reference=candidates.find(item=>item.did===working?.did);
+    if(working&&isLightDevice(reference)&&isLightDevice(device)){
+      setSelectedDids(current=>current.includes(did)?current.length>1?current.filter(item=>item!==did):current:[...current,did]);
+      return;
+    }
     const next:SceneDraftAction={clientId:working?.clientId||newActionId(),kind:"set-properties",did:device.did,deviceName:device.name,model:device.detail,label:"设置设备属性",properties:[]};
-    setWorking(next);void loadSpecification(device);
+    setWorking(next);setSelectedDids([device.did]);void loadSpecification(device);
   }
 
   function startAdd(){
-    setComposerOpen(true);setWorkingIndex(undefined);setWorking(undefined);setSpec({loading:false,groups:[]});setAddPropertyKey("");setDeviceRoom("");setDeviceKind("");
+    setComposerOpen(true);setWorkingIndices([]);setSelectedDids([]);setWorking(undefined);setSpec({loading:false,groups:[]});setAddPropertyKey("");setDeviceRoom("");setDeviceKind("");setComposerError("");
   }
 
-  function startEdit(action:SceneDraftAction,index:number){
+  function startEdit(action:SceneDraftAction,indices:number[]){
     const device=candidates.find(item=>item.did===action.did);
-    setComposerOpen(true);setWorkingIndex(index);setWorking({...structuredClone(action),...(device?{deviceName:device.name,model:device.detail}:{})});setAddPropertyKey("");
+    const dids=indices.flatMap(index=>{const item=draft?.actions[index];return item&&item.kind!=="unsupported"?[item.did]:[]});
+    setComposerOpen(true);setWorkingIndices(indices);setSelectedDids(Array.from(new Set(dids)));setWorking({...structuredClone(action),...(device?{deviceName:device.name,model:device.detail}:{})});setAddPropertyKey("");setComposerError("");
     if(device){setDeviceRoom(device.room);setDeviceKind(deviceKindGroup(device.kind));void loadSpecification(device)}
   }
 
@@ -132,15 +149,35 @@ export default function SceneEditor({ homeId, homeName, devices, sceneId, onClos
     setWorking({...working,properties:(working.properties??[]).map((property,itemIndex)=>itemIndex===index?{...property,value}:property)});
   }
 
-  function commitWorking(){
-    if(!draft||!working)return;
+  async function commitWorking(){
+    if(!draft||!working||saving)return;
     if(working.kind!=="set-properties"||!working.properties?.length)return;
-    const actions=[...draft.actions];
-    if(workingIndex===undefined)actions.push(working);else actions[workingIndex]=working;
-    setDraft({...draft,actions});setComposerOpen(false);setWorking(undefined);setWorkingIndex(undefined);setDirty(true);setActionsDirty(true);
+    const targets=selectedDids.flatMap(did=>{const device=candidates.find(item=>item.did===did);return device?[device]:[]});
+    if(!targets.length)return;
+    const semantics=scenePropertySemantics(working.properties,spec.groups);
+    if(!semantics){setComposerError("无法识别原动作中的属性，请重新选择目标设备和属性。");return}
+    const nextCount=draft.actions.length-workingIndices.length+targets.length;
+    if(nextCount>64){setComposerError("场景最多支持 64 个真实动作，请减少目标设备。");return}
+    setSaving(true);setComposerError("");
+    try{
+      const targetSpecs=await Promise.all(targets.map(async device=>({device,specification:device.did===working.did?spec:await fetchSpecification(device)})));
+      const existing=new Map(workingIndices.flatMap(index=>{const action=draft.actions[index];return action&&action.kind!=="unsupported"?[[action.did,action] as const]:[]}));
+      const expanded:SceneDraftAction[]=targetSpecs.map(({device,specification})=>{
+        if(specification.error)throw new Error(`${device.name} 的设备能力暂不可用`);
+        const properties=mapScenePropertySemantics(semantics,specification.groups);
+        if(!properties)throw new Error(`${device.name} 不支持全部所选属性`);
+        const source=existing.get(device.did!);
+        return {clientId:source?.clientId||newActionId(),...(source?.sourceIndex===undefined?{}:{sourceIndex:source.sourceIndex}),kind:"set-properties",did:device.did!,deviceName:device.name,model:device.detail,label:"设置设备属性",properties};
+      });
+      const removed=new Set(workingIndices),actions=draft.actions.filter((_,index)=>!removed.has(index));
+      const insertion=workingIndices.length?Math.min(...workingIndices):actions.length;
+      actions.splice(insertion,0,...expanded);
+      setDraft({...draft,actions});setComposerOpen(false);setWorking(undefined);setWorkingIndices([]);setSelectedDids([]);setDirty(true);setActionsDirty(true);
+    }catch(reason){setComposerError(reason instanceof Error?reason.message:"批量动作生成失败")}
+    finally{setSaving(false)}
   }
 
-  function removeAction(index:number){if(!draft)return;setDraft({...draft,actions:draft.actions.filter((_,item)=>item!==index)});setDirty(true);setActionsDirty(true)}
+  function removeActions(indices:number[]){if(!draft)return;const removed=new Set(indices);setDraft({...draft,actions:draft.actions.filter((_,item)=>!removed.has(item))});setDirty(true);setActionsDirty(true)}
   function moveAction(index:number,direction:-1|1){if(!draft)return;const target=index+direction;if(target<0||target>=draft.actions.length)return;const actions=[...draft.actions];[actions[index],actions[target]]=[actions[target],actions[index]];setDraft({...draft,actions});setDirty(true);setActionsDirty(true)}
   function close(){if(!dirty||window.confirm("放弃尚未保存的场景修改？"))onClose()}
 
@@ -166,16 +203,16 @@ export default function SceneEditor({ homeId, homeName, devices, sceneId, onClos
       <div className="scene-editor-scroll">
         <section className="scene-editor-basics"><label><span>场景名称</span><input maxLength={50} value={draft.name} placeholder="例如：回家模式" onChange={event=>{setDraft({...draft,name:event.target.value});setDirty(true)}}/></label></section>
         {!draft.actionsEditable&&<div className="scene-editor-warning"><strong>动作保持只读</strong><p>这个场景包含当前版本无法安全重建的动作。你仍可修改名称，原始动作会完整保留。</p></div>}
-        <section className="scene-editor-actions"><div className="scene-editor-section-title"><div><span>DO</span><div><strong>动作序列</strong><small>{draft.actions.length} 个动作</small></div></div>{draft.actionsEditable&&<button type="button" onClick={startAdd}>＋ 添加动作</button>}</div>
-          <ol>{draft.actions.map((action,index)=><li key={action.clientId}><b>{index+1}</b><div><strong>{action.deviceName||action.label}</strong><small>{actionSummary(action)}</small></div>{draft.actionsEditable&&action.kind!=="unsupported"&&<div className="scene-action-tools"><button type="button" disabled={index===0} onClick={()=>moveAction(index,-1)}>↑</button><button type="button" disabled={index===draft.actions.length-1} onClick={()=>moveAction(index,1)}>↓</button><button type="button" onClick={()=>startEdit(action,index)}>修改</button><button type="button" onClick={()=>removeAction(index)}>删除</button></div>}</li>)}</ol>
+        <section className="scene-editor-actions"><div className="scene-editor-section-title"><div><span>DO</span><div><strong>动作序列</strong><small>{draft.actions.length} 个真实动作</small></div></div>{draft.actionsEditable&&<button type="button" onClick={startAdd}>＋ 添加动作</button>}</div>
+          <div className="scene-editor-action-rooms">{actionRooms.map(room=><section key={room.room}><header><strong>{room.room}</strong><small>{room.actionCount} 个动作</small></header><ol>{room.items.map(item=>{const action=item.actions[0],index=item.indices[0],editable=item.actions.every(candidate=>candidate.kind!=="unsupported"&&candidates.some(device=>device.did===candidate.did));if(!action||index===undefined)return null;return <li className={item.collapsible?"batch":""} key={item.actions.map(candidate=>candidate.clientId).join(":")}><b>{item.collapsible?item.actions.length:index+1}</b><div><strong>{item.collapsible?`${item.state==="on"?"打开":"关闭"} ${item.actions.length} 盏灯`:action.deviceName||action.label}</strong><small>{item.collapsible?`${item.actions.map(candidate=>candidate.deviceName).filter(Boolean).join("、")}`:actionSummary(action)}{!editable&&action.kind!=="unsupported"?" · 仅可保留或删除":""}</small></div>{draft.actionsEditable&&action.kind!=="unsupported"&&<div className="scene-action-tools">{editable&&!item.collapsible&&<><button type="button" disabled={index===0} onClick={()=>moveAction(index,-1)}>↑</button><button type="button" disabled={index===draft.actions.length-1} onClick={()=>moveAction(index,1)}>↓</button></>}{editable&&<button type="button" onClick={()=>startEdit(action,item.indices)}>修改</button>}<button type="button" onClick={()=>removeActions(item.indices)}>删除</button></div>}</li>})}</ol></section>)}</div>
           {!draft.actions.length&&<div className="scene-editor-empty">还没有动作。选择设备并加入至少一个动作后才能创建场景。</div>}
         </section>
-        {draft.actionsEditable&&composerOpen&&<section className={`scene-action-composer ${working?"active":""}`}><div className="scene-editor-section-title"><div><span>＋</span><div><strong>{workingIndex===undefined?"添加动作":"修改动作"}</strong><small>仅展示设备公开且可安全写入的能力</small></div></div></div>
-          <div className="scene-device-picker"><div className="scene-device-filters"><label><span>按房间筛选</span><select value={deviceRoom} onChange={event=>setDeviceRoom(event.target.value)}><option value="">全部房间</option>{deviceRooms.map(room=><option key={room} value={room}>{room}</option>)}</select></label><label><span>按类型筛选</span><select value={deviceKind} onChange={event=>setDeviceKind(event.target.value)}><option value="">全部类型</option>{deviceKinds.map(kind=><option key={kind} value={kind}>{deviceKindLabel(kind)}</option>)}</select></label></div><div className="scene-device-result-title"><span>目标设备</span><small>{filteredCandidates.length} 台可选</small></div><div className="scene-device-options" role="listbox" aria-label="目标设备">{filteredCandidates.map(device=><button type="button" role="option" aria-selected={working?.did===device.did} className={working?.did===device.did?"selected":""} key={device.did} onClick={()=>selectDevice(device.did)}><span className="scene-device-icon">{device.icon}</span><span><strong>{device.name}</strong><small>{device.room} · {deviceKindLabel(device.kind)}{device.online===false?" · 离线":""}</small></span><i>{working?.did===device.did?"✓":"›"}</i></button>)}</div>{!filteredCandidates.length&&<div className="scene-device-empty">没有符合当前筛选条件的设备。</div>}</div>
+        {draft.actionsEditable&&composerOpen&&<section className={`scene-action-composer ${working?"active":""}`}><div className="scene-editor-section-title"><div><span>＋</span><div><strong>{workingIndices.length?"修改动作":"添加动作"}</strong><small>仅展示设备公开且可安全写入的能力</small></div></div></div>
+          <div className="scene-device-picker"><div className="scene-device-filters"><label><span>按房间筛选</span><select value={deviceRoom} onChange={event=>setDeviceRoom(event.target.value)}><option value="">全部房间</option>{deviceRooms.map(room=><option key={room} value={room}>{room}</option>)}</select></label><label><span>按类型筛选</span><select value={deviceKind} onChange={event=>setDeviceKind(event.target.value)}><option value="">全部类型</option>{deviceKinds.map(kind=><option key={kind} value={kind}>{deviceKindLabel(kind)}</option>)}</select></label></div><div className="scene-device-result-title"><span>目标设备</span><small>{selectedDids.length?`已选 ${selectedDids.length} 台${isLightDevice(candidates.find(device=>device.did===working?.did))?"灯具":"设备"}`:`${filteredCandidates.length} 台可选`}</small></div><div className="scene-device-options" role="listbox" aria-label="目标设备" aria-multiselectable={isLightDevice(candidates.find(device=>device.did===working?.did))}>{filteredCandidates.map(device=>{const selected=Boolean(device.did&&selectedDids.includes(device.did));return <button type="button" role="option" aria-selected={selected} className={selected?"selected":""} key={device.did} onClick={()=>selectDevice(device.did)}><span className="scene-device-icon">{device.icon}</span><span><strong>{device.name}</strong><small>{device.room} · {deviceKindLabel(device.kind)}{device.online===false?" · 离线":""}</small></span><i>{selected?"✓":"›"}</i></button>})}</div>{!filteredCandidates.length&&<div className="scene-device-empty">没有符合当前筛选条件的设备。</div>}{working&&isLightDevice(candidates.find(device=>device.did===working.did))&&<p className="scene-device-help">灯具支持多选；下方设置的开关、亮度和色温会应用到所有已选灯具。</p>}</div>
           {spec.loading&&<div className="scene-composer-state">正在读取设备能力…</div>}{spec.error&&<div className="scene-composer-state error">该设备能力暂不可用：{spec.error}</div>}
           {working&&!spec.loading&&!spec.error&&working.kind==="set-properties"&&<><div className="scene-kind-tabs"><button type="button" className="selected" disabled={!writable.length}>设置属性</button></div>{!writable.length&&<div className="scene-composer-state">该设备没有适合加入手动场景的标准可写属性。</div>}
             <><div className="scene-property-list">{(working.properties??[]).map((property,index)=>{const capability=writable.find(item=>item.siid===property.siid&&item.piid===property.piid);return <div key={`${property.siid}.${property.piid}`}><div><strong>{capability?.label||property.label||`属性 ${property.siid}.${property.piid}`}</strong><button type="button" onClick={()=>setWorking({...working,properties:working.properties?.filter((_,item)=>item!==index)})}>移除</button></div><PropertyValueEditor property={capability} value={property.value} onChange={value=>setPropertyValue(index,value)}/></div>})}</div><div className="scene-add-property"><select value={addPropertyKey} onChange={event=>setAddPropertyKey(event.target.value)}><option value="">选择要设置的属性</option>{spec.groups.map(group=>{const properties=group.properties.filter(property=>isSceneWritableProperty(group.name,property)&&!working.properties?.some(item=>item.siid===property.siid&&item.piid===property.piid));return properties.length?<optgroup key={group.key} label={group.label}>{properties.map(property=><option key={property.key} value={property.key}>{property.label}</option>)}</optgroup>:null})}</select><button type="button" disabled={!addPropertyKey} onClick={addProperty}>加入</button></div></>
-            <div className="scene-composer-actions"><button type="button" onClick={()=>{setComposerOpen(false);setWorking(undefined);setWorkingIndex(undefined)}}>取消</button><button type="button" className="primary" disabled={!working.properties?.length} onClick={commitWorking}>{workingIndex===undefined?"加入序列":"保存动作"}</button></div></>}
+            {composerError&&<div className="scene-composer-state error" role="alert">{composerError}</div>}<div className="scene-composer-actions"><button type="button" onClick={()=>{setComposerOpen(false);setWorking(undefined);setWorkingIndices([]);setSelectedDids([])}}>取消</button><button type="button" className="primary" disabled={saving||!working.properties?.length||!selectedDids.length} onClick={()=>void commitWorking()}>{saving?"正在校验设备…":workingIndices.length?`保存 ${selectedDids.length} 台设备动作`:`加入 ${selectedDids.length} 台设备`}</button></div></>}
         </section>}
       </div>
       {error&&<div className="scene-editor-error" role="alert">{error}</div>}

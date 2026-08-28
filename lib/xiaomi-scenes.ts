@@ -15,6 +15,7 @@ export type ManualSceneAction = {
   order: number;
   label: string;
   deviceName?: string;
+  room?: string;
   details: ManualSceneActionDetail[];
 };
 
@@ -117,12 +118,13 @@ function commandLabel(command: string) {
   return command || "执行动作";
 }
 
-function normalizeActions(scene: RawScene): ManualSceneAction[] {
+function normalizeActions(scene: RawScene, roomsByDid: Map<string, string>): ManualSceneAction[] {
   return actionEntries(scene).map((action, index) => {
     const payload = parsedSceneRecord(action.payload_json ?? action.payload);
     const command = text(payload?.command);
     const label = text(action.name) || text(action.action_name) || commandLabel(command);
     const deviceName = text(payload?.device_name) || text(action.device_name);
+    const room = roomsByDid.get(text(payload?.did ?? action.did));
     const values = Array.isArray(payload?.value) ? payload.value.filter((item): item is RawScene => Boolean(record(item))) : [];
     const details: ManualSceneActionDetail[] = values.map(propertyDetail).filter((item): item is NonNullable<ReturnType<typeof propertyDetail>> => Boolean(item));
     const delay = number(payload?.delay_time ?? action.delay_time, 0);
@@ -132,6 +134,7 @@ function normalizeActions(scene: RawScene): ManualSceneAction[] {
       order: number(action.order, index + 1),
       label,
       ...(deviceName ? { deviceName } : {}),
+      ...(room ? { room } : {}),
       details,
     };
   }).sort((left, right) => left.order - right.order);
@@ -144,7 +147,13 @@ function enabled(value: unknown) {
   return !["0", "false", "disabled", "off"].includes(String(value).toLowerCase());
 }
 
-export function parseManualScenes(response: Record<string, unknown>, homeId: string): ManualScene[] {
+export function parseManualScenes(response: Record<string, unknown>, homeId: string, devices: XiaomiSceneRecord[] = []): ManualScene[] {
+  const roomsByDid = new Map(devices.flatMap(device => {
+    const deviceHomeId = text(device.homeId ?? device.home_id);
+    const did = text(device.did);
+    const room = text(device.roomName ?? device.room_name);
+    return deviceHomeId === homeId && did && room ? [[did, room] as const] : [];
+  }));
   const scenes = new Map<string, ManualScene>();
   for (const scene of sceneEntries(response)) {
     if (!isManualSceneRecord(scene)) continue;
@@ -154,7 +163,7 @@ export function parseManualScenes(response: Record<string, unknown>, homeId: str
     if (!id || !name || sceneHomeId !== homeId) continue;
     const icon = text(scene.icon ?? scene.icon_url);
     const updatedAt = text(scene.update_time ?? scene.updated_at ?? scene.modify_time);
-    const actions = normalizeActions(scene);
+    const actions = normalizeActions(scene, roomsByDid);
     scenes.set(id, {
       id,
       homeId,

@@ -37,7 +37,9 @@ test("scene cards open details and use a separate execution button", async () =>
   assert.match(source, /className="scene-modal-run"/, "the detail card must expose an explicit execution action");
   assert.doesNotMatch(sceneCard, /触发方式与条件|手动点击/, "manual triggers should not occupy scene detail space");
   assert.match(sceneCard, /className="scene-action-list"/);
-  assert.match(sceneCard, /actions\.map\(\(action,index\)/, "actions must render in their normalized sequence");
+  assert.match(sceneCard, /groupManualSceneActions\(actions,devices\)/, "actions must be grouped using current-home devices");
+  assert.match(sceneCard, /className="scene-action-room"/);
+  assert.match(sceneCard, /item\.kind==="power-lights"/, "power-only lights must use the folded presentation");
   assert.match(sceneCard, /scene-action-detail \$\{detail\.kind\}/, "action properties must receive semantic styling hooks");
   assert.match(sceneCard, /style=\{sceneActionDetailStyle\(detail\)\}/, "numeric light values must control their visual treatment");
   assert.match(sceneCard, /sceneActionDetailGlyph\(detail\.kind\)/, "action properties must have recognizable icons");
@@ -64,7 +66,11 @@ test("scene editor supports safe create and update workflows", async () => {
   assert.match(source, /按房间筛选/);
   assert.match(source, /按类型筛选/);
   assert.match(source, /className="scene-device-options" role="listbox"/);
-  assert.match(source, /aria-selected=\{working\?\.did===device\.did\}/);
+  assert.match(source, /aria-multiselectable=\{isLightDevice/);
+  assert.match(source, /selectedDids\.includes\(device\.did\)/);
+  assert.match(source, /Promise\.all\(targets\.map/, "each selected device must load and validate its own specification");
+  assert.match(source, /mapScenePropertySemantics\(semantics,specification\.groups\)/, "batch properties must map by MIoT semantic name");
+  assert.match(source, /source\?\.sourceIndex/, "editing a folded group must preserve source action identities");
   assert.match(source, /isSceneWritableProperty\(group\.name,property\)/);
   assert.doesNotMatch(source, /group\.properties\.filter\(property=>property\.writable/);
   assert.doesNotMatch(source, />执行动作</);

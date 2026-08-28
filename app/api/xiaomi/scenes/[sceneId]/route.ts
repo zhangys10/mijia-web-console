@@ -48,9 +48,11 @@ export async function PUT(request: NextRequest, route: { params: Promise<{ scene
     if (draft.actions && !editable.actionsEditable) return NextResponse.json({ error: "XIAOMI_SCENE_ACTIONS_READ_ONLY" }, { status: 409 });
     if (draft.actions) assertSceneActionSources(draft.actions, editable.actions);
     let validated = draft;
+    let deviceRecords: Array<Record<string, unknown>> = [];
     if (draft.actions) {
       const devices = await listDevices(current.session!);
-      validated = await validateSceneDraftCapabilities(draft, devices.devices);
+      deviceRecords = devices.devices;
+      validated = await validateSceneDraftCapabilities(draft, devices.devices, undefined, true);
     }
     await submitSceneEdit(current.session!, buildUpdatePayload(current.scene!, validated));
     let updated;
@@ -61,7 +63,8 @@ export async function PUT(request: NextRequest, route: { params: Promise<{ scene
       if (candidate && sceneDraftMatchesWrite(await createEditorDraft(candidate, current.homeId!), validated)) updated = candidate;
     }
     if (!updated) throw new Error("XIAOMI_SCENE_WRITE_NOT_VISIBLE");
-    const scenes = parseManualScenes({ result: { scene_info_list: [updated] } }, current.homeId!);
+    if (!deviceRecords.length) deviceRecords = (await listDevices(current.session!)).devices;
+    const scenes = parseManualScenes({ result: { scene_info_list: [updated] } }, current.homeId!, deviceRecords);
     return NextResponse.json({ ok: true, scene: scenes[0], updated: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";

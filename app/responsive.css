@@ -715,6 +715,29 @@ select {
   gap: 8px;
 }
 
+.scene-action-rooms {
+  display: grid;
+  gap: 16px;
+}
+
+.scene-action-room > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+.scene-action-room > header strong {
+  font-size: 11px;
+}
+
+.scene-action-room > header small {
+  color: #929ca8;
+  font-size: 9px;
+}
+
 .scene-action-empty {
   margin: 9px 0 0;
   border-radius: 9px;
@@ -790,6 +813,34 @@ select {
   flex-wrap: wrap;
   gap: 7px;
   margin-top: 9px;
+}
+
+.scene-action-batch details {
+  margin-top: 8px;
+  border-top: 1px solid #edf0f3;
+  padding-top: 7px;
+}
+
+.scene-action-batch summary {
+  color: #e76531;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.scene-action-batch details > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.scene-action-batch details span {
+  border-radius: 7px;
+  background: #f5f7f9;
+  padding: 4px 7px;
+  color: #687480;
+  font-size: 9px;
 }
 
 .scene-action-detail {
