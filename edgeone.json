@@ -1,0 +1,5 @@
+{
+  "buildCommand": "npm run build:edgeone",
+  "installCommand": "npm ci",
+  "outputDirectory": ".next"
+}

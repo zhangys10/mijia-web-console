@@ -62,6 +62,7 @@ npm run dev
 ```bash
 npm run dev        # 启动 Vite/Vinext 开发服务器
 npm run build      # 生成 Cloudflare Worker 构建产物
+npm run build:edgeone # 生成 EdgeOne Makers 使用的 Next.js 构建产物
 npm run build:vercel # 生成 Vercel 使用的 Next.js 构建产物
 npm run start      # 启动已构建的 Vinext 应用
 npm run typecheck  # 检查应用 TypeScript 类型
@@ -79,6 +80,12 @@ npm run build
 ```
 
 部署前，在目标 Cloudflare 环境中安全设置 `XIAOMI_SESSION_SECRET`。不要在命令历史、远程 URL、公开构建日志或版本库文件中传递实际值。具体发布命令可以按使用的 Cloudflare Workers 项目或 CI 流程配置。
+
+### EdgeOne Makers
+
+仓库中的 `edgeone.json` 会让 EdgeOne Makers 执行原生 Next.js 构建并使用 `.next` 产物。不要把 EdgeOne 的构建命令改回 `npm run build`：该命令面向 Cloudflare Workers，生成的是 Vinext `dist`，不包含 EdgeOne 的 OpenNext 插件所需的 `.next/required-server-files.json`。
+
+部署前，在 EdgeOne Makers 项目的 Environment Variables 中安全设置高熵的 `XIAOMI_SESSION_SECRET`。配置修改后重新部署。
 
 ### Vercel
 
