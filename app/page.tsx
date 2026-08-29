@@ -23,7 +23,13 @@ type SpecGroup = { key:string;name:string;label:string;siid:number;properties:Sp
 type DeviceSpecification = { loading:boolean;groups:SpecGroup[];urn?:string;error?:string;binding?:SwitchBindingCapability };
 type Connection = { loading:boolean;connected:boolean;region?:string;userId?:string;error?:string };
 type Qr = { loading:boolean;imageUrl?:string;loginUrl?:string;error?:string;expired?:boolean;expiresAt?:number };
-type SceneLoadState = { loading:boolean;items:ManualScene[];error?:string };
+type SceneLoadState = { loading:boolean;items:ManualScene[];error?:string;loaded?:boolean };
+type SyncWarning = { code:string;scope:"devices"|"properties"|"specifications"|"scenes";retryable:boolean;retryAfterSeconds?:number };
+
+class SyncRequestError extends Error {
+  readonly retryable:boolean;readonly retryAfterSeconds?:number;
+  constructor(message:string,retryable:boolean,retryAfterSeconds?:number){super(message);this.retryable=retryable;this.retryAfterSeconds=retryAfterSeconds}
+}
 
 const demo:Device[]=[
   {id:1,name:"客厅吸顶灯",home:"我的家",homeId:"demo",room:"客厅",kind:"light",icon:"☀",on:true,status:"已开启",detail:"yeelink.light.demo",color:"orange",online:true},
@@ -47,8 +53,8 @@ const demoScenes:ManualScene[]=[
 const regionLabels:Record<string,string>={cn:"中国大陆",sg:"新加坡",de:"欧洲",us:"美国",ru:"俄罗斯",i2:"印度"};
 
 export default function Home(){
-  const [devices,setDevices]=useState(demo),[homes,setHomes]=useState<XiaomiHome[]>([{id:"demo",name:"我的家"}]),[selectedHome,setSelectedHome]=useState("demo"),[room,setRoom]=useState("全屋"),[tab,setTab]=useState("首页"),[toast,setToast]=useState(""),[authOpen,setAuthOpen]=useState(false),[region,setRegion]=useState("cn"),[connection,setConnection]=useState<Connection>({loading:true,connected:false}),[qr,setQr]=useState<Qr>({loading:false}),[syncing,setSyncing]=useState(false),[qrSeconds,setQrSeconds]=useState(0),[selectedDevice,setSelectedDevice]=useState<Device|null>(null),[settingValues,setSettingValues]=useState<Record<string,SettingValue>>({}),[operating,setOperating]=useState(""),[deviceSpec,setDeviceSpec]=useState<DeviceSpecification>({loading:false,groups:[]}),[focusedMapping,setFocusedMapping]=useState<Device|null>(null),[scenesByHome,setScenesByHome]=useState<Record<string,SceneLoadState>>({demo:{loading:false,items:demoScenes}}),[sceneOperating,setSceneOperating]=useState(""),[selectedScene,setSelectedScene]=useState<ManualScene|null>(null),[sceneEditor,setSceneEditor]=useState<{sceneId?:string}|null>(null);
-  const polling=useRef(false),specRequest=useRef(0),sceneGeneration=useRef(0);
+  const [devices,setDevices]=useState(demo),[homes,setHomes]=useState<XiaomiHome[]>([{id:"demo",name:"我的家"}]),[selectedHome,setSelectedHome]=useState("demo"),[room,setRoom]=useState("全屋"),[tab,setTab]=useState("首页"),[toast,setToast]=useState(""),[authOpen,setAuthOpen]=useState(false),[region,setRegion]=useState("cn"),[connection,setConnection]=useState<Connection>({loading:true,connected:false}),[qr,setQr]=useState<Qr>({loading:false}),[syncing,setSyncing]=useState(false),[syncCooling,setSyncCooling]=useState(false),[lastSuccessfulSync,setLastSuccessfulSync]=useState<string>(),[syncWarnings,setSyncWarnings]=useState<SyncWarning[]>([]),[qrSeconds,setQrSeconds]=useState(0),[selectedDevice,setSelectedDevice]=useState<Device|null>(null),[settingValues,setSettingValues]=useState<Record<string,SettingValue>>({}),[operating,setOperating]=useState(""),[deviceSpec,setDeviceSpec]=useState<DeviceSpecification>({loading:false,groups:[]}),[focusedMapping,setFocusedMapping]=useState<Device|null>(null),[scenesByHome,setScenesByHome]=useState<Record<string,SceneLoadState>>({demo:{loading:false,items:demoScenes,loaded:true}}),[sceneOperating,setSceneOperating]=useState(""),[selectedScene,setSelectedScene]=useState<ManualScene|null>(null),[sceneEditor,setSceneEditor]=useState<{sceneId?:string}|null>(null);
+  const polling=useRef(false),specRequest=useRef(0),sceneGeneration=useRef(0),syncInFlight=useRef<Promise<void>|null>(null),deviceLoadInFlight=useRef<Promise<string>|null>(null),sceneRequests=useRef(new Map<string,Promise<void>>()),cooldownTimer=useRef<number|null>(null);
   const homeDevices=useMemo(()=>devices.filter(device=>device.homeId===selectedHome),[devices,selectedHome]);
   const hardwareDevices=useMemo(()=>selectDeviceView(homeDevices,"hardware"),[homeDevices]);
   const activeDeviceGroups=useMemo(()=>buildActiveDeviceGroups(homeDevices),[homeDevices]);
@@ -61,49 +67,72 @@ export default function Home(){
 
   const message=(text:string)=>{setToast(text);window.setTimeout(()=>setToast(""),2600)};
 
-  async function loadScenes(homeId:string,notifyOnError=false){
+  async function loadScenes(homeId:string,notifyOnError=false,force=false){
     if(homeId==="demo")return;
+    if(!force&&scenesByHome[homeId]?.loaded)return;
+    const pending=sceneRequests.current.get(homeId);if(pending)return pending;
     const generation=sceneGeneration.current;
     setScenesByHome(states=>({...states,[homeId]:{loading:true,items:states[homeId]?.items??[]}}));
-    try{
+    const task=(async()=>{try{
       const response=await fetch(`/api/xiaomi/scenes?homeId=${encodeURIComponent(homeId)}`);
       const data=await response.json();
-      if(!response.ok)throw new Error(data.error||"XIAOMI_SCENE_SYNC_FAILED");
+      if(!response.ok)throw new SyncRequestError(data.error||"XIAOMI_SCENE_SYNC_FAILED",Boolean(data.retryable),Number(data.retryAfterSeconds)||undefined);
       if(generation!==sceneGeneration.current)return;
       const items=Array.isArray(data.scenes)?data.scenes as ManualScene[]:[];
-      setScenesByHome(states=>({...states,[homeId]:{loading:false,items}}));
+      setScenesByHome(states=>({...states,[homeId]:{loading:false,items,loaded:true}}));
       setSelectedScene(current=>current?.homeId===homeId?items.find(item=>item.id===current.id)??null:current);
     }catch(error){
       if(generation!==sceneGeneration.current)return;
       const reason=error instanceof Error?error.message:"UNKNOWN_ERROR";
-      setScenesByHome(states=>({...states,[homeId]:{loading:false,items:states[homeId]?.items??[],error:reason}}));
+      setScenesByHome(states=>({...states,[homeId]:{loading:false,items:states[homeId]?.items??[],error:reason,loaded:states[homeId]?.loaded}}));
       if(notifyOnError)message(`场景同步失败：${friendlyError(reason)}`);
-    }
+    }finally{sceneRequests.current.delete(homeId)}})();
+    sceneRequests.current.set(homeId,task);return task;
   }
 
-  async function loadDevices(notify=false,preserveRoom=false){
-    const response=await fetch("/api/xiaomi/devices");
+  async function performLoadDevices(notify=false,preserveRoom=false){
+    const query=new URLSearchParams({includeScenes:"1"});if(selectedHome&&selectedHome!=="demo")query.set("homeId",selectedHome);
+    const response=await fetch(`/api/xiaomi/devices?${query}`);
     const data=await response.json();
-    if(!response.ok)throw new Error(data.error||"XIAOMI_DEVICE_SYNC_FAILED");
+    if(!response.ok)throw new SyncRequestError(data.error||"XIAOMI_DEVICE_SYNC_FAILED",Boolean(data.retryable),Number(data.retryAfterSeconds)||undefined);
     const icons:Record<string,string>={light:"☀",lamp:"♢",aircondition:"❄",acpartner:"❄",airpurifier:"≈",vacuum:"◎",fan:"≈",lock:"▣",curtain:"▥",humidifier:"◌",plug:"ϟ",switch:"ϟ",camera:"◉",sensor:"↗"};
     const mapped:Device[]=data.devices.map((device:{did:string;name:string;home:string;homeId:string;room:string;model:string;logicalType?:string;online:boolean;on?:boolean|null;parentId?:string|null;urn?:string|null;topology?:DeviceTopology|null;groupMemberIds?:string[];groupIds?:string[];powerControl?:ManagedPowerControl|null},index:number)=>{const type=classifyDeviceKind(device.model,device.name,device.logicalType);const on=typeof device.on==="boolean"?device.on:null;const status=!device.online?"离线":device.on===true?"已开启":device.on===false?"已关闭":"状态待确认";return{id:index+100,did:device.did,name:device.name,home:device.home||"我的家",homeId:device.homeId||"default",room:device.room||"未分配",kind:type,icon:isDeviceGroupId(device.did)?"◫":icons[type]||"↗",on,status,detail:device.model||"米家设备",color:["orange","blue","green","violet","cyan"][index%5],online:device.online,parentId:device.parentId,urn:device.urn,logicalType:device.logicalType,hardwareRole:inferHardwareRole(device.model,device.name),topology:device.topology,groupMemberIds:device.groupMemberIds,groupIds:device.groupIds,powerControl:device.powerControl??undefined}});
     const nextHomes:XiaomiHome[]=Array.isArray(data.homes)&&data.homes.length?data.homes.map((home:{id:string;name:string})=>({id:String(home.id),name:home.name})):Array.from(new Map(mapped.map(device=>[device.homeId,{id:device.homeId,name:device.home}])).values());
     setHomes(nextHomes);
-    const nextHomeId=nextHomes.some(home=>home.id===selectedHome)?selectedHome:(nextHomes[0]?.id||"default");
+    const nextHomeId=typeof data.selectedHomeId==="string"&&nextHomes.some(home=>home.id===data.selectedHomeId)?data.selectedHomeId:nextHomes.some(home=>home.id===selectedHome)?selectedHome:(nextHomes[0]?.id||"default");
     setSelectedHome(nextHomeId);
     if(!preserveRoom)setRoom("全屋");
     setDevices(mapped);
-    if(notify)message(`已同步 ${nextHomes.length} 个家庭、${mapped.length} 台米家设备`);
+    const warnings=Array.isArray(data.warnings)?data.warnings.filter((warning:unknown):warning is SyncWarning=>Boolean(warning&&typeof warning==="object"&&"code" in warning&&"scope" in warning)) as SyncWarning[]:[];
+    setSyncWarnings(warnings);setLastSuccessfulSync(typeof data.capturedAt==="string"?data.capturedAt:new Date().toISOString());
+    const retryWarning=warnings.find(warning=>warning.retryable);if(retryWarning)beginSyncCooldown(retryWarning.retryAfterSeconds);
+    if(Array.isArray(data.scenes)){
+      const items=data.scenes as ManualScene[];
+      setScenesByHome(states=>({...states,[nextHomeId]:{loading:false,items,loaded:true}}));
+      setSelectedScene(current=>current&&current.homeId===nextHomeId?items.find(item=>item.id===current.id)??null:current);
+    }
+    if(notify)message(warnings.length?`已同步 ${mapped.length} 台设备，${syncWarningSummary(warnings)}`:`已同步 ${nextHomes.length} 个家庭、${mapped.length} 台米家设备`);
     return nextHomeId;
   }
 
-  async function syncDevices(){
-    if(syncing)return;
+  function loadDevices(notify=false,preserveRoom=false){
+    if(deviceLoadInFlight.current)return deviceLoadInFlight.current;
+    const task=performLoadDevices(notify,preserveRoom).finally(()=>{deviceLoadInFlight.current=null});deviceLoadInFlight.current=task;return task;
+  }
+
+  function beginSyncCooldown(seconds=8){
+    if(cooldownTimer.current)window.clearTimeout(cooldownTimer.current);
+    setSyncCooling(true);cooldownTimer.current=window.setTimeout(()=>{setSyncCooling(false);cooldownTimer.current=null},Math.min(120,Math.max(5,seconds))*1000);
+  }
+
+  function syncDevices(){
+    if(syncInFlight.current)return syncInFlight.current;
     setSyncing(true);
     message("正在同步米家设备…");
-    try{const homeId=await loadDevices(true);await loadScenes(homeId,true);setConnection(state=>({...state,error:undefined}))}
-    catch(error){const reason=error instanceof Error?error.message:"UNKNOWN_ERROR";setConnection(state=>({...state,error:reason}));message(`同步失败：${friendlyError(reason)}`)}
-    finally{setSyncing(false)}
+    const task=(async()=>{try{await loadDevices(true);setConnection(state=>({...state,error:undefined}))}
+    catch(error){const reason=error instanceof Error?error.message:"UNKNOWN_ERROR";setConnection(state=>({...state,error:reason}));if(error instanceof SyncRequestError&&error.retryable)beginSyncCooldown(error.retryAfterSeconds);message(`同步失败：${friendlyError(reason)}`)}
+    finally{setSyncing(false);syncInFlight.current=null}})();
+    syncInFlight.current=task;return task;
   }
 
   function selectHome(homeId:string){
@@ -114,11 +143,11 @@ export default function Home(){
   }
 
   async function checkSession(){
-    try{const response=await fetch("/api/xiaomi/status");const result=await response.json();if(result.connected){setConnection({loading:false,connected:true,region:result.region,userId:result.userId});setRegion(result.region);try{const homeId=await loadDevices();await loadScenes(homeId,true)}catch(error){const reason=error instanceof Error?error.message:"UNKNOWN_ERROR";setConnection(state=>({...state,error:reason}));message(`设备同步失败：${friendlyError(reason)}`)}}else setConnection({loading:false,connected:false})}
+    try{const response=await fetch("/api/xiaomi/status");const result=await response.json();if(result.connected){setConnection({loading:false,connected:true,region:result.region,userId:result.userId});setRegion(result.region);setDevices([]);setHomes([]);setSelectedHome("");setScenesByHome({});try{await loadDevices()}catch(error){const reason=error instanceof Error?error.message:"UNKNOWN_ERROR";setConnection(state=>({...state,error:reason}));if(error instanceof SyncRequestError&&error.retryable)beginSyncCooldown(error.retryAfterSeconds);message(`设备同步失败：${friendlyError(reason)}`)}}else setConnection({loading:false,connected:false})}
     catch(error){setConnection({loading:false,connected:false,error:error instanceof Error?error.message:"UNKNOWN_ERROR"})}
   }
 
-  useEffect(()=>{void checkSession();return()=>{polling.current=false}},[]);
+  useEffect(()=>{void checkSession();return()=>{polling.current=false;if(cooldownTimer.current)window.clearTimeout(cooldownTimer.current)}},[]);
   useEffect(()=>{
     if(!qr.expiresAt||qr.expired)return;
     const tick=()=>{const remaining=Math.max(0,Math.ceil((qr.expiresAt!-Date.now())/1000));setQrSeconds(remaining);if(remaining===0){polling.current=false;setQr(state=>({...state,expired:true,error:undefined}))}};
@@ -255,12 +284,12 @@ export default function Home(){
   }
   function openScene(scene:ManualScene){setSelectedScene(scene);setSceneEditor(null);setTab("场景")}
   function openLogin(){setAuthOpen(true);if(!connection.connected&&!qr.imageUrl&&!qr.loading)void startLogin()}
-  async function logout(){await fetch("/api/xiaomi/status",{method:"DELETE"});polling.current=false;specRequest.current++;sceneGeneration.current++;setConnection({loading:false,connected:false});setDevices(demo);setHomes([{id:"demo",name:"我的家"}]);setSelectedHome("demo");setScenesByHome({demo:{loading:false,items:demoScenes}});setSceneOperating("");setSelectedScene(null);setSceneEditor(null);setSelectedDevice(null);setFocusedMapping(null);setDeviceSpec({loading:false,groups:[]});setQr({loading:false});setAuthOpen(false);message("已断开米家云连接")}
+  async function logout(){await fetch("/api/xiaomi/status",{method:"DELETE"});polling.current=false;specRequest.current++;sceneGeneration.current++;sceneRequests.current.clear();setConnection({loading:false,connected:false});setDevices(demo);setHomes([{id:"demo",name:"我的家"}]);setSelectedHome("demo");setScenesByHome({demo:{loading:false,items:demoScenes,loaded:true}});setSyncWarnings([]);setLastSuccessfulSync(undefined);setSyncCooling(false);setSceneOperating("");setSelectedScene(null);setSceneEditor(null);setSelectedDevice(null);setFocusedMapping(null);setDeviceSpec({loading:false,groups:[]});setQr({loading:false});setAuthOpen(false);message("已断开米家云连接")}
 
   return <main className="shell">
     <aside className="sidebar"><div className="brand"><b>mi</b><div><strong>米家控制台</strong><small>{connection.connected?regionLabels[connection.region||"cn"]:"米家云直连"}</small></div></div><nav>{[["首页","⌂"],["设备","▦"],["场景","✦"],["自动化","⌁"],["能耗","ϟ"]].map(([name,icon])=><button key={name} className={tab===name?"active":""} onClick={()=>setTab(name)}><i>{icon}</i>{name}</button>)}</nav><div className="sidefoot"><div className={`mode ${connection.connected?"connected":""}`}><span/><div><strong>{connection.loading?"检查连接中":connection.connected?"米家云已连接":"演示模式"}</strong><small>{connection.connected?`账号 ${connection.userId}`:"扫码登录以同步真实设备"}</small></div></div><button className="settings" onClick={openLogin}>⚙　账号与连接</button><div className="profile"><b>R</b><div><strong>Ryan</strong><small>家庭管理员</small></div><i>⋯</i></div></div></aside>
 
-    <section className="workspace"><header className="workspace-header"><div className="header-copy"><p>2026年8月25日 · 星期二</p><h1>{tab==="首页"?"早上好，Ryan":tab}</h1></div><div className="header-controls"><HomeSelector homes={homes} selectedHome={selectedHome} devices={devices} onSelect={selectHome}/><div className="actions"><button aria-label="搜索">⌕</button><button aria-label="通知">♢</button><button className="mobile-account" aria-label="账号与连接" onClick={openLogin}>⚙</button><button className="primary" disabled={syncing} onClick={connection.connected?()=>void syncDevices():openLogin}>{syncing?"↻ 同步中…":connection.connected?"↻ 同步设备":"＋ 连接米家"}</button></div></div></header>
+    <section className="workspace"><header className="workspace-header"><div className="header-copy"><p>2026年8月25日 · 星期二</p><h1>{tab==="首页"?"早上好，Ryan":tab}</h1></div><div className="header-controls"><HomeSelector homes={homes} selectedHome={selectedHome} devices={devices} onSelect={selectHome}/><div className="actions"><button aria-label="搜索">⌕</button><button aria-label="通知">♢</button><button className="mobile-account" aria-label="账号与连接" onClick={openLogin}>⚙</button><button className="primary" disabled={syncing||syncCooling} onClick={connection.connected?()=>void syncDevices():openLogin}>{syncing?"↻ 同步中…":syncCooling?"请稍后重试":connection.connected?"↻ 同步设备":"＋ 连接米家"}</button></div></div></header>
 
     {tab==="首页"?<>
       <Title title="当前运行" sub={`${currentHome?.name??"当前家庭"} · ${activeDeviceCount} 台设备正在运行`} action="管理设备 →" onAction={()=>setTab("设备")}/>
@@ -268,7 +297,7 @@ export default function Home(){
       <Title title="快捷场景" sub={connection.connected?"当前家庭的真实手动场景":"演示场景 · 连接米家后显示真实数据"} action="管理场景 →" onAction={()=>setTab("场景")}/><SceneStateMessage loading={connection.connected&&sceneState.loading} error={connection.connected?sceneState.error:undefined}/><section className="scenes">{quickScenes.map((scene,index)=><SceneCard key={scene.id} scene={scene} tone={["orange","blue","violet","indigo"][index%4]} connected={connection.connected} running={sceneOperating===scene.id} blocked={Boolean(sceneOperating)} compact onOpen={()=>openScene(scene)} onRun={item=>void runScene(item)}/>)}</section>{!sceneState.loading&&!sceneState.error&&quickScenes.length===0&&<SceneStateMessage empty/>}
     </>:tab==="设备"?<DeviceManagement key={selectedHome} devices={homeDevices} room={room} connected={connection.connected} onSelectRoom={setRoom} onOpenDevice={(device,mappedDevice)=>void openDevice(device,mappedDevice)}/>:tab==="场景"?sceneEditor?<SceneEditor homeId={selectedHome} homeName={homes.find(home=>home.id===selectedHome)?.name||"当前家庭"} devices={homeDevices} sceneId={sceneEditor.sceneId} onClose={()=>setSceneEditor(null)} onSaved={sceneSaved}/>:selectedScene?<SceneDetailPage scene={selectedScene} homeName={homes.find(home=>home.id===selectedScene.homeId)?.name||"当前家庭"} devices={homeDevices} connected={connection.connected} running={sceneOperating===selectedScene.id} blocked={Boolean(sceneOperating)} onBack={()=>setSelectedScene(null)} onEdit={()=>setSceneEditor({sceneId:selectedScene.id})} onRun={()=>void runScene(selectedScene)}/>:<Panel title="场景中心" text={connection.connected?"查看、执行并管理当前家庭的真实手动场景。":"当前为演示数据；连接米家后才能新建和编辑。"}><div className="scene-center-toolbar"><span>{connection.connected?`${currentHome?.name||"当前家庭"} · ${currentScenes.length} 个场景`:"演示模式下不会写入米家云"}</span><button type="button" disabled={!connection.connected||selectedHome==="demo"} onClick={()=>{setSelectedScene(null);setSceneEditor({})}}>＋ 新建场景</button></div><SceneStateMessage loading={connection.connected&&sceneState.loading} error={connection.connected?sceneState.error:undefined} empty={!sceneState.loading&&currentScenes.length===0}/><div className="panel-grid scene-list">{currentScenes.map((scene,index)=><SceneCard key={scene.id} scene={scene} tone={["orange","blue","violet","indigo"][index%4]} connected={connection.connected} running={sceneOperating===scene.id} blocked={Boolean(sceneOperating)} onOpen={()=>openScene(scene)} onRun={item=>void runScene(item)}/>)}</div></Panel>:tab==="自动化"?<Panel title="自动化" text={`${currentHome?.name??"当前家庭"} · 根据时间、环境和设备状态，让家自动响应。`}><Rule a="日落后" b="有人回家" c="打开玄关灯"/><Rule a="每日 23:30" b="门锁已上锁" c="执行晚安"/></Panel>:<Panel title="家庭能耗" text={`${currentHome?.name??"当前家庭"} · 查看设备用电趋势，发现节能空间。`}><div className="chart">{[44,62,52,78,68,90,64].map((height,index)=><i key={index} style={{height:`${height}%`}}/>)}</div><div className="labels">{["周一","周二","周三","周四","周五","周六","今天"].map(day=><span key={day}>{day}</span>)}</div></Panel>}</section>
 
-    <aside className="rightbar"><div className={`api ${connection.connected?"cloud-live":""}`}><div className="api-title"><span>⌁</span><div><strong>米家云</strong><small>{connection.connected?`${regionLabels[connection.region||"cn"]} · 已连接`:"扫码授权 · 直接连接"}</small></div></div><p>{connection.error?`最近同步失败：${friendlyError(connection.error)}`:connection.connected?`已连接小米账号 ${connection.userId}，可以同步家庭、房间与设备。`:"使用米家 App 扫描官方账号二维码登录，无需 Home Assistant，也无需输入账号密码。"}</p><button disabled={syncing} onClick={connection.connected?()=>void syncDevices():openLogin}>{syncing?"正在同步设备…":connection.connected?"立即同步设备":"扫码连接米家"} <b>→</b></button></div><Title title="最近动态" sub={`${currentHome?.name??"当前家庭"} · 设备记录`} action="···"/><div className="timeline"><Activity icon="⌂" tone="orange" title="执行「回家」场景" text="3 台设备已响应" time="2 分钟前"/><Activity icon="✓" tone="green" title="智能门锁已上锁" text="通过指纹 · 家庭成员" time="18 分钟前"/><Activity icon="↗" tone="blue" title="空调已调至 24°C" text="自动化 · 舒适温度" time="1 小时前"/><Activity icon="◎" tone="violet" title="扫拖机器人完成清洁" text="清洁 42㎡ · 用时 38 分钟" time="3 小时前"/></div><button className="all">查看全部动态</button><div className="home-status"><div><strong>{currentHome?.name??"家庭状态"}</strong><span>{connection.connected?"米家云在线":"演示数据"}</span></div><section><Status icon="◈" n={String(homeDevices.length)} label="设备总数"/><Status icon="ϟ" n={String(activeDeviceCount)} label="运行中"/><Status icon="⌁" n={String(rooms.length-1)} label="房间"/></section></div></aside>
+    <aside className="rightbar"><div className={`api ${connection.connected?"cloud-live":""}`}><div className="api-title"><span>⌁</span><div><strong>米家云</strong><small>{connection.connected?`${regionLabels[connection.region||"cn"]} · 已连接`:"扫码授权 · 直接连接"}</small></div></div><p>{connection.error?`最近同步失败：${friendlyError(connection.error)}`:syncWarnings.length?`${syncWarningSummary(syncWarnings)}；已保留可用数据。${lastSuccessfulSync?` 最近同步 ${formatSyncTime(lastSuccessfulSync)}`:""}`:connection.connected?lastSuccessfulSync?`最近成功同步：${formatSyncTime(lastSuccessfulSync)}`:`已连接小米账号 ${connection.userId}，正在等待首次同步。`:"使用米家 App 扫描官方账号二维码登录，无需 Home Assistant，也无需输入账号密码。"}</p><button disabled={syncing||syncCooling} onClick={connection.connected?()=>void syncDevices():openLogin}>{syncing?"正在同步设备…":syncCooling?"短暂冷却中":connection.connected?"立即同步设备":"扫码连接米家"} <b>→</b></button></div><Title title="最近动态" sub={`${currentHome?.name??"当前家庭"} · 设备记录`} action="···"/><div className="timeline"><Activity icon="⌂" tone="orange" title="执行「回家」场景" text="3 台设备已响应" time="2 分钟前"/><Activity icon="✓" tone="green" title="智能门锁已上锁" text="通过指纹 · 家庭成员" time="18 分钟前"/><Activity icon="↗" tone="blue" title="空调已调至 24°C" text="自动化 · 舒适温度" time="1 小时前"/><Activity icon="◎" tone="violet" title="扫拖机器人完成清洁" text="清洁 42㎡ · 用时 38 分钟" time="3 小时前"/></div><button className="all">查看全部动态</button><div className="home-status"><div><strong>{currentHome?.name??"家庭状态"}</strong><span>{connection.connected?"米家云在线":"演示数据"}</span></div><section><Status icon="◈" n={String(homeDevices.length)} label="设备总数"/><Status icon="ϟ" n={String(activeDeviceCount)} label="运行中"/><Status icon="⌁" n={String(Math.max(0,rooms.length-1))} label="房间"/></section></div></aside>
 
     {selectedDevice&&<div className="modal-bg" onMouseDown={()=>{specRequest.current++;setSelectedDevice(null)}}><div className="modal device-modal" onMouseDown={event=>event.stopPropagation()}>
       <button className="close" onClick={()=>{specRequest.current++;setSelectedDevice(null)}}>×</button>
@@ -386,6 +415,9 @@ function SceneActionItem({item}:{item:ManualSceneActionItem}){
 }
 function SceneActionDetails({action}:{action:ManualScene["actions"][number]}){return action.details.length?<div className="scene-action-details">{action.details.map((detail,detailIndex)=><em className={`scene-action-detail ${detail.kind}${detail.state?` ${detail.state}`:""}`} style={sceneActionDetailStyle(detail)} key={`${detail.kind}:${detail.label}:${detailIndex}`}><i>{sceneActionDetailGlyph(detail)}</i><span>{detail.label}</span><b>{detail.value}</b></em>)}</div>:null}
 function SceneStateMessage({loading,error,empty}:{loading?:boolean;error?:string;empty?:boolean}){if(!loading&&!error&&!empty)return null;return <div className={`scene-state${error?" error":""}`}>{loading?"正在读取米家场景…":error?`场景读取失败：${friendlyError(error)}`:"当前家庭没有可用的手动场景"}</div>}
+
+function formatSyncTime(value:string){const date=new Date(value);return Number.isNaN(date.getTime())?"刚刚":date.toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"})}
+function syncWarningSummary(warnings:SyncWarning[]){const scopes=new Set(warnings.map(warning=>warning.scope));if(scopes.has("devices"))return"部分家庭设备未更新";if(scopes.has("properties"))return"部分设备状态待确认";if(scopes.has("scenes"))return"当前家庭场景未更新";return"部分设备能力未更新"}
 function sceneGlyph(scene:ManualScene){return scene.icon&&scene.icon.length<=2?scene.icon:"✦"}
 function sceneActionDetailGlyph(detail:ManualScene["actions"][number]["details"][number]){
   if(detail.kind==="power")return "⏻";
@@ -471,4 +503,4 @@ function deviceSettings(device:Device):Setting[]{
   if(["plug","switch"].includes(device.kind))return[power];
   return[];
 }
-function friendlyError(error:string){if(error==="SESSION_SECRET_NOT_CONFIGURED")return"网站会话加密尚未配置";if(error==="XIAOMI_QR_UNAVAILABLE")return"小米暂未返回登录二维码";if(error==="XIAOMI_QR_EXPIRED")return"二维码已过期，请重新获取";if(error==="XIAOMI_SERVICE_TOKEN_MISSING")return"登录成功，但未能取得米家服务令牌";if(error==="XIAOMI_NOT_CONNECTED")return"登录状态已失效，请重新扫码";if(error==="XIAOMI_CLOUD_TIMEOUT")return"米家云响应超时，请确认服务器区域后重试";if(error==="XIAOMI_CLOUD_RESPONSE_INVALID"||error==="XIAOMI_DEVICE_RESPONSE_INVALID"||error==="XIAOMI_SCENE_RESPONSE_INVALID")return"米家云返回的数据无法识别";if(error==="XIAOMI_SCENE_NOT_FOUND")return"该场景不属于当前家庭或已被删除";if(error==="XIAOMI_SCENE_DISABLED")return"该场景已停用";if(error==="XIAOMI_SCENE_NOT_ACCEPTED")return"米家云未接受场景指令";if(error==="MIOT_SPEC_MODEL_NOT_FOUND")return"该型号尚未公开 MIoT 设备规格";if(error==="MIOT_SPEC_RESPONSE_INVALID"||error==="MIOT_SPEC_UNAVAILABLE")return"设备规格服务暂不可用";if(error==="INVALID_ACTION_PARAMETERS")return"请按要求输入正确数量的 JSON 参数";if(error==="BINDING_ACTION_TARGET_UNSUPPORTED")return"该型号没有公开可写目标设备参数";if(error==="BINDING_ACTION_CHANNEL_UNSUPPORTED"||error==="BINDING_ACTION_CHANNEL_MISSING")return"该型号未公开普通灯所需的有线回路参数";if(error==="BINDING_ACTION_PARAMETERS_UNKNOWN")return"绑定动作包含未公开含义的厂商参数";if(error==="XIAOMI_CLOUD_HTTP_401")return"米家登录已失效，请重新扫码登录";if(error==="XIAOMI_CLOUD_HTTP_403")return"米家云拒绝访问，请重新登录并确认所在区域";if(error.startsWith("XIAOMI_PROPERTY_CODE_"))return`设备未接受该设置，错误码 ${error.slice("XIAOMI_PROPERTY_CODE_".length)}`;if(error.startsWith("MIOT_SPEC_HTTP_"))return`设备规格服务返回 HTTP ${error.split("_").pop()}`;if(error.startsWith("XIAOMI_CLOUD_HTTP_"))return`米家云返回 HTTP ${error.split("_").pop()}`;if(error.startsWith("XIAOMI_CLOUD_CODE_"))return`米家云错误 ${error.split("_").pop()}，请确认服务器区域`;return`连接米家云失败：${error||"未知错误"}`}
+function friendlyError(error:string){if(error==="SESSION_SECRET_NOT_CONFIGURED")return"网站会话加密尚未配置";if(error==="XIAOMI_QR_UNAVAILABLE")return"小米暂未返回登录二维码";if(error==="XIAOMI_QR_EXPIRED")return"二维码已过期，请重新获取";if(error==="XIAOMI_SERVICE_TOKEN_MISSING")return"登录成功，但未能取得米家服务令牌";if(error==="XIAOMI_NOT_CONNECTED")return"登录状态已失效，请重新扫码";if(error==="XIAOMI_CLOUD_TIMEOUT")return"米家云暂时响应超时，请稍后重试";if(error==="XIAOMI_CLOUD_NETWORK")return"服务器暂时无法连接米家云，请稍后重试";if(error==="XIAOMI_CLOUD_HTTP_429")return"米家云请求过于频繁，请稍后重试";if(error==="XIAOMI_CLOUD_RESPONSE_INVALID"||error==="XIAOMI_DEVICE_RESPONSE_INVALID"||error==="XIAOMI_SCENE_RESPONSE_INVALID")return"米家云返回的数据无法识别";if(error==="XIAOMI_SCENE_NOT_FOUND")return"该场景不属于当前家庭或已被删除";if(error==="XIAOMI_SCENE_DISABLED")return"该场景已停用";if(error==="XIAOMI_SCENE_NOT_ACCEPTED")return"米家云未接受场景指令";if(error==="MIOT_SPEC_MODEL_NOT_FOUND")return"该型号尚未公开 MIoT 设备规格";if(error==="MIOT_SPEC_RESPONSE_INVALID"||error==="MIOT_SPEC_UNAVAILABLE")return"设备规格服务暂不可用";if(error==="INVALID_ACTION_PARAMETERS")return"请按要求输入正确数量的 JSON 参数";if(error==="BINDING_ACTION_TARGET_UNSUPPORTED")return"该型号没有公开可写目标设备参数";if(error==="BINDING_ACTION_CHANNEL_UNSUPPORTED"||error==="BINDING_ACTION_CHANNEL_MISSING")return"该型号未公开普通灯所需的有线回路参数";if(error==="BINDING_ACTION_PARAMETERS_UNKNOWN")return"绑定动作包含未公开含义的厂商参数";if(error==="XIAOMI_CLOUD_HTTP_401")return"米家登录已失效，请重新扫码登录";if(error==="XIAOMI_CLOUD_HTTP_403")return"米家云拒绝访问，请重新登录并确认所在区域";if(error.startsWith("XIAOMI_PROPERTY_CODE_"))return`设备未接受该设置，错误码 ${error.slice("XIAOMI_PROPERTY_CODE_".length)}`;if(error.startsWith("MIOT_SPEC_HTTP_"))return`设备规格服务返回 HTTP ${error.split("_").pop()}`;if(error.startsWith("XIAOMI_CLOUD_HTTP_"))return`米家云返回 HTTP ${error.split("_").pop()}`;if(error.startsWith("XIAOMI_CLOUD_CODE_"))return`米家云错误 ${error.split("_").pop()}，请确认服务器区域`;return`连接米家云失败：${error||"未知错误"}`}
