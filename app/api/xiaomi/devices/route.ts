@@ -271,11 +271,11 @@ function validIdentifier(value: string | null) {
   return Boolean(value && value.length <= 128 && !/[\u0000-\u001f]/.test(value));
 }
 
-export async function GET(request?: NextRequest) {
+export async function GET(request: NextRequest) {
   const startedAt = Date.now();
   try {
-    const requestedHomeId = request?.nextUrl.searchParams.get("homeId") ?? null;
-    const includeScenes = request?.nextUrl.searchParams.get("includeScenes") === "1";
+    const requestedHomeId = request.nextUrl.searchParams.get("homeId");
+    const includeScenes = request.nextUrl.searchParams.get("includeScenes") === "1";
     if (requestedHomeId && !validIdentifier(requestedHomeId)) return NextResponse.json({ error: "INVALID_HOME_ID", retryable: false }, { status: 400 });
     const value = (await cookies()).get("xiaomi_session")?.value;
     if (!value) return NextResponse.json({ error: "XIAOMI_NOT_CONNECTED" }, { status: 401 });
