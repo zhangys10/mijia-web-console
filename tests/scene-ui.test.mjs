@@ -9,7 +9,23 @@ test("connected scene UI never falls back to demo data", async () => {
   const source = await readFile(pageUrl, "utf8");
   assert.match(source, /connection\.connected\?\(selectedHome==="demo"\?\[\]:sceneState\.items\):demoScenes/);
   assert.match(source, /connection\.connected\)void loadScenes\(homeId\)/, "switching homes must load that home's scenes");
-  assert.match(source, /const homeId=await loadDevices\(true\);await loadScenes\(homeId,true\)/, "manual sync must refresh scenes");
+  assert.match(source, /URLSearchParams\(\{includeScenes:"1"\}\)/, "device sync must include the selected home's scenes in the same request");
+  assert.doesNotMatch(source, /await loadDevices\(true\);await loadScenes/, "manual sync must not issue a second scene request");
+  assert.match(source, /setDevices\(\[\]\);setHomes\(\[\]\);setSelectedHome\(""\)/, "a failed first live sync must not leave demo devices visible");
+});
+
+test("sync UI deduplicates requests, caches scenes, and cools down retryable failures", async () => {
+  const source = await readFile(pageUrl, "utf8");
+  assert.match(source, /syncInFlight=useRef<Promise<void>\|null>/);
+  assert.match(source, /deviceLoadInFlight=useRef<Promise<string>\|null>/);
+  assert.match(source, /sceneRequests=useRef\(new Map<string,Promise<void>>\(\)\)/);
+  assert.match(source, /if\(!force&&scenesByHome\[homeId\]\?\.loaded\)return/);
+  assert.match(source, /if\(syncInFlight\.current\)return syncInFlight\.current/);
+  assert.match(source, /if\(deviceLoadInFlight\.current\)return deviceLoadInFlight\.current/);
+  assert.match(source, /beginSyncCooldown\(error\.retryAfterSeconds\)/);
+  assert.match(source, /lastSuccessfulSync/);
+  assert.match(source, /syncWarningSummary\(syncWarnings\)/);
+  assert.match(source, /部分设备状态待确认/);
 });
 
 test("scene cards represent loading, empty, error and duplicate-execution states", async () => {

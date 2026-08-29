@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { listDevices, listHomes, unseal, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
+import { listDevices, listHomes, unseal, xiaomiErrorInfo, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
 import { assertHomeAccess, listRawManualScenes, parseManualScenes } from "../../../../lib/xiaomi-scenes";
 import { assertBasicSceneDraft, buildCreatePayload, createEditorDraft, sceneDraftMatchesWrite, sceneIdFromEditResponse, sceneRecordId, submitSceneEdit, validateSceneDraftCapabilities } from "../../../../lib/xiaomi-scene-editor";
 
@@ -18,13 +18,15 @@ export async function GET(request: NextRequest) {
     const homes = await listHomes(session);
     try { assertHomeAccess(homes, homeId!); }
     catch { return NextResponse.json({ error: "XIAOMI_HOME_NOT_FOUND" }, { status: 404 }); }
-    const [rawScenes, devices] = await Promise.all([listRawManualScenes(session, homeId!), listDevices(session).catch(() => ({ devices: [] }))]);
-    const scenes = parseManualScenes({ result: rawScenes }, homeId!, devices.devices);
+    const rawScenes = await listRawManualScenes(session, homeId!);
+    const scenes = parseManualScenes({ result: rawScenes }, homeId!);
     return NextResponse.json({ ok: true, homeId, scenes, capturedAt: new Date().toISOString() });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
-    console.error("[xiaomi-scenes-list]", JSON.stringify({ error: message }));
-    return NextResponse.json({ ok: false, error: message }, { status: 502 });
+    const failure = xiaomiErrorInfo(error);
+    console.error("[xiaomi-scenes-list]", JSON.stringify({ vercelRegion: process.env.VERCEL_REGION ?? null, error: failure.message }));
+    if (failure.status === 401) (await cookies()).delete("xiaomi_session");
+    const headers = failure.retryAfterSeconds ? { "Retry-After": String(failure.retryAfterSeconds) } : undefined;
+    return NextResponse.json({ ok: false, error: failure.message, retryable: failure.retryable, ...(failure.retryAfterSeconds ? { retryAfterSeconds: failure.retryAfterSeconds } : {}) }, { status: failure.status, headers });
   }
 }
 

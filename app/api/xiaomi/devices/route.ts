@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { collectDeviceGroupMembers, isDeviceGroupId } from "../../../../lib/device-groups";
 import {
   buildDeviceTopology,
@@ -12,7 +12,8 @@ import {
 import { inferHardwareRole } from "../../../../lib/device-views";
 import { getMiotCapabilities, type MiotCapabilityGroup, type MiotCapabilityProperty } from "../../../../lib/miot-spec";
 import { diagnoseSwitchMode, isSwitchModeProperty } from "../../../../lib/switch-channel-mode";
-import { listDevices, unseal, xiaomiRequest, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
+import { listDevices, unseal, xiaomiErrorInfo, xiaomiRequest, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
+import { listRawManualScenes, parseManualScenes } from "../../../../lib/xiaomi-scenes";
 
 type RawDevice = Record<string, unknown>;
 type PropertyValue = boolean | number | string;
@@ -24,10 +25,6 @@ type PropertyResultState =
   | { status: "property-batch-failed" };
 
 const debugRuntime = process.env.XIAOMI_RUNTIME_DEBUG === "1";
-
-function redactedDid(did: string) {
-  return did.length <= 4 ? "••••" : `••••${did.slice(-4)}`;
-}
 
 function errorCode(error: unknown) {
   const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
@@ -128,7 +125,7 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
     const role = inferHardwareRole(model, text(device.name));
     if (!isOnline(device)) {
       if (role === "controller" || role === "switch") {
-        runtimeDiagnostic("device-skipped", { did: redactedDid(did), model, reason: "device-offline" });
+        runtimeDiagnostic("device-skipped", { model, reason: "device-offline" });
       }
       continue;
     }
@@ -136,7 +133,6 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
       const switchGroups = groups.filter(group => group.name === "switch");
       if (!switchGroups.length) {
         runtimeDiagnostic("switch-services-missing", {
-          did: redactedDid(did),
           model,
           reason: specificationFailures.has(specificationKey) ? "spec-unavailable" : "switch-service-missing",
           error: specificationFailures.get(specificationKey) ?? null,
@@ -149,7 +145,6 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
         for (const property of [on, mode]) if (property) plans.set(propertyKey(did, property.siid, property.piid), { did, siid: property.siid, piid: property.piid });
         if (model === "xiaomi.controller.oh4w" && !mode) {
           runtimeDiagnostic("mode-property-missing", {
-            did: redactedDid(did),
             model,
             siid: group.siid,
             properties: group.properties.map(property => ({ name: property.name, piid: property.piid, readable: property.readable })),
@@ -168,10 +163,14 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
 
   const values = new Map<string, PropertyValue>();
   const resultStates = new Map<string, PropertyResultState>();
-  await Promise.all(chunks([...plans.values()], 40).map(async (batch, batchIndex) => {
+  const incompletePropertyBatches = new Set<number>();
+  const retryablePropertyBatches = new Set<number>();
+  const propertyBatches = chunks([...plans.values()], 40);
+  await Promise.all(propertyBatches.map(async (batch, batchIndex) => {
     try {
       const response = await xiaomiRequest(session, "/app/miotspec/prop/get", { params: batch });
       if (!Array.isArray(response.result)) {
+        incompletePropertyBatches.add(batchIndex);
         for (const plan of batch) resultStates.set(propertyKey(plan.did, plan.siid, plan.piid), { status: "property-result-invalid" });
         runtimeDiagnostic("property-batch-invalid", { batch: batchIndex + 1, requested: batch.length });
         return;
@@ -201,7 +200,10 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
         accepted,
         rejected,
       });
+      if (rejected > 0 || response.result.length < batch.length) incompletePropertyBatches.add(batchIndex);
     } catch (error) {
+      incompletePropertyBatches.add(batchIndex);
+      if (xiaomiErrorInfo(error).retryable) retryablePropertyBatches.add(batchIndex);
       const failure = errorCode(error);
       for (const plan of batch) resultStates.set(propertyKey(plan.did, plan.siid, plan.piid), { status: "property-batch-failed" });
       runtimeDiagnostic("property-batch-failed", { batch: batchIndex + 1, requested: batch.length, error: failure });
@@ -220,7 +222,6 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
     if (diagnostic.capability === "unknown") {
       const resultState = modeKey ? resultStates.get(modeKey) : undefined;
       runtimeDiagnostic("channel-mode-unknown", {
-        did: redactedDid(did),
         model: deviceModel(descriptor.device),
         siid: descriptor.group.siid,
         modeProperty: descriptor.mode ? { name: descriptor.mode.name, piid: descriptor.mode.piid } : null,
@@ -232,7 +233,6 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
       });
     } else if (deviceModel(descriptor.device) === "xiaomi.controller.oh4w") {
       runtimeDiagnostic("channel-mode-resolved", {
-        did: redactedDid(did),
         model: deviceModel(descriptor.device),
         siid: descriptor.group.siid,
         piid: descriptor.mode?.piid ?? null,
@@ -264,21 +264,32 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
       powerControl: descriptor.property.writable ? { did, siid: descriptor.property.siid, piid: descriptor.property.piid } : undefined,
     });
   }
-  return { channels, devicePower };
+  return { channels, devicePower, specificationFailureCount: specificationFailures.size, failedPropertyBatchCount: incompletePropertyBatches.size, retryablePropertyBatchCount: retryablePropertyBatches.size, propertyBatchCount: propertyBatches.length };
 }
 
-export async function GET() {
+function validIdentifier(value: string | null) {
+  return Boolean(value && value.length <= 128 && !/[\u0000-\u001f]/.test(value));
+}
+
+export async function GET(request?: NextRequest) {
+  const startedAt = Date.now();
   try {
+    const requestedHomeId = request?.nextUrl.searchParams.get("homeId") ?? null;
+    const includeScenes = request?.nextUrl.searchParams.get("includeScenes") === "1";
+    if (requestedHomeId && !validIdentifier(requestedHomeId)) return NextResponse.json({ error: "INVALID_HOME_ID", retryable: false }, { status: 400 });
     const value = (await cookies()).get("xiaomi_session")?.value;
     if (!value) return NextResponse.json({ error: "XIAOMI_NOT_CONNECTED" }, { status: 401 });
     const session = await unseal<XiaomiSession>(value);
+    const discoveryStartedAt = Date.now();
     const result = await listDevices(session);
+    const discoveryDurationMs = Date.now() - discoveryStartedAt;
+    const runtimeStartedAt = Date.now();
     const runtime = await loadRuntimeState(session, result.devices);
+    const runtimeDurationMs = Date.now() - runtimeStartedAt;
     const topology = buildDeviceTopology(result.devices, runtime.channels, result.controlObjectResults);
     for (const mapped of new Set([...topology.values()])) {
       for (const channel of mapped.channels) {
         runtimeDiagnostic("channel-control-classified", {
-          did: mapped.parentId ? redactedDid(mapped.parentId) : null,
           siid: channel.channelSiid,
           modeCapability: channel.modeCapability,
           controlObjectStatus: channel.controlObjectStatus,
@@ -322,10 +333,71 @@ export async function GET() {
         topology: mappedTopology ?? null,
       };
     });
-    return NextResponse.json({ homes: result.homes, devices, stateCapturedAt: new Date().toISOString() });
+    const selectedHomeId = result.homes.some(home => home.id === requestedHomeId) ? requestedHomeId! : result.homes[0]?.id ?? null;
+    const warnings: Array<{ code: string; scope: "devices" | "properties" | "specifications" | "scenes"; retryable: boolean; retryAfterSeconds?: number }> = [...result.warnings];
+    if (runtime.failedPropertyBatchCount > 0) warnings.push({ code: "XIAOMI_PROPERTIES_PARTIAL", scope: "properties", retryable: runtime.retryablePropertyBatchCount > 0 });
+    if (runtime.specificationFailureCount > 0) warnings.push({ code: "MIOT_SPECIFICATIONS_PARTIAL", scope: "specifications", retryable: false });
+    let scenes;
+    let sceneDurationMs = 0;
+    let sceneAttemptCount = 0;
+    let scenesCompleteness: "complete" | "partial" | "not-requested" = "not-requested";
+    if (includeScenes && selectedHomeId) {
+      const sceneStartedAt = Date.now();
+      sceneAttemptCount = 1;
+      try {
+        const rawScenes = await listRawManualScenes(session, selectedHomeId);
+        scenes = parseManualScenes({ result: rawScenes }, selectedHomeId, result.devices);
+        scenesCompleteness = "complete";
+      } catch (error) {
+        const failure = xiaomiErrorInfo(error);
+        warnings.push({ code: errorCode(error), scope: "scenes", retryable: failure.retryable, ...(failure.retryAfterSeconds ? { retryAfterSeconds: failure.retryAfterSeconds } : {}) });
+        scenesCompleteness = "partial";
+      } finally {
+        sceneDurationMs = Date.now() - sceneStartedAt;
+      }
+    }
+    const capturedAt = new Date().toISOString();
+    const diagnostic = {
+      vercelRegion: process.env.VERCEL_REGION ?? null,
+      sessionRegion: session.region,
+      durationMs: Date.now() - startedAt,
+      discoveryDurationMs,
+      runtimeDurationMs,
+      sceneDurationMs,
+      deviceRequestAttemptCount: result.requestAttemptCount,
+      propertyRequestAttemptCount: runtime.propertyBatchCount,
+      sceneRequestAttemptCount: sceneAttemptCount,
+      totalXiaomiRequestAttemptCount: result.requestAttemptCount + runtime.propertyBatchCount + sceneAttemptCount,
+      successfulHomeCount: result.successfulHomeCount,
+      failedHomeCount: result.failedHomeCount,
+      propertyBatchFailureCount: runtime.failedPropertyBatchCount,
+      warningCount: warnings.length,
+    };
+    console.info("[xiaomi-sync]", JSON.stringify(diagnostic));
+    return NextResponse.json({
+      homes: result.homes,
+      devices,
+      selectedHomeId,
+      ...(scenes ? { scenes } : {}),
+      capturedAt,
+      stateCapturedAt: capturedAt,
+      completeness: {
+        devices: result.completeness,
+        properties: runtime.failedPropertyBatchCount > 0 ? "partial" : "complete",
+        specifications: runtime.specificationFailureCount > 0 ? "partial" : "complete",
+        scenes: scenesCompleteness,
+      },
+      warnings,
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
-    console.error("[xiaomi-devices]", JSON.stringify({ error: message }));
-    return NextResponse.json({ error: message }, { status: 502 });
+    const failure = xiaomiErrorInfo(error);
+    console.error("[xiaomi-devices]", JSON.stringify({
+      vercelRegion: process.env.VERCEL_REGION ?? null,
+      durationMs: Date.now() - startedAt,
+      error: failure.message,
+    }));
+    if (failure.status === 401) (await cookies()).delete("xiaomi_session");
+    const headers = failure.retryAfterSeconds ? { "Retry-After": String(failure.retryAfterSeconds) } : undefined;
+    return NextResponse.json({ error: failure.message, retryable: failure.retryable, ...(failure.retryAfterSeconds ? { retryAfterSeconds: failure.retryAfterSeconds } : {}) }, { status: failure.status, headers });
   }
 }
