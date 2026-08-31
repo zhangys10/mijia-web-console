@@ -96,7 +96,7 @@ test("editor groups use DID identity and keep the underlying action indices", ()
   const action = (clientId, did, value, piid = 1) => ({ clientId, kind: "set-properties", did, deviceName: did, model: "light.v1", label: "设置设备属性", properties: [{ siid: 2, piid, value }] });
   const actions = [action("one", "living-1", false), action("ac", "ac-1", false), action("two", "living-2", false), action("brightness", "bedroom-1", 20, 2)];
   const groups = groupSceneDraftActions(actions, devices);
-  assert.equal(groups[0].label, "属性 2.1 关闭");
+  assert.equal(groups[0].label, "未识别属性 关闭");
   const living = groups[0].rooms.find(room => room.room === "客厅");
   assert.deepEqual(living.items[0].indices, [0, 2]);
   assert.equal(living.items[0].collapsible, true);

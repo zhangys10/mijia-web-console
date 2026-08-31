@@ -425,6 +425,7 @@ type DeviceSyncResponse = {
 响应规则：
 
 - 同步同时读取设备列表、必要型号规格和实时状态。
+- 设备列表必须遍历账号可见的全部家庭，并按 `has_more`、`max_did`、`start_did` 读取每个家庭的全部分页；后续页失败时保留已确认设备并将同步标记为 `partial`，缺失或重复游标不得伪装为完整结果。
 - 状态读取失败时仍返回设备，相关连接类型和状态设为 `unknown`。
 - 每个 switch 通道公开 `modeCapability`、`controlObjectStatus`、`controlObjectComplete` 和组合判定 `classification`。
 - 只有 `controlObjectStatus="available"` 且 `controlObjectComplete=true` 的空结果可作为“确认无智能绑定”的证据。
@@ -649,6 +650,22 @@ clear-wireless
 9. 桌面端和移动端均保留全部筛选与配置能力。
 
 ## 14. 代码与规格参考
+
+### 14.1 自动化安全边界
+
+自动化列表使用与手动场景相同的 `AppSceneService/GetSceneList`，并以触发器是否为 `user.click` 区分手动场景与自动化。所有索引、设备条件、动作候选和名称冲突检查均以 `homeId` 为第一层作用域。
+
+自动化编辑遵循以下约束：
+
+1. 客户端只接收脱敏后的条件/动作节点和服务端生成的 revision，不接收原始 scene record、位置坐标、账号字段或厂商私有 payload。
+2. 定时条件和标准 MIoT 属性动作可以安全创建；写入前再次按同家庭设备与型号规格验证 DID、siid、piid、格式和范围。
+3. 设备事件、天气、位置及厂商自定义 `sc_id`/`sa_id` 在没有已验证通用字典时保持只读。
+4. 更新时按 source index 保留未知节点；条件区和动作区分别判断是否可编辑。
+5. revision 不一致返回冲突；提交后必须重新读取并逐项核对名称、启用状态、条件和动作，不能把仅收到成功响应当成写入完成。
+6. 新建自动化默认停用，当前版本不提供删除接口。
+7. 设备自动化能力发现优先查询 `GetSceneTCAConfigV3`，请求必须携带当前家庭的真实 `home_id`、`owner_uid` 与物理 DID；响应按 `model_TCA_list.dids` 建立实例关联，并逐条排除 `black_dids`。分页后续失败时保留已确认的前页证据；重复 `sc_id`/`sa_id` 的黑名单取并集，畸形黑名单整条失效。
+8. V3 失败时可按已同步型号查询小米官方百科 scene 目录；该目录仅提供型号级证据，不能覆盖 V3 的实例黑名单。两者都失败时才使用 MIoT Spec 作为只读展示兜底。
+9. TCA 与型号目录的 `sc_id`/`sa_id`、`key`、`command` 和 `value` 仅在服务端解析。客户端只接收脱敏标签、能力类型与明确的 `siid`/`piid`/`eiid`/`aiid`；未经真实场景节点验证的条件不得直接合成写入 payload。
 
 核心实现文件：
 

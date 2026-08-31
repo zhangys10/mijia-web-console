@@ -10,6 +10,16 @@ export type MiotCapabilityProperty = { key: string; name: string; label: string;
 export type MiotCapabilityAction = { key: string; name: string; label: string; siid: number; aiid: number; inputs: number[] };
 export type MiotCapabilityEvent = { key: string; name: string; label: string; siid: number; eiid: number; arguments: number[] };
 export type MiotCapabilityGroup = { key: string; name: string; label: string; siid: number; properties: MiotCapabilityProperty[]; actions: MiotCapabilityAction[]; events: MiotCapabilityEvent[] };
+export type MiotAutomationTriggerCapability = {
+  key: string;
+  kind: "property" | "event";
+  label: string;
+  detail: string;
+  siid: number;
+  piid?: number;
+  eiid?: number;
+  value?: number | string | boolean;
+};
 
 const labels: Record<string, string> = {
   switch: "按键", "switch-sensor": "按键事件", "switch-panel": "按键绑定", "switch-relay": "按键负载映射",
@@ -28,7 +38,8 @@ const labels: Record<string, string> = {
   "double-click": "双击", "long-press": "长按", "key-pressed": "按键按下", toggle: "切换开关状态",
   brightness: "亮度", "color-temperature": "色温", "target-temperature": "目标温度", "target-humidity": "目标湿度",
   "fan-level": "风速档位", "horizontal-swing": "左右摇头", "start-sweep": "开始清扫", "stop-sweeping": "停止清扫",
-  "start-charge": "返回充电", "motor-control": "电机控制", "target-position": "目标位置", status: "运行状态",
+  "start-charge": "返回充电", curtain: "窗帘", "motor-controller": "窗帘电机", "motor-control": "电机控制", "target-position": "目标位置", status: "运行状态",
+  open: "打开", close: "关闭", pause: "暂停",
   "battery-level": "电池电量", "electric-power": "功率", "power-consumption": "用电量", light: "灯光",
   "air-conditioner": "空调", fan: "风扇", vacuum: "扫拖机器人", humidifier: "加湿器", outlet: "插座",
 };
@@ -40,8 +51,9 @@ let instanceIndex: Promise<void> | undefined;
 
 function typeName(type: string) { return type.split(":")[3] ?? type; }
 function translatedName(name: string, fallback?: string) {
-  if (labels[name]) return labels[name];
-  const base = name.replace(/[-_](?:i{1,4}|[a-d]|\d+)$/i, "");
+  const normalized = name.toLowerCase();
+  if (labels[normalized]) return labels[normalized];
+  const base = normalized.replace(/[-_](?:i{1,4}|[a-d]|\d+)$/i, "");
   if (labels[base]) return labels[base];
   return fallback || name.replace(/-/g, " ");
 }
@@ -123,4 +135,42 @@ export function normalizeMiotSpecification(model: string, urn: string, spec: Mio
     groups.push({ key: String(service.iid), name, label: name === "switch" ? `按键 ${index}` : index > 1 ? `${groupLabel} ${index}` : groupLabel, siid: service.iid, properties, actions, events });
   }
   return { model, urn, description: spec.description ?? model, groups };
+}
+
+export function listMiotAutomationTriggerCapabilities(groups: MiotCapabilityGroup[]): MiotAutomationTriggerCapability[] {
+  return groups.flatMap(group => {
+    const events = group.events.map(event => ({
+      key: `event:${event.siid}.${event.eiid}`,
+      kind: "event" as const,
+      label: `${group.label} · ${event.label}`,
+      detail: "设备事件",
+      siid: event.siid,
+      eiid: event.eiid,
+    }));
+    const properties = group.properties.filter(property => property.notify).flatMap(property => {
+      const values = property.choices?.length
+        ? property.choices
+        : property.format === "bool"
+          ? [{ value: true, label: "开启" }, { value: false, label: "关闭" }]
+          : [];
+      if (!values.length) return [{
+        key: `property:${property.siid}.${property.piid}`,
+        kind: "property" as const,
+        label: `${group.label} · ${property.label}变化`,
+        detail: property.range ? `${property.range.min}–${property.range.max}${property.unit ? ` ${property.unit}` : ""}` : "属性变化",
+        siid: property.siid,
+        piid: property.piid,
+      }];
+      return values.map(choice => ({
+        key: `property:${property.siid}.${property.piid}:${String(choice.value)}`,
+        kind: "property" as const,
+        label: `${group.label} · ${property.label}：${choice.label}`,
+        detail: "属性状态",
+        siid: property.siid,
+        piid: property.piid,
+        value: choice.value,
+      }));
+    });
+    return [...events, ...properties];
+  });
 }

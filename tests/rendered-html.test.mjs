@@ -30,7 +30,9 @@ test("renders the Xiaomi smart home dashboard", async () => {
   assert.match(html, /<title>米家 Web 控制台<\/title>/);
   assert.match(html, /<meta name="viewport" content="width=device-width, initial-scale=1"/, "mobile devices need a device-width viewport");
   assert.match(html, /<meta name="theme-color" content="#fafbfc"/, "mobile browsers should inherit the dashboard theme");
-  assert.match(html, /aria-label="账号与连接"/, "mobile users must retain access to Xiaomi account settings");
+  assert.match(html, /aria-label="打开菜单"/, "mobile users must be able to open the full navigation drawer");
+  assert.match(html, /aria-label="主菜单"/);
+  assert.match(html, /账号与连接/, "the navigation drawer must retain Xiaomi account settings");
   assert.match(html, /扫码连接米家/);
   assert.match(html, /aria-label="选择家庭"/);
   assert.match(html, /当前家庭/);
@@ -121,6 +123,32 @@ test("reading, running or writing scenes requires an authenticated Xiaomi sessio
     new Request("http://localhost/api/xiaomi/scenes/scene-1?homeId=home-1", {
       method: "PUT",
       headers: { "content-type": "application/json" },
+      body: JSON.stringify({ homeId: "home-1", name: "测试", revision: "a".repeat(64) }),
+    }),
+  ]) {
+    const response = await worker.fetch(request, env, context);
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: "XIAOMI_NOT_CONNECTED" });
+  }
+});
+
+test("reading or writing automations requires an authenticated Xiaomi session", async () => {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("test", `automations-${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
+  const context = { waitUntil() {}, passThroughOnException() {} };
+
+  for (const request of [
+    new Request("http://localhost/api/xiaomi/automations?homeId=home-1"),
+    new Request("http://localhost/api/xiaomi/automations/catalog?homeId=home-1"),
+    new Request("http://localhost/api/xiaomi/automations", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ homeId: "home-1", name: "测试", schedule: { time: "08:00", weekdays: [1] }, actions: [] }),
+    }),
+    new Request("http://localhost/api/xiaomi/automations/automation-1?homeId=home-1"),
+    new Request("http://localhost/api/xiaomi/automations/automation-1?homeId=home-1", {
+      method: "PUT", headers: { "content-type": "application/json" },
       body: JSON.stringify({ homeId: "home-1", name: "测试", revision: "a".repeat(64) }),
     }),
   ]) {

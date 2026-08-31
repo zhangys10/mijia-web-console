@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildDeviceTopology, deviceChannelStateKey, topologyForDevice } from "../lib/device-topology.ts";
 import { classifyDeviceKind, inferHardwareRole, physicalDeviceId } from "../lib/device-views.ts";
-import { normalizeMiotSpecification } from "../lib/miot-spec.ts";
+import { listMiotAutomationTriggerCapabilities, normalizeMiotSpecification } from "../lib/miot-spec.ts";
 import {
   analyzeSwitchBindingCapabilities,
   buildBindingActionParameters,
@@ -74,6 +74,63 @@ test("retains readable status plus exact choice and range metadata", () => {
   assert.deepEqual(result.groups[0].properties[0].choices, [{ value: 0, label: "关闭" }, { value: 1, label: "常亮" }]);
   assert.deepEqual(result.groups[0].properties[1].range, { min: 1, max: 60, step: 1 });
   assert.equal(result.groups[0].properties[2].writable, false);
+});
+
+test("gives curtain automation properties and values readable Chinese labels", () => {
+  const result = normalizeMiotSpecification("vendor.curtain.v1", "urn:example", {
+    type: "urn:example",
+    services: [{
+      iid: 2,
+      type: "urn:miot-spec-v2:service:curtain:00007816:vendor:1",
+      description: "curtain",
+      properties: [{
+        iid: 1,
+        type: "urn:miot-spec-v2:property:motor-control:00000038:vendor:1",
+        description: "motor control",
+        format: "uint8",
+        access: ["write"],
+        "value-list": [
+          { value: 0, description: "Open" },
+          { value: 1, description: "Close" },
+          { value: 2, description: "Pause" },
+          { value: 3, description: "Toggle" },
+        ],
+      }],
+    }],
+  });
+
+  assert.equal(result.groups[0].label, "窗帘");
+  assert.equal(result.groups[0].properties[0].label, "电机控制");
+  assert.deepEqual(result.groups[0].properties[0].choices, [
+    { value: 0, label: "打开" },
+    { value: 1, label: "关闭" },
+    { value: 2, label: "暂停" },
+    { value: 3, label: "切换开关状态" },
+  ]);
+});
+
+test("derives automation-visible state changes from notify properties and events", () => {
+  const specification = normalizeMiotSpecification("vendor.sensor.test", "urn:example", {
+    services: [{
+      iid: 2,
+      type: "urn:miot-spec-v2:service:light:00007802:vendor:1",
+      description: "灯光",
+      properties: [
+        { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:vendor:1", description: "开关", format: "bool", access: ["read", "notify"] },
+        { iid: 2, type: "urn:miot-spec-v2:property:status:00000007:vendor:1", description: "状态", format: "uint8", access: ["read", "notify"], "value-list": [{ value: 1, description: "运行" }, { value: 2, description: "暂停" }] },
+        { iid: 3, type: "urn:miot-spec-v2:property:battery-level:00000014:vendor:1", description: "电量", format: "uint8", access: ["read"] },
+      ],
+      events: [{ iid: 1, type: "urn:miot-spec-v2:event:motion-detected:0000500C:vendor:1", description: "检测到移动", arguments: [] }],
+    }],
+  });
+
+  assert.deepEqual(listMiotAutomationTriggerCapabilities(specification.groups).map(item => ({ key: item.key, label: item.label, value: item.value })), [
+    { key: "event:2.1", label: "灯光 · 检测到移动", value: undefined },
+    { key: "property:2.1:true", label: "灯光 · 开关：开启", value: true },
+    { key: "property:2.1:false", label: "灯光 · 开关：关闭", value: false },
+    { key: "property:2.2:1", label: "灯光 · 运行状态：运行", value: 1 },
+    { key: "property:2.2:2", label: "灯光 · 运行状态：暂停", value: 2 },
+  ]);
 });
 
 test("does not treat a mode toggle or vendor local-control action as a cloud binding API", () => {

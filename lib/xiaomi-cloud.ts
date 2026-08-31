@@ -221,6 +221,10 @@ function rc4(key: Uint8Array, payload: Uint8Array) {
 function encryptRc4(key: string, payload: string) { return bytesToBase64(rc4(base64ToBytes(key), encoder.encode(payload))); }
 function decryptRc4(key: string, payload: string) { return decoder.decode(rc4(base64ToBytes(key), base64ToBytes(payload))); }
 
+export function miotActionPayload(did: string, siid: number, aiid: number, inputs: unknown[]) {
+  return { params: { did, siid, aiid, in: inputs } };
+}
+
 async function encSignature(path: string, signed: string, params: Record<string, string>) {
   const canonicalPath = path.replace(/^\/app\//, "/");
   const source = ["POST", canonicalPath, ...Object.entries(params).map(([name, value]) => `${name}=${value}`), signed].join("&");
@@ -295,9 +299,13 @@ export function collectXiaomiHomes(result: Record<string, unknown> | undefined) 
 }
 
 export type XiaomiHome = { id: string; name: string };
+export type XiaomiHomeContext = XiaomiHome & { ownerUid: string };
 
-export async function listHomes(session: XiaomiSession): Promise<XiaomiHome[]> {
-  const response = await xiaomiRequest(session, "/app/v2/homeroom/gethome", {
+export async function listHomeContexts(
+  session: XiaomiSession,
+  request: typeof xiaomiRequest = xiaomiRequest,
+): Promise<XiaomiHomeContext[]> {
+  const response = await request(session, "/app/v2/homeroom/gethome", {
     fg: true,
     fetch_share: true,
     fetch_share_dev: true,
@@ -308,7 +316,12 @@ export async function listHomes(session: XiaomiSession): Promise<XiaomiHome[]> {
   return homes.map(home => ({
     id: String(home.home_id ?? home.id ?? ""),
     name: String(home.name ?? home.home_name ?? "我的家"),
+    ownerUid: String(home.home_owner ?? home.owner_id ?? home.uid ?? session.userId),
   }));
+}
+
+export async function listHomes(session: XiaomiSession): Promise<XiaomiHome[]> {
+  return (await listHomeContexts(session)).map(({ id, name }) => ({ id, name }));
 }
 
 export function mergeXiaomiDeviceRecords(legacyDevices: Array<Record<string, unknown>>, primaryDevices: Array<Record<string, unknown>>) {
@@ -364,9 +377,10 @@ export async function listDevices(
     const result = homesResponse.result as Record<string, unknown> | undefined;
     homes = collectXiaomiHomes(result);
     if (homes.length > 0) {
-      for (const home of homes.slice(0, 10)) {
+      for (const home of homes) {
         const homeId = String(home.home_id ?? home.id ?? "");
         const homeName = String(home.name ?? home.home_name ?? "我的家");
+        const homeOwner = home.home_owner ?? home.owner_id ?? home.uid ?? session.userId;
         const roomEntries = (home.roomlist ?? home.room_info ?? home.rooms ?? []) as Array<Record<string, unknown>>;
         const roomByDevice = new Map<string, string>();
         const roomById = new Map<string, string>();
@@ -377,10 +391,20 @@ export async function listDevices(
         }
         for (const did of (home.dids ?? home.did_list ?? []) as unknown[]) if (!homeByDevice.has(String(did))) homeByDevice.set(String(did), { id: homeId, name: homeName, room: "未分配" });
         try {
-          const response = await trackedRequest(session, "/app/v2/home/home_device_list", { home_owner: home.home_owner ?? home.owner_id ?? session.userId, home_id: home.home_id ?? home.id, limit: 200, get_split_device: true, support_smart_home: true });
-          const payload = response.result as Record<string, unknown> | undefined;
-          const entries = (payload?.device_info ?? payload?.list ?? payload?.devices ?? []) as Array<Record<string, unknown>>;
-          for (const device of entries) primaryDevices.push({ ...device, homeId, homeName, roomName: device.room_name ?? roomByDevice.get(String(device.did)) ?? roomById.get(String(device.room_id ?? "")) ?? "未分配" });
+          let startDid = "";
+          const seenCursors = new Set<string>();
+          while (true) {
+            const response = await trackedRequest(session, "/app/v2/home/home_device_list", { home_owner: homeOwner, home_id: home.home_id ?? home.id, limit: 200, start_did: startDid, get_split_device: true, support_smart_home: true });
+            const payload = response.result as Record<string, unknown> | undefined;
+            const entries = (payload?.device_info ?? payload?.list ?? payload?.devices ?? []) as Array<Record<string, unknown>>;
+            const hasMore = payload?.has_more === true || payload?.has_more === 1;
+            const nextCursor = typeof payload?.max_did === "string" || typeof payload?.max_did === "number" ? String(payload.max_did) : "";
+            if (hasMore && (!nextCursor || seenCursors.has(nextCursor))) throw new XiaomiCloudError("XIAOMI_DEVICE_PAGE_CURSOR_INVALID", "protocol", false);
+            for (const device of entries) primaryDevices.push({ ...device, homeId, homeName, roomName: device.room_name ?? roomByDevice.get(String(device.did)) ?? roomById.get(String(device.room_id ?? "")) ?? "未分配" });
+            if (!hasMore) break;
+            seenCursors.add(nextCursor);
+            startDid = nextCursor;
+          }
           successfulHomeCount += 1;
         } catch (error) {
           failedHomeCount += 1;
@@ -389,7 +413,7 @@ export async function listDevices(
       }
       const mappedHomes = homes.map((home) => ({ id: String(home.home_id ?? home.id ?? ""), name: String(home.name ?? home.home_name ?? "我的家") }));
       if (!firstError) return deviceList(mappedHomes, primaryDevices, { completeness: "complete", warnings: [], successfulHomeCount, failedHomeCount: 0, requestAttemptCount });
-      if (successfulHomeCount > 0) {
+      if (successfulHomeCount > 0 || primaryDevices.length > 0) {
         const failure = xiaomiErrorInfo(firstError);
         return deviceList(mappedHomes, primaryDevices, {
           completeness: "partial",
