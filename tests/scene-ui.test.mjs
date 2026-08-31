@@ -7,6 +7,7 @@ const stylesUrl = new URL("../app/responsive.css", import.meta.url);
 
 test("connected scene UI never falls back to demo data", async () => {
   const source = await readFile(pageUrl, "utf8");
+  assert.match(source, /XIAOMI_DEVICE_HTTP_\$\{response\.status\}/, "deployment HTML errors must not leak JSON parser messages");
   assert.match(source, /connection\.connected\?\(selectedHome==="demo"\?\[\]:sceneState\.items\):demoScenes/);
   assert.match(source, /connection\.connected\)void loadScenes\(homeId\)/, "switching homes must load that home's scenes");
   assert.match(source, /URLSearchParams\(\{includeScenes:"1"\}\)/, "device sync must include the selected home's scenes in the same request");

@@ -12,6 +12,7 @@ import {
 import { inferHardwareRole } from "../../../../lib/device-views";
 import { getMiotCapabilities, type MiotCapabilityGroup, type MiotCapabilityProperty } from "../../../../lib/miot-spec";
 import { diagnoseSwitchMode, isSwitchModeProperty } from "../../../../lib/switch-channel-mode";
+import { withTimeoutFallback } from "../../../../lib/time-budget";
 import { listDevices, unseal, xiaomiErrorInfo, xiaomiRequest, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
 import { listRawManualScenes, parseManualScenes } from "../../../../lib/xiaomi-scenes";
 
@@ -264,7 +265,7 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
       powerControl: descriptor.property.writable ? { did, siid: descriptor.property.siid, piid: descriptor.property.piid } : undefined,
     });
   }
-  return { channels, devicePower, specificationFailureCount: specificationFailures.size, failedPropertyBatchCount: incompletePropertyBatches.size, retryablePropertyBatchCount: retryablePropertyBatches.size, propertyBatchCount: propertyBatches.length };
+  return { channels, devicePower, specificationFailureCount: specificationFailures.size, failedPropertyBatchCount: incompletePropertyBatches.size, retryablePropertyBatchCount: retryablePropertyBatches.size, propertyBatchCount: propertyBatches.length, timedOut: false };
 }
 
 function validIdentifier(value: string | null) {
@@ -284,7 +285,10 @@ export async function GET(request: NextRequest) {
     const result = await listDevices(session);
     const discoveryDurationMs = Date.now() - discoveryStartedAt;
     const runtimeStartedAt = Date.now();
-    const runtime = await loadRuntimeState(session, result.devices);
+    const runtime = await withTimeoutFallback(loadRuntimeState(session, result.devices), 12_000, () => {
+      runtimeDiagnostic("runtime-state-budget-exceeded", { budgetMs: 12_000, devices: result.devices.length });
+      return { channels: new Map(), devicePower: new Map(), specificationFailureCount: 0, failedPropertyBatchCount: 0, retryablePropertyBatchCount: 0, propertyBatchCount: 0, timedOut: true };
+    });
     const runtimeDurationMs = Date.now() - runtimeStartedAt;
     const topology = buildDeviceTopology(result.devices, runtime.channels, result.controlObjectResults);
     for (const mapped of new Set([...topology.values()])) {
@@ -335,6 +339,7 @@ export async function GET(request: NextRequest) {
     });
     const selectedHomeId = result.homes.some(home => home.id === requestedHomeId) ? requestedHomeId! : result.homes[0]?.id ?? null;
     const warnings: Array<{ code: string; scope: "devices" | "properties" | "specifications" | "scenes"; retryable: boolean; retryAfterSeconds?: number }> = [...result.warnings];
+    if (runtime.timedOut) warnings.push({ code: "XIAOMI_RUNTIME_STATE_TIMEOUT", scope: "properties", retryable: true, retryAfterSeconds: 8 });
     if (runtime.failedPropertyBatchCount > 0) warnings.push({ code: "XIAOMI_PROPERTIES_PARTIAL", scope: "properties", retryable: runtime.retryablePropertyBatchCount > 0 });
     if (runtime.specificationFailureCount > 0) warnings.push({ code: "MIOT_SPECIFICATIONS_PARTIAL", scope: "specifications", retryable: false });
     let scenes;
@@ -371,6 +376,7 @@ export async function GET(request: NextRequest) {
       successfulHomeCount: result.successfulHomeCount,
       failedHomeCount: result.failedHomeCount,
       propertyBatchFailureCount: runtime.failedPropertyBatchCount,
+      runtimeTimedOut: runtime.timedOut,
       warningCount: warnings.length,
     };
     console.info("[xiaomi-sync]", JSON.stringify(diagnostic));
@@ -383,8 +389,8 @@ export async function GET(request: NextRequest) {
       stateCapturedAt: capturedAt,
       completeness: {
         devices: result.completeness,
-        properties: runtime.failedPropertyBatchCount > 0 ? "partial" : "complete",
-        specifications: runtime.specificationFailureCount > 0 ? "partial" : "complete",
+        properties: runtime.timedOut || runtime.failedPropertyBatchCount > 0 ? "partial" : "complete",
+        specifications: runtime.timedOut || runtime.specificationFailureCount > 0 ? "partial" : "complete",
         scenes: scenesCompleteness,
       },
       warnings,
