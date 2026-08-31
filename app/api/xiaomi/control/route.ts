@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { unseal, xiaomiRequest, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
+import { miotActionPayload, unseal, xiaomiRequest, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
 
 function propertyResult(response: Record<string, unknown>) {
   const items = response.result;
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
     if (body.action === true) {
       const aiid = Number(body.aiid);
       if (!Number.isInteger(aiid) || aiid < 1) return NextResponse.json({ error: "INVALID_PROPERTY_MAPPING" }, { status: 400 });
-      const response = await xiaomiRequest(await unseal<XiaomiSession>(value), "/app/miotspec/action", { did: body.did, siid, aiid, in: Array.isArray(body.params) ? body.params : [] });
+      const response = await xiaomiRequest(await unseal<XiaomiSession>(value), "/app/miotspec/action", miotActionPayload(body.did, siid, aiid, Array.isArray(body.params) ? body.params : []));
       const result = response.result as Record<string, unknown> | undefined;
       if (result && typeof result.code === "number" && result.code !== 0) throw new Error(`XIAOMI_PROPERTY_CODE_${result.code}`);
       return NextResponse.json({ ok: true, did: body.did, result });

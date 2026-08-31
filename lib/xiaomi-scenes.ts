@@ -110,7 +110,7 @@ function airConditionerMode(value: unknown) {
   return modes.get(value) ?? primitive(value);
 }
 
-function propertyDetail(value: RawScene, device?: RawScene, deviceName = "") {
+function propertyDetail(value: RawScene, device?: RawScene, deviceName = "", actionLabel = "") {
   const siid = number(value.siid, 0);
   const piid = number(value.piid, 0);
   const formatted = primitive(value.value);
@@ -122,7 +122,10 @@ function propertyDetail(value: RawScene, device?: RawScene, deviceName = "") {
   }
   if (siid === 2 && piid === 2 && typeof value.value === "number") return { kind: "brightness" as const, label: "亮度", value: `${formatted}%` };
   if (siid === 2 && piid === 3 && typeof value.value === "number") return { kind: "color-temperature" as const, label: "色温", value: `${formatted} K` };
-  return { kind: "property" as const, label: siid && piid ? `属性 ${siid}.${piid}` : "属性", value: formatted };
+  const description = actionLabel && !["设置设备属性", "执行设备动作", "设备动作"].includes(actionLabel)
+    ? actionLabel
+    : "未识别属性";
+  return { kind: "property" as const, label: description, value: formatted };
 }
 
 function commandLabel(command: string) {
@@ -142,7 +145,7 @@ function normalizeActions(scene: RawScene, roomsByDid: Map<string, string>, devi
     const room = roomsByDid.get(did);
     const device = devicesByDid.get(did);
     const values = Array.isArray(payload?.value) ? payload.value.filter((item): item is RawScene => Boolean(record(item))) : [];
-    const details: ManualSceneActionDetail[] = values.map(value => propertyDetail(value, device, deviceName)).filter((item): item is NonNullable<ReturnType<typeof propertyDetail>> => Boolean(item));
+    const details: ManualSceneActionDetail[] = values.map(value => propertyDetail(value, device, deviceName, label)).filter((item): item is NonNullable<ReturnType<typeof propertyDetail>> => Boolean(item));
     const delay = number(payload?.delay_time ?? action.delay_time, 0);
     if (delay > 0) details.unshift({ kind: "delay", label: "延时", value: `${delay} 秒` });
     if (!details.length && command && label !== commandLabel(command)) details.push({ kind: "command", label: "方式", value: commandLabel(command) });

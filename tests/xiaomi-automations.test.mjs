@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   AUTOMATION_LIST_PATH,
+  buildAutomationTriggerCatalog,
   isAutomationRecord,
   listRawAutomations,
   parseAutomations,
@@ -56,6 +57,38 @@ test("classifies device, location, weather and unknown triggers as sanitized rea
   assert.deepEqual(automation.triggers.map(item => item.kind), ["device", "location", "weather", "unknown"]);
   assert.equal(automation.triggers.every(item => !item.editable), true);
   assert.doesNotMatch(JSON.stringify(automation), /secret-did|latitude|longitude|must-not-leak/);
+});
+
+test("groups device trigger templates by explicit same-home DID without exposing it", () => {
+  const automations = [{
+    scene_id: "mixed",
+    home_id: "home-1",
+    scene_trigger: { triggers: [
+      { src: "device", key: "property", name: "已打开", payload_json: { did: "door-1" } },
+      { src: "device", key: "property", name: "已打开", payload_json: { did: "door-2" } },
+      { src: "device", key: "property", name: "检测到移动", payload_json: { did: "unknown-device" } },
+      { src: "weather", key: "sunset", name: "日落后" },
+    ] },
+  }];
+  const templates = buildAutomationTriggerCatalog(automations, [
+    { did: "door-1", homeId: "home-1", name: "入户门", roomName: "玄关" },
+    { did: "door-2", homeId: "home-1", name: "阳台门", roomName: "阳台" },
+    { did: "unknown-device", homeId: "home-2", name: "其他家庭设备", roomName: "客厅" },
+  ], "home-1");
+
+  assert.deepEqual(templates.map(item => ({
+    kind: item.kind,
+    label: item.label,
+    deviceKey: item.deviceKey,
+    deviceName: item.deviceName,
+    room: item.room,
+  })), [
+    { kind: "device", label: "已打开", deviceKey: "device-1", deviceName: "入户门", room: "玄关" },
+    { kind: "device", label: "已打开", deviceKey: "device-2", deviceName: "阳台门", room: "阳台" },
+    { kind: "device", label: "检测到移动", deviceKey: undefined, deviceName: undefined, room: undefined },
+    { kind: "weather", label: "日落后", deviceKey: undefined, deviceName: undefined, room: undefined },
+  ]);
+  assert.doesNotMatch(JSON.stringify(templates), /door-1|door-2|unknown-device|其他家庭设备/);
 });
 
 test("creates a disabled, validated timer payload and rejects malformed schedules", () => {

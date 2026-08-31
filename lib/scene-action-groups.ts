@@ -94,7 +94,8 @@ function draftValueLabel(value: unknown) {
 
 function draftActionLabel(action: SceneEditorDraft["actions"][number]) {
   if (action.kind !== "set-properties" || !action.properties?.length) return action.label;
-  return action.properties.map(property => typeof property.value === "boolean" && /^(?:开关|电源)$/.test(property.label ?? "") ? draftValueLabel(property.value) : `${property.label || `属性 ${property.siid}.${property.piid}`} ${draftValueLabel(property.value)}`).join(" · ");
+  const fallback = action.label && action.label !== "设置设备属性" ? action.label : "未识别属性";
+  return action.properties.map(property => typeof property.value === "boolean" && /^(?:开关|电源)$/.test(property.label ?? "") ? draftValueLabel(property.value) : `${property.label || fallback} ${draftValueLabel(property.value)}`).join(" · ");
 }
 
 function draftPowerState(action: SceneEditorDraft["actions"][number]): "on" | "off" | undefined {

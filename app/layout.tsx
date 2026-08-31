@@ -5,6 +5,7 @@ import "./responsive.css";
 import "./device-management.css";
 import "./scene-editor.css";
 import "./automation-center.css";
+import "./typography.css";
 
 export const viewport: Viewport = {
   width: "device-width",

@@ -22,7 +22,9 @@
 - 修改未知规则时，服务端从米家云重新读取原始记录，仅替换明确编辑的字段，其他节点原样保留。
 - 新建自动化默认停用；创建和修改只有在米家云回读到一致结果后才向界面报告成功。
 
-自动化 API 为 `GET/POST /api/xiaomi/automations`、`GET/PUT /api/xiaomi/automations/:automationId` 和只返回安全标准能力的 `GET /api/xiaomi/automations/catalog`。当前版本不提供删除操作。
+设备条件与动作目录优先使用米家 App 同源的 `GetSceneTCAConfigV3`，按当前家庭真实 DID 和 `black_dids` 过滤；接口不可用时降级到小米官方型号目录，再降级到 MIoT Spec。目录响应只包含名称、类型和规格地址，不向客户端返回 TCA 原始节点或账号字段。
+
+自动化 API 为 `GET/POST /api/xiaomi/automations`、`GET/PUT /api/xiaomi/automations/:automationId` 和只返回脱敏能力目录的 `GET /api/xiaomi/automations/catalog`。当前版本不提供删除操作。
 
 设备建模与交互规则见 [设备管理设计](docs/device-management-design.md)。
 

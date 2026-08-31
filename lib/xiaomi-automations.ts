@@ -1,4 +1,5 @@
 import { xiaomiRequest, type XiaomiSession } from "./xiaomi-cloud.ts";
+import { parseDerivedDeviceId } from "./device-topology.ts";
 import {
   parsedSceneRecord,
   parseManualScenes,
@@ -26,6 +27,18 @@ export type XiaomiAutomation = {
   actions: ManualSceneAction[];
   actionCount: number;
   updatedAt?: string;
+};
+
+export type AutomationTriggerTemplate = {
+  key: string;
+  automationId: string;
+  sourceIndex: number;
+  kind: AutomationTrigger["kind"];
+  label: string;
+  detail?: string;
+  deviceKey?: string;
+  deviceName?: string;
+  room?: string;
 };
 
 export const AUTOMATION_LIST_PATH = "/app/appgateway/miot/appsceneservice/AppSceneService/GetSceneList";
@@ -98,6 +111,55 @@ export function parseAutomationTrigger(trigger: XiaomiSceneRecord): AutomationTr
   if (/location|geofence/.test(`${src} ${key}`)) return { kind: "location", label: name || "到达或离开某地", editable: false };
   if (/weather|sunset|sunrise/.test(`${src} ${key}`)) return { kind: "weather", label: name || "天气或日出日落", editable: false };
   return { kind: "unknown", label: name || "米家私有触发条件", detail: "当前版本只读，保存时会原样保留", editable: false };
+}
+
+function triggerDeviceDid(trigger: XiaomiSceneRecord) {
+  const payload = parsedSceneRecord(trigger.payload_json ?? trigger.payload ?? trigger.setting);
+  const device = record(payload?.device);
+  const params = record(payload?.params);
+  return text(trigger.did ?? trigger.device_id ?? payload?.did ?? payload?.device_id ?? payload?.deviceId ?? device?.did ?? device?.device_id ?? params?.did);
+}
+
+export function buildAutomationTriggerCatalog(
+  automations: XiaomiSceneRecord[],
+  devices: XiaomiSceneRecord[],
+  homeId: string,
+): AutomationTriggerTemplate[] {
+  const scopedDevices = devices.filter(device => text(device.homeId ?? device.home_id) === homeId && text(device.did));
+  const devicesByDid = new Map(scopedDevices.flatMap((device, index, candidates) => {
+    const did = text(device.did);
+    return parseDerivedDeviceId(did) || candidates.findIndex(candidate => text(candidate.did) === did) !== index ? [] : [[did, {
+      deviceKey: `device-${index + 1}`,
+      deviceName: text(device.name) || text(device.model) || "未命名设备",
+      room: text(device.roomName ?? device.room_name) || "未分配",
+    }] as const];
+  }));
+  const templates = automations
+    .filter(automation => (text(automation.home_id) || homeId) === homeId)
+    .flatMap(automation => rawAutomationTriggers(automation).map((trigger, sourceIndex) => ({
+      trigger,
+      sourceIndex,
+      automationId: text(automation.scene_id ?? automation.us_id ?? automation.id),
+    })))
+    .flatMap(item => {
+      const parsed = parseAutomationTrigger(item.trigger);
+      if (!item.automationId || parsed.kind === "schedule" || parsed.kind === "unknown") return [];
+      const device = parsed.kind === "device" ? devicesByDid.get(triggerDeviceDid(item.trigger)) : undefined;
+      return [{
+        key: `${item.automationId}:${item.sourceIndex}`,
+        automationId: item.automationId,
+        sourceIndex: item.sourceIndex,
+        kind: parsed.kind,
+        label: parsed.label,
+        ...(parsed.detail ? { detail: parsed.detail } : {}),
+        ...(device ?? {}),
+      } satisfies AutomationTriggerTemplate];
+    });
+  return templates.filter((item, index) => templates.findIndex(candidate =>
+    candidate.kind === item.kind
+    && candidate.label === item.label
+    && candidate.deviceKey === item.deviceKey
+  ) === index);
 }
 
 function enabled(value: unknown) {

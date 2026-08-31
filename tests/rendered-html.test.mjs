@@ -30,7 +30,9 @@ test("renders the Xiaomi smart home dashboard", async () => {
   assert.match(html, /<title>米家 Web 控制台<\/title>/);
   assert.match(html, /<meta name="viewport" content="width=device-width, initial-scale=1"/, "mobile devices need a device-width viewport");
   assert.match(html, /<meta name="theme-color" content="#fafbfc"/, "mobile browsers should inherit the dashboard theme");
-  assert.match(html, /aria-label="账号与连接"/, "mobile users must retain access to Xiaomi account settings");
+  assert.match(html, /aria-label="打开菜单"/, "mobile users must be able to open the full navigation drawer");
+  assert.match(html, /aria-label="主菜单"/);
+  assert.match(html, /账号与连接/, "the navigation drawer must retain Xiaomi account settings");
   assert.match(html, /扫码连接米家/);
   assert.match(html, /aria-label="选择家庭"/);
   assert.match(html, /当前家庭/);

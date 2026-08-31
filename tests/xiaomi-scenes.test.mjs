@@ -90,6 +90,21 @@ test("normalizes only manual scenes for the requested home", () => {
   assert.doesNotMatch(JSON.stringify(parseManualScenes(response, "100", devices)), /must-not-leak|secret-device|secret-user|another-secret|ac-secret|其他家庭/);
 });
 
+test("uses Xiaomi's action description instead of exposing a raw MIoT address", () => {
+  const scenes = parseManualScenes({ result: [{
+    scene_id: "curtain-scene",
+    home_id: "home",
+    name: "关帘",
+    scene_trigger: { triggers: [{ src: "user" }] },
+    scene_action: { actions: [{
+      name: "关闭纱帘",
+      payload_json: { command: "set_properties", did: "curtain", device_name: "主卧纱帘", value: [{ siid: 2, piid: 1, value: 1 }] },
+    }] },
+  }] }, "home");
+  assert.equal(scenes[0].actions[0].details[0].label, "关闭纱帘");
+  assert.doesNotMatch(JSON.stringify(scenes), /属性 2\.1/);
+});
+
 test("accepts numbered scene maps and rejects unrecognized responses", () => {
   assert.deepEqual(parseManualScenes({ result: { 0: { id: "one", name: "手动", triggers: [{ src: "USER" }] } } }, "home"), [
     {

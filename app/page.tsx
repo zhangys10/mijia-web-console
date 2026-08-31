@@ -12,6 +12,7 @@ import type { ManualScene } from "../lib/xiaomi-scenes";
 import { groupManualSceneActions, type ManualSceneActionItem } from "../lib/scene-action-groups";
 import SceneEditor from "./scene-editor";
 import AutomationCenter from "./automation-center";
+import { dashboardAccountLabel, dashboardGreeting, formatDashboardDate } from "../lib/dashboard-display";
 
 type Device = ManagedDevice;
 type XiaomiHome = { id:string;name:string };
@@ -54,7 +55,7 @@ const demoScenes:ManualScene[]=[
 const regionLabels:Record<string,string>={cn:"中国大陆",sg:"新加坡",de:"欧洲",us:"美国",ru:"俄罗斯",i2:"印度"};
 
 export default function Home(){
-  const [devices,setDevices]=useState(demo),[homes,setHomes]=useState<XiaomiHome[]>([{id:"demo",name:"我的家"}]),[selectedHome,setSelectedHome]=useState("demo"),[room,setRoom]=useState("全屋"),[tab,setTab]=useState("首页"),[toast,setToast]=useState(""),[authOpen,setAuthOpen]=useState(false),[region,setRegion]=useState("cn"),[connection,setConnection]=useState<Connection>({loading:true,connected:false}),[qr,setQr]=useState<Qr>({loading:false}),[syncing,setSyncing]=useState(false),[syncCooling,setSyncCooling]=useState(false),[lastSuccessfulSync,setLastSuccessfulSync]=useState<string>(),[syncWarnings,setSyncWarnings]=useState<SyncWarning[]>([]),[qrSeconds,setQrSeconds]=useState(0),[selectedDevice,setSelectedDevice]=useState<Device|null>(null),[settingValues,setSettingValues]=useState<Record<string,SettingValue>>({}),[operating,setOperating]=useState(""),[deviceSpec,setDeviceSpec]=useState<DeviceSpecification>({loading:false,groups:[]}),[focusedMapping,setFocusedMapping]=useState<Device|null>(null),[scenesByHome,setScenesByHome]=useState<Record<string,SceneLoadState>>({demo:{loading:false,items:demoScenes,loaded:true}}),[sceneOperating,setSceneOperating]=useState(""),[selectedScene,setSelectedScene]=useState<ManualScene|null>(null),[sceneEditor,setSceneEditor]=useState<{sceneId?:string}|null>(null);
+  const [devices,setDevices]=useState(demo),[homes,setHomes]=useState<XiaomiHome[]>([{id:"demo",name:"我的家"}]),[selectedHome,setSelectedHome]=useState("demo"),[room,setRoom]=useState("全屋"),[tab,setTab]=useState("首页"),[mobileMenuOpen,setMobileMenuOpen]=useState(false),[dashboardNow,setDashboardNow]=useState<Date|null>(null),[toast,setToast]=useState(""),[authOpen,setAuthOpen]=useState(false),[region,setRegion]=useState("cn"),[connection,setConnection]=useState<Connection>({loading:true,connected:false}),[qr,setQr]=useState<Qr>({loading:false}),[syncing,setSyncing]=useState(false),[syncCooling,setSyncCooling]=useState(false),[lastSuccessfulSync,setLastSuccessfulSync]=useState<string>(),[syncWarnings,setSyncWarnings]=useState<SyncWarning[]>([]),[qrSeconds,setQrSeconds]=useState(0),[selectedDevice,setSelectedDevice]=useState<Device|null>(null),[settingValues,setSettingValues]=useState<Record<string,SettingValue>>({}),[operating,setOperating]=useState(""),[deviceSpec,setDeviceSpec]=useState<DeviceSpecification>({loading:false,groups:[]}),[focusedMapping,setFocusedMapping]=useState<Device|null>(null),[scenesByHome,setScenesByHome]=useState<Record<string,SceneLoadState>>({demo:{loading:false,items:demoScenes,loaded:true}}),[sceneOperating,setSceneOperating]=useState(""),[selectedScene,setSelectedScene]=useState<ManualScene|null>(null),[sceneEditor,setSceneEditor]=useState<{sceneId?:string}|null>(null);
   const polling=useRef(false),specRequest=useRef(0),sceneGeneration=useRef(0),syncInFlight=useRef<Promise<void>|null>(null),deviceLoadInFlight=useRef<Promise<string>|null>(null),sceneRequests=useRef(new Map<string,Promise<void>>()),cooldownTimer=useRef<number|null>(null);
   const homeDevices=useMemo(()=>devices.filter(device=>device.homeId===selectedHome),[devices,selectedHome]);
   const hardwareDevices=useMemo(()=>selectDeviceView(homeDevices,"hardware"),[homeDevices]);
@@ -149,6 +150,18 @@ export default function Home(){
   }
 
   useEffect(()=>{void checkSession();return()=>{polling.current=false;if(cooldownTimer.current)window.clearTimeout(cooldownTimer.current)}},[]);
+  useEffect(()=>{
+    const updateClock=()=>setDashboardNow(new Date());
+    updateClock();
+    const timer=window.setInterval(updateClock,60_000);
+    return()=>window.clearInterval(timer);
+  },[]);
+  useEffect(()=>{
+    if(!mobileMenuOpen)return;
+    const closeOnEscape=(event:KeyboardEvent)=>{if(event.key==="Escape")setMobileMenuOpen(false)};
+    window.addEventListener("keydown",closeOnEscape);
+    return()=>window.removeEventListener("keydown",closeOnEscape);
+  },[mobileMenuOpen]);
   useEffect(()=>{
     if(!qr.expiresAt||qr.expired)return;
     const tick=()=>{const remaining=Math.max(0,Math.ceil((qr.expiresAt!-Date.now())/1000));setQrSeconds(remaining);if(remaining===0){polling.current=false;setQr(state=>({...state,expired:true,error:undefined}))}};
@@ -288,9 +301,10 @@ export default function Home(){
   async function logout(){await fetch("/api/xiaomi/status",{method:"DELETE"});polling.current=false;specRequest.current++;sceneGeneration.current++;sceneRequests.current.clear();setConnection({loading:false,connected:false});setDevices(demo);setHomes([{id:"demo",name:"我的家"}]);setSelectedHome("demo");setScenesByHome({demo:{loading:false,items:demoScenes,loaded:true}});setSyncWarnings([]);setLastSuccessfulSync(undefined);setSyncCooling(false);setSceneOperating("");setSelectedScene(null);setSceneEditor(null);setSelectedDevice(null);setFocusedMapping(null);setDeviceSpec({loading:false,groups:[]});setQr({loading:false});setAuthOpen(false);message("已断开米家云连接")}
 
   return <main className="shell">
-    <aside className="sidebar"><div className="brand"><b>mi</b><div><strong>米家控制台</strong><small>{connection.connected?regionLabels[connection.region||"cn"]:"米家云直连"}</small></div></div><nav>{[["首页","⌂"],["设备","▦"],["场景","✦"],["自动化","⌁"],["能耗","ϟ"]].map(([name,icon])=><button key={name} className={tab===name?"active":""} onClick={()=>setTab(name)}><i>{icon}</i>{name}</button>)}</nav><div className="sidefoot"><div className={`mode ${connection.connected?"connected":""}`}><span/><div><strong>{connection.loading?"检查连接中":connection.connected?"米家云已连接":"演示模式"}</strong><small>{connection.connected?`账号 ${connection.userId}`:"扫码登录以同步真实设备"}</small></div></div><button className="settings" onClick={openLogin}>⚙　账号与连接</button><div className="profile"><b>R</b><div><strong>Ryan</strong><small>家庭管理员</small></div><i>⋯</i></div></div></aside>
+    {mobileMenuOpen&&<button type="button" className="mobile-menu-backdrop" aria-label="关闭菜单" onClick={()=>setMobileMenuOpen(false)}/>}
+    <aside className={`sidebar ${mobileMenuOpen?"mobile-menu-open":""}`} aria-label="主菜单"><button type="button" className="mobile-menu-close" aria-label="关闭菜单" onClick={()=>setMobileMenuOpen(false)}>×</button><div className="brand"><b>mi</b><div><strong>米家控制台</strong><small>{connection.connected?regionLabels[connection.region||"cn"]:"米家云直连"}</small></div></div><nav>{[["首页","⌂"],["设备","▦"],["场景","✦"],["自动化","⌁"],["能耗","ϟ"]].map(([name,icon])=><button key={name} className={tab===name?"active":""} aria-current={tab===name?"page":undefined} onClick={()=>{setTab(name);setMobileMenuOpen(false)}}><i>{icon}</i>{name}</button>)}</nav><div className="sidefoot"><div className={`mode ${connection.connected?"connected":""}`}><span/><div><strong>{connection.loading?"检查连接中":connection.connected?"米家云已连接":"演示模式"}</strong><small>{connection.connected?`账号 ${connection.userId}`:"扫码登录以同步真实设备"}</small></div></div><button className="settings" onClick={()=>{setMobileMenuOpen(false);openLogin()}}>⚙　账号与连接</button><div className="profile"><b>{connection.connected?"米":"访"}</b><div><strong>{dashboardAccountLabel(connection.connected,connection.userId)}</strong><small>{connection.connected?"已安全连接":"尚未连接米家"}</small></div><i>⋯</i></div></div></aside>
 
-    <section className="workspace"><header className="workspace-header"><div className="header-copy"><p>2026年8月25日 · 星期二</p><h1>{tab==="首页"?"早上好，Ryan":tab}</h1></div><div className="header-controls"><HomeSelector homes={homes} selectedHome={selectedHome} devices={devices} onSelect={selectHome}/><div className="actions"><button aria-label="搜索">⌕</button><button aria-label="通知">♢</button><button className="mobile-account" aria-label="账号与连接" onClick={openLogin}>⚙</button><button className="primary" disabled={syncing||syncCooling} onClick={connection.connected?()=>void syncDevices():openLogin}>{syncing?"↻ 同步中…":syncCooling?"请稍后重试":connection.connected?"↻ 同步设备":"＋ 连接米家"}</button></div></div></header>
+    <section className="workspace"><header className="workspace-header"><button type="button" className="mobile-menu-toggle" aria-label="打开菜单" aria-expanded={mobileMenuOpen} onClick={()=>setMobileMenuOpen(open=>!open)}>☰</button><div className="header-copy"><p>{dashboardNow?formatDashboardDate(dashboardNow):"今天"}</p><h1>{tab==="首页"?(dashboardNow?dashboardGreeting(dashboardNow):"你好"):tab}</h1></div><div className="header-controls"><HomeSelector homes={homes} selectedHome={selectedHome} devices={devices} onSelect={selectHome}/><div className="actions"><button aria-label="搜索">⌕</button><button aria-label="通知">♢</button><button className="primary" disabled={syncing||syncCooling} onClick={connection.connected?()=>void syncDevices():openLogin}>{syncing?"↻ 同步中…":syncCooling?"请稍后重试":connection.connected?"↻ 同步设备":"＋ 连接米家"}</button></div></div></header>
 
     {tab==="首页"?<>
       <Title title="当前运行" sub={`${currentHome?.name??"当前家庭"} · ${activeDeviceCount} 台设备正在运行`} action="管理设备 →" onAction={()=>setTab("设备")}/>
