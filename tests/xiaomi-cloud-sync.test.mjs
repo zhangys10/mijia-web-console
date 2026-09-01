@@ -217,7 +217,7 @@ test("the unified route reuses device results for scenes and logs no device iden
   assert.match(devicesRoute, /loadSceneActionCapabilities\(rawScenes, selectedHomeId, runtime\.sceneCapabilities\)/);
   assert.match(devicesRoute, /parseManualScenes\(\{ result: rawScenes \}, selectedHomeId, result\.devices, sceneCapabilities\)/);
   assert.match(devicesRoute, /devices: result\.completeness/);
-  assert.match(devicesRoute, /properties: runtime\.failedPropertyBatchCount/);
+  assert.match(devicesRoute, /properties: runtime\.timedOut \|\| runtime\.failedPropertyBatchCount/);
   assert.match(devicesRoute, /totalXiaomiRequestAttemptCount: result\.requestAttemptCount \+ runtime\.propertyBatchCount \+ sceneAttemptCount/);
   assert.doesNotMatch(scenesRoute.slice(0, scenesRoute.indexOf("export async function POST")), /listDevices\(/, "scene-only reads must not repeat a full device sync");
   assert.doesNotMatch(devicesRoute, /redactedDid|did:\s*(?:mapped|redacted|did)/, "diagnostics must not include full or partial DIDs");

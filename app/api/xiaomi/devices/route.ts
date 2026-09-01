@@ -269,7 +269,7 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
     sceneDeviceCapabilityKey(deviceHome(device), text(device.did)),
     specifications.get(`${deviceModel(device)}:${deviceUrn(device) ?? ""}`) ?? [],
   ]));
-  return { channels, devicePower, sceneCapabilities, specificationFailureCount: specificationFailures.size, failedPropertyBatchCount: incompletePropertyBatches.size, retryablePropertyBatchCount: retryablePropertyBatches.size, propertyBatchCount: propertyBatches.length };
+  return { channels, devicePower, sceneCapabilities, specificationFailureCount: specificationFailures.size, failedPropertyBatchCount: incompletePropertyBatches.size, retryablePropertyBatchCount: retryablePropertyBatches.size, propertyBatchCount: propertyBatches.length, timedOut: false };
 }
 
 function validIdentifier(value: string | null) {
@@ -299,6 +299,7 @@ export async function GET(request: NextRequest) {
         failedPropertyBatchCount: 0,
         retryablePropertyBatchCount: 0,
         propertyBatchCount: 0,
+        timedOut: true,
       };
     });
     const runtimeDurationMs = Date.now() - runtimeStartedAt;
@@ -351,6 +352,7 @@ export async function GET(request: NextRequest) {
     });
     const selectedHomeId = result.homes.some(home => home.id === requestedHomeId) ? requestedHomeId! : result.homes[0]?.id ?? null;
     const warnings: Array<{ code: string; scope: "devices" | "properties" | "specifications" | "scenes"; retryable: boolean; retryAfterSeconds?: number }> = [...result.warnings];
+    if (runtime.timedOut) warnings.push({ code: "XIAOMI_RUNTIME_STATE_TIMEOUT", scope: "properties", retryable: true, retryAfterSeconds: 8 });
     if (runtime.failedPropertyBatchCount > 0) warnings.push({ code: "XIAOMI_PROPERTIES_PARTIAL", scope: "properties", retryable: runtime.retryablePropertyBatchCount > 0 });
     if (runtime.specificationFailureCount > 0) warnings.push({ code: "MIOT_SPECIFICATIONS_PARTIAL", scope: "specifications", retryable: false });
     let scenes;
@@ -388,6 +390,7 @@ export async function GET(request: NextRequest) {
       successfulHomeCount: result.successfulHomeCount,
       failedHomeCount: result.failedHomeCount,
       propertyBatchFailureCount: runtime.failedPropertyBatchCount,
+      runtimeTimedOut: runtime.timedOut,
       warningCount: warnings.length,
     };
     console.info("[xiaomi-sync]", JSON.stringify(diagnostic));
@@ -400,8 +403,8 @@ export async function GET(request: NextRequest) {
       stateCapturedAt: capturedAt,
       completeness: {
         devices: result.completeness,
-        properties: runtime.failedPropertyBatchCount > 0 ? "partial" : "complete",
-        specifications: runtime.specificationFailureCount > 0 ? "partial" : "complete",
+        properties: runtime.timedOut || runtime.failedPropertyBatchCount > 0 ? "partial" : "complete",
+        specifications: runtime.timedOut || runtime.specificationFailureCount > 0 ? "partial" : "complete",
         scenes: scenesCompleteness,
       },
       warnings,
