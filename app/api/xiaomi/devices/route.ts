@@ -12,8 +12,9 @@ import {
 import { inferHardwareRole } from "../../../../lib/device-views";
 import { getMiotCapabilities, type MiotCapabilityGroup, type MiotCapabilityProperty } from "../../../../lib/miot-spec";
 import { diagnoseSwitchMode, isSwitchModeProperty } from "../../../../lib/switch-channel-mode";
+import { withTimeoutFallback } from "../../../../lib/time-budget";
 import { listDevices, unseal, xiaomiErrorInfo, xiaomiRequest, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
-import { listRawManualScenes, parseManualScenes } from "../../../../lib/xiaomi-scenes";
+import { listRawManualScenes, loadSceneActionCapabilities, parseManualScenes, sceneDeviceCapabilityKey } from "../../../../lib/xiaomi-scenes";
 
 type RawDevice = Record<string, unknown>;
 type PropertyValue = boolean | number | string;
@@ -264,7 +265,11 @@ async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
       powerControl: descriptor.property.writable ? { did, siid: descriptor.property.siid, piid: descriptor.property.piid } : undefined,
     });
   }
-  return { channels, devicePower, specificationFailureCount: specificationFailures.size, failedPropertyBatchCount: incompletePropertyBatches.size, retryablePropertyBatchCount: retryablePropertyBatches.size, propertyBatchCount: propertyBatches.length };
+  const sceneCapabilities = new Map(candidates.map(device => [
+    sceneDeviceCapabilityKey(deviceHome(device), text(device.did)),
+    specifications.get(`${deviceModel(device)}:${deviceUrn(device) ?? ""}`) ?? [],
+  ]));
+  return { channels, devicePower, sceneCapabilities, specificationFailureCount: specificationFailures.size, failedPropertyBatchCount: incompletePropertyBatches.size, retryablePropertyBatchCount: retryablePropertyBatches.size, propertyBatchCount: propertyBatches.length };
 }
 
 function validIdentifier(value: string | null) {
@@ -284,7 +289,18 @@ export async function GET(request: NextRequest) {
     const result = await listDevices(session);
     const discoveryDurationMs = Date.now() - discoveryStartedAt;
     const runtimeStartedAt = Date.now();
-    const runtime = await loadRuntimeState(session, result.devices);
+    const runtime = await withTimeoutFallback(loadRuntimeState(session, result.devices), 12_000, () => {
+      runtimeDiagnostic("runtime-state-budget-exceeded", { budgetMs: 12_000, devices: result.devices.length });
+      return {
+        channels: new Map(),
+        devicePower: new Map(),
+        sceneCapabilities: new Map(),
+        specificationFailureCount: 0,
+        failedPropertyBatchCount: 0,
+        retryablePropertyBatchCount: 0,
+        propertyBatchCount: 0,
+      };
+    });
     const runtimeDurationMs = Date.now() - runtimeStartedAt;
     const topology = buildDeviceTopology(result.devices, runtime.channels, result.controlObjectResults);
     for (const mapped of new Set([...topology.values()])) {
@@ -346,7 +362,8 @@ export async function GET(request: NextRequest) {
       sceneAttemptCount = 1;
       try {
         const rawScenes = await listRawManualScenes(session, selectedHomeId);
-        scenes = parseManualScenes({ result: rawScenes }, selectedHomeId, result.devices);
+        const sceneCapabilities = await loadSceneActionCapabilities(rawScenes, selectedHomeId, runtime.sceneCapabilities);
+        scenes = parseManualScenes({ result: rawScenes }, selectedHomeId, result.devices, sceneCapabilities);
         scenesCompleteness = "complete";
       } catch (error) {
         const failure = xiaomiErrorInfo(error);

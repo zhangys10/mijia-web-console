@@ -36,7 +36,7 @@ test("separates automations from manual scenes and scopes them to a home", () =>
   assert.deepEqual(values, [{
     id: "automation-1", homeId: "home-1", name: "晨间灯光", enabled: false, triggerMode: "any",
     triggers: [{ kind: "schedule", label: "一、二、三、四、五 07:30", time: "07:30", weekdays: [1, 2, 3, 4, 5], editable: true }],
-    actions: [{ order: 1, label: "开灯", deviceName: "床头灯", room: "主卧", details: [{ kind: "power", label: "电源", value: "开启", state: "on" }] }],
+    actions: [{ order: 1, label: "开灯", deviceName: "床头灯", room: "主卧", details: [{ kind: "property", label: "未识别属性", value: "开启" }] }],
     actionCount: 1,
   }]);
   assert.doesNotMatch(JSON.stringify(values), /test-user|ssecurity|serviceToken/);

@@ -89,13 +89,18 @@ function switchChannelIdentity(device: DeviceIdentity | undefined) {
 
 function draftValueLabel(value: unknown) {
   if (typeof value === "boolean") return value ? "开启" : "关闭";
+  if (typeof value === "string" && value.startsWith("enum:")) return value.slice("enum:".length);
   return String(value);
 }
 
 function draftActionLabel(action: SceneEditorDraft["actions"][number]) {
   if (action.kind !== "set-properties" || !action.properties?.length) return action.label;
   const fallback = action.label && action.label !== "设置设备属性" ? action.label : "未识别属性";
-  return action.properties.map(property => typeof property.value === "boolean" && /^(?:开关|电源)$/.test(property.label ?? "") ? draftValueLabel(property.value) : `${property.label || fallback} ${draftValueLabel(property.value)}`).join(" · ");
+  return action.properties.map(property => {
+    if (typeof property.value === "boolean" && /^(?:开关|电源)$/.test(property.label ?? "")) return draftValueLabel(property.value);
+    const separator = typeof property.value === "string" && property.value.startsWith("enum:") ? " · " : " ";
+    return `${property.label || fallback}${separator}${draftValueLabel(property.value)}`;
+  }).join(" · ");
 }
 
 function draftPowerState(action: SceneEditorDraft["actions"][number]): "on" | "off" | undefined {

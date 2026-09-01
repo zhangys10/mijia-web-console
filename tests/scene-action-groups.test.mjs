@@ -103,3 +103,17 @@ test("editor groups use DID identity and keep the underlying action indices", ()
   assert.equal(living.items[1].collapsible, false);
   assert.equal(groups[1].rooms.find(room => room.room === "主卧").items[0].collapsible, false);
 });
+
+test("editor group labels hide enum transport keys", () => {
+  const actions = [{
+    clientId: "mode",
+    kind: "set-properties",
+    did: "living-1",
+    deviceName: "灯带",
+    model: "light.v1",
+    label: "设置设备属性",
+    properties: [{ siid: 2, piid: 4, label: "工作模式", value: "enum:会客模式" }],
+  }];
+  const groups = groupSceneDraftActions(actions, devices);
+  assert.equal(groups[0].label, "工作模式 · 会客模式");
+});

@@ -6,10 +6,10 @@ type MiotRawService = { iid: number; type: string; description?: string; propert
 type MiotRawSpec = { type: string; description?: string; services?: MiotRawService[] };
 type MiotInstance = { model?: string; type?: string; version?: number; status?: string };
 
-export type MiotCapabilityProperty = { key: string; name: string; label: string; siid: number; piid: number; format: string; readable: boolean; writable: boolean; notify: boolean; unit?: string; choices?: Array<{ value: number | string | boolean; label: string }>; range?: { min: number; max: number; step: number } };
-export type MiotCapabilityAction = { key: string; name: string; label: string; siid: number; aiid: number; inputs: number[] };
-export type MiotCapabilityEvent = { key: string; name: string; label: string; siid: number; eiid: number; arguments: number[] };
-export type MiotCapabilityGroup = { key: string; name: string; label: string; siid: number; properties: MiotCapabilityProperty[]; actions: MiotCapabilityAction[]; events: MiotCapabilityEvent[] };
+export type MiotCapabilityProperty = { key: string; name: string; label: string; sourceLabel?: string; siid: number; piid: number; format: string; readable: boolean; writable: boolean; notify: boolean; unit?: string; choices?: Array<{ value: number | string | boolean; label: string; sourceLabel?: string }>; range?: { min: number; max: number; step: number } };
+export type MiotCapabilityAction = { key: string; name: string; label: string; sourceLabel?: string; siid: number; aiid: number; inputs: number[] };
+export type MiotCapabilityEvent = { key: string; name: string; label: string; sourceLabel?: string; siid: number; eiid: number; arguments: number[] };
+export type MiotCapabilityGroup = { key: string; name: string; label: string; sourceLabel?: string; siid: number; properties: MiotCapabilityProperty[]; actions: MiotCapabilityAction[]; events: MiotCapabilityEvent[] };
 export type MiotAutomationTriggerCapability = {
   key: string;
   kind: "property" | "event";
@@ -40,6 +40,7 @@ const labels: Record<string, string> = {
   "fan-level": "风速档位", "horizontal-swing": "左右摇头", "start-sweep": "开始清扫", "stop-sweeping": "停止清扫",
   "start-charge": "返回充电", curtain: "窗帘", "motor-controller": "窗帘电机", "motor-control": "电机控制", "target-position": "目标位置", status: "运行状态",
   open: "打开", close: "关闭", pause: "暂停",
+  hospitality: "会客模式",
   "battery-level": "电池电量", "electric-power": "功率", "power-consumption": "用电量", light: "灯光",
   "air-conditioner": "空调", fan: "风扇", vacuum: "扫拖机器人", humidifier: "加湿器", outlet: "插座",
 };
@@ -56,6 +57,10 @@ function translatedName(name: string, fallback?: string) {
   const base = normalized.replace(/[-_](?:i{1,4}|[a-d]|\d+)$/i, "");
   if (labels[base]) return labels[base];
   return fallback || name.replace(/-/g, " ");
+}
+
+function sourceName(name: string, description?: string) {
+  return description?.trim() || name.replace(/-/g, " ");
 }
 
 async function fetchSpecJson(path: string): Promise<Record<string, unknown>> {
@@ -121,18 +126,19 @@ export function normalizeMiotSpecification(model: string, urn: string, spec: Mio
       const access = property.access ?? [];
       const valueRange = property["value-range"];
       return {
-        key: `${service.iid}.${property.iid}`, name: propertyName, label: translatedName(propertyName, property.description),
+        key: `${service.iid}.${property.iid}`, name: propertyName, label: translatedName(propertyName, property.description), sourceLabel: sourceName(propertyName, property.description),
         siid: service.iid, piid: property.iid, format: property.format ?? "string", readable: access.includes("read"), writable: access.includes("write"), notify: access.includes("notify"),
         ...(property.unit && property.unit !== "none" ? { unit: property.unit } : {}),
-        ...(property["value-list"]?.length ? { choices: property["value-list"].map(item => ({ value: item.value, label: translatedName(String(item.description ?? item.value), String(item.description ?? item.value)) })) } : {}),
+        ...(property["value-list"]?.length ? { choices: property["value-list"].map(item => ({ value: item.value, label: translatedName(String(item.description ?? item.value), String(item.description ?? item.value)), sourceLabel: sourceName(String(item.value), item.description) })) } : {}),
         ...(valueRange?.length && Number.isFinite(valueRange[0]) && Number.isFinite(valueRange[1]) ? { range: { min: valueRange[0], max: valueRange[1], step: valueRange[2] || 1 } } : {}),
       };
     });
-    const actions: MiotCapabilityAction[] = (service.actions ?? []).map(action => ({ key: `${service.iid}.a${action.iid}`, name: typeName(action.type), label: translatedName(typeName(action.type), action.description), siid: service.iid, aiid: action.iid, inputs: action.in ?? [] }));
-    const events: MiotCapabilityEvent[] = (service.events ?? []).map(event => ({ key: `${service.iid}.e${event.iid}`, name: typeName(event.type), label: translatedName(typeName(event.type), event.description), siid: service.iid, eiid: event.iid, arguments: event.arguments ?? [] }));
+    const actions: MiotCapabilityAction[] = (service.actions ?? []).map(action => ({ key: `${service.iid}.a${action.iid}`, name: typeName(action.type), label: translatedName(typeName(action.type), action.description), sourceLabel: sourceName(typeName(action.type), action.description), siid: service.iid, aiid: action.iid, inputs: action.in ?? [] }));
+    const events: MiotCapabilityEvent[] = (service.events ?? []).map(event => ({ key: `${service.iid}.e${event.iid}`, name: typeName(event.type), label: translatedName(typeName(event.type), event.description), sourceLabel: sourceName(typeName(event.type), event.description), siid: service.iid, eiid: event.iid, arguments: event.arguments ?? [] }));
     if (!properties.length && !actions.length && !events.length) continue;
     const groupLabel = translatedName(name, service.description);
-    groups.push({ key: String(service.iid), name, label: name === "switch" ? `按键 ${index}` : index > 1 ? `${groupLabel} ${index}` : groupLabel, siid: service.iid, properties, actions, events });
+    const rawGroupLabel = sourceName(name, service.description);
+    groups.push({ key: String(service.iid), name, label: name === "switch" ? `按键 ${index}` : index > 1 ? `${groupLabel} ${index}` : groupLabel, sourceLabel: index > 1 ? `${rawGroupLabel} ${index}` : rawGroupLabel, siid: service.iid, properties, actions, events });
   }
   return { model, urn, description: spec.description ?? model, groups };
 }

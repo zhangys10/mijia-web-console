@@ -71,9 +71,26 @@ test("retains readable status plus exact choice and range metadata", () => {
     }],
   });
 
-  assert.deepEqual(result.groups[0].properties[0].choices, [{ value: 0, label: "关闭" }, { value: 1, label: "常亮" }]);
+  assert.deepEqual(result.groups[0].properties[0].choices, [{ value: 0, label: "关闭", sourceLabel: "关闭" }, { value: 1, label: "常亮", sourceLabel: "常亮" }]);
   assert.deepEqual(result.groups[0].properties[1].range, { min: 1, max: 60, step: 1 });
   assert.equal(result.groups[0].properties[2].writable, false);
+});
+
+test("translates the standard hospitality light mode used by Xiaomi scenes", () => {
+  const result = normalizeMiotSpecification("vendor.light.scene", "urn:example", {
+    services: [{
+      iid: 2,
+      type: "urn:miot-spec-v2:service:light:00007802:vendor:1",
+      properties: [{
+        iid: 7,
+        type: "urn:miot-spec-v2:property:mode:00000008:vendor:1",
+        format: "uint8",
+        access: ["read", "write"],
+        "value-list": [{ value: 11, description: "Hospitality" }],
+      }],
+    }],
+  });
+  assert.deepEqual(result.groups[0].properties[0].choices, [{ value: 11, label: "会客模式", sourceLabel: "Hospitality" }]);
 });
 
 test("gives curtain automation properties and values readable Chinese labels", () => {
@@ -102,10 +119,10 @@ test("gives curtain automation properties and values readable Chinese labels", (
   assert.equal(result.groups[0].label, "窗帘");
   assert.equal(result.groups[0].properties[0].label, "电机控制");
   assert.deepEqual(result.groups[0].properties[0].choices, [
-    { value: 0, label: "打开" },
-    { value: 1, label: "关闭" },
-    { value: 2, label: "暂停" },
-    { value: 3, label: "切换开关状态" },
+    { value: 0, label: "打开", sourceLabel: "Open" },
+    { value: 1, label: "关闭", sourceLabel: "Close" },
+    { value: 2, label: "暂停", sourceLabel: "Pause" },
+    { value: 3, label: "切换开关状态", sourceLabel: "Toggle" },
   ]);
 });
 
