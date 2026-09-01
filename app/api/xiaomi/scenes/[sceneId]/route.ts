@@ -1,7 +1,8 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { listDevices, listHomes, unseal, type XiaomiSession } from "../../../../../lib/xiaomi-cloud";
-import { assertHomeAccess, listRawManualScenes, parseManualScenes } from "../../../../../lib/xiaomi-scenes";
+import { listDevices, listHomeContexts, unseal, type XiaomiSession } from "../../../../../lib/xiaomi-cloud";
+import { loadSceneActionCatalog } from "../../../../../lib/xiaomi-scene-action-catalog";
+import { assertHomeAccess, listRawManualScenes, loadSceneDeviceCapabilities, parseManualScenes } from "../../../../../lib/xiaomi-scenes";
 import { assertBasicSceneDraft, assertSceneActionSources, buildUpdatePayload, createEditorDraft, sceneDraftMatchesWrite, sceneRecordId, sceneRevision, submitSceneEdit, validateSceneDraftCapabilities } from "../../../../../lib/xiaomi-scene-editor";
 
 function validIdentifier(value: unknown) {
@@ -14,13 +15,13 @@ async function context(request: NextRequest, sceneId: string) {
   const homeId = request.nextUrl.searchParams.get("homeId");
   if (!validIdentifier(homeId) || !validIdentifier(sceneId)) return { response: NextResponse.json({ error: "INVALID_SCENE_COMMAND" }, { status: 400 }) };
   const session = await unseal<XiaomiSession>(value);
-  const homes = await listHomes(session);
+  const homes = await listHomeContexts(session);
   try { assertHomeAccess(homes, homeId!); }
   catch { return { response: NextResponse.json({ error: "XIAOMI_HOME_NOT_FOUND" }, { status: 404 }) }; }
   const scenes = await listRawManualScenes(session, homeId!);
   const scene = scenes.find(item => sceneRecordId(item) === sceneId);
   if (!scene) return { response: NextResponse.json({ error: "XIAOMI_SCENE_NOT_FOUND" }, { status: 404 }) };
-  return { session, homeId: homeId!, scene };
+  return { session, homeId: homeId!, ownerUid: homes.find(item => item.id === homeId)!.ownerUid, scene };
 }
 
 export async function GET(request: NextRequest, route: { params: Promise<{ sceneId: string }> }) {
@@ -52,7 +53,8 @@ export async function PUT(request: NextRequest, route: { params: Promise<{ scene
     if (draft.actions) {
       const devices = await listDevices(current.session!);
       deviceRecords = devices.devices;
-      validated = await validateSceneDraftCapabilities(draft, devices.devices, undefined, true);
+      const catalog = await loadSceneActionCatalog(current.session!, current.homeId!, current.ownerUid!, devices.devices);
+      validated = await validateSceneDraftCapabilities(draft, devices.devices, undefined, true, catalog);
     }
     await submitSceneEdit(current.session!, buildUpdatePayload(current.scene!, validated));
     let updated;
@@ -64,11 +66,12 @@ export async function PUT(request: NextRequest, route: { params: Promise<{ scene
     }
     if (!updated) throw new Error("XIAOMI_SCENE_WRITE_NOT_VISIBLE");
     if (!deviceRecords.length) deviceRecords = (await listDevices(current.session!)).devices;
-    const scenes = parseManualScenes({ result: { scene_info_list: [updated] } }, current.homeId!, deviceRecords);
+    const capabilities = await loadSceneDeviceCapabilities(deviceRecords, current.homeId!);
+    const scenes = parseManualScenes({ result: { scene_info_list: [updated] } }, current.homeId!, deviceRecords, capabilities);
     return NextResponse.json({ ok: true, scene: scenes[0], updated: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
-    const status = message.startsWith("INVALID_") ? 400 : message.endsWith("_UNSUPPORTED") || message.endsWith("_NOT_FOUND") ? 422 : 502;
+    const status = message.startsWith("INVALID_") ? 400 : message.endsWith("_UNSUPPORTED") || message.endsWith("_NOT_FOUND") || message.endsWith("_MISMATCH") ? 422 : 502;
     console.error("[xiaomi-scenes-update]", JSON.stringify({ error: message }));
     return NextResponse.json({ ok: false, error: message }, { status });
   }

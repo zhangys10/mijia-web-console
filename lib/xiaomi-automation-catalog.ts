@@ -32,6 +32,8 @@ export type AutomationCatalogAction = {
   piid?: number;
   aiid?: number;
   value?: CatalogScalar;
+  properties?: Array<{ siid: number; piid: number; value: CatalogScalar }>;
+  inputCount?: number;
 };
 
 export type AutomationCatalogDeviceInput = {
@@ -269,8 +271,10 @@ function propertyValues(value: unknown) {
 function parseActionItem(item: CatalogRecord, model: string, source: Exclude<AutomationCatalogSource, "miot-spec">): AutomationCatalogAction | undefined {
   const id = catalogItemId(item, "sa_id", "related_sa_id");
   if (!id) return undefined;
-  const command = text(item.command);
-  const parsedValue = parseCatalogValue(item.value);
+  const payload = parsedRecord(item.payload);
+  const command = text(item.command ?? payload?.command);
+  const normalizedCommand = command.startsWith(`${model}.`) ? command.slice(model.length + 1) : command;
+  const parsedValue = parseCatalogValue(item.value ?? payload?.value);
   const specDetail = itemSpecDetail(item);
   let kind: AutomationCatalogAction["kind"] = "unknown";
   let detail = specDetail || "米家自动化动作";
@@ -278,8 +282,10 @@ function parseActionItem(item: CatalogRecord, model: string, source: Exclude<Aut
   let piid: number | undefined;
   let aiid: number | undefined;
   let actionValue: CatalogScalar | undefined;
-  if (command === `${model}.set_properties`) {
-    const properties = propertyValues(parsedValue);
+  let properties: Array<{ siid: number; piid: number; value: CatalogScalar }> | undefined;
+  let inputCount: number | undefined;
+  if (normalizedCommand === "set_properties") {
+    properties = propertyValues(parsedValue);
     if (properties.length === 1) {
       kind = "set-property";
       [{ siid, piid, value: actionValue }] = properties;
@@ -288,13 +294,14 @@ function parseActionItem(item: CatalogRecord, model: string, source: Exclude<Aut
       kind = "set-properties";
       detail = `同时设置 ${properties.length} 个属性`;
     }
-  } else if (command === `${model}.action`) {
+  } else if (normalizedCommand === "action") {
     const action = record(parsedValue);
     siid = positiveInteger(action?.siid);
     aiid = positiveInteger(action?.aiid);
     if (siid && aiid) {
       kind = "action";
       detail = specDetail || "调用设备动作";
+      inputCount = Array.isArray(action?.in) ? action.in.length : undefined;
     }
   }
   return {
@@ -307,6 +314,8 @@ function parseActionItem(item: CatalogRecord, model: string, source: Exclude<Aut
     ...(piid ? { piid } : {}),
     ...(aiid ? { aiid } : {}),
     ...(actionValue !== undefined ? { value: actionValue } : {}),
+    ...(properties && properties.length > 1 ? { properties } : {}),
+    ...(inputCount !== undefined ? { inputCount } : {}),
   };
 }
 
@@ -464,7 +473,7 @@ function projectClientAction(value: AutomationCatalogAction, index: number): Aut
   };
 }
 
-export async function discoverDeviceAutomationCatalog(
+async function discoverDeviceAutomationCatalogInternal(
   session: XiaomiSession,
   homeId: string,
   ownerUid: string,
@@ -528,8 +537,29 @@ export async function discoverDeviceAutomationCatalog(
       deviceName: safeText(device.deviceName, device.model),
       room: safeText(device.room, "未分配"),
       capabilities: capabilities.map(projectClientCapability),
-      actions: actions.map(projectClientAction),
+      actions,
       discovery: confirmedDids.has(device.did) ? "tca-v3" as const : modelCatalog ? "model-catalog" as const : "unavailable" as const,
     };
   });
+}
+
+export async function discoverDeviceAutomationCatalogDetails(
+  session: XiaomiSession,
+  homeId: string,
+  ownerUid: string,
+  values: AutomationCatalogDeviceInput[],
+  options: AutomationCatalogOptions = {},
+) {
+  return discoverDeviceAutomationCatalogInternal(session, homeId, ownerUid, values, options);
+}
+
+export async function discoverDeviceAutomationCatalog(
+  session: XiaomiSession,
+  homeId: string,
+  ownerUid: string,
+  values: AutomationCatalogDeviceInput[],
+  options: AutomationCatalogOptions = {},
+): Promise<AutomationCatalogDevice[]> {
+  const devices = await discoverDeviceAutomationCatalogInternal(session, homeId, ownerUid, values, options);
+  return devices.map(device => ({ ...device, actions: device.actions.map(projectClientAction) }));
 }

@@ -13,7 +13,7 @@ import {
   submitSceneEdit,
   validateSceneDraftCapabilities,
 } from "../lib/xiaomi-scene-editor.ts";
-import { isScenePropertyValueSupported, isSceneWritableProperty, mapScenePropertySemantics, scenePropertySemantics } from "../lib/xiaomi-scene-properties.ts";
+import { isScenePropertyValueSupported, isSceneWritableProperty, mapScenePropertySemantics, mapScenePropertySemanticsResult, scenePropertySemantics } from "../lib/xiaomi-scene-properties.ts";
 
 const modernScene = {
   scene_id: "scene-1",
@@ -123,7 +123,12 @@ test("validates scene drafts and checks device MIoT capabilities server-side", a
   assert.equal(validated.name, "阅读");
   assert.equal(validated.actions[0].deviceName, "真实灯具");
   assert.equal(validated.actions[0].model, "vendor.light.v1");
-  assert.throws(() => assertBasicSceneDraft({ homeId: "home-1", name: "不支持", actions: [{ clientId: "one", kind: "invoke-action", did: "light-1", deviceName: "灯", model: "vendor.light.v1", label: "切换", siid: 2, aiid: 1 }] }, false), /INVALID_SCENE_ACTION/);
+  const invoked = assertBasicSceneDraft({ homeId: "home-1", name: "设备动作", actions: [{ clientId: "one", kind: "invoke-action", did: "light-1", deviceName: "灯", model: "vendor.light.v1", label: "Toggle", templateKey: "action-2", siid: 2, aiid: 1 }] }, false);
+  assert.equal(invoked.actions[0].kind, "invoke-action");
+  const actionLoader = async () => ({ model: "vendor.light.v1", urn: "urn:test", description: "Light", groups: [{ key: "2", name: "light", label: "灯", siid: 2, properties: [], actions: [{ key: "2.a1", name: "toggle", label: "切换", siid: 2, aiid: 1, inputs: [] }], events: [] }] });
+  await assert.doesNotReject(validateSceneDraftCapabilities(invoked, [{ did: "light-1", homeId: "home-1", name: "真实灯具", model: "vendor.light.v1" }], actionLoader));
+  const invokedPayload = buildCreatePayload(invoked, "user-1");
+  assert.deepEqual(invokedPayload.scene_action.actions[0].payload_json.value, { did: "light-1", siid: 2, aiid: 1, in: [] });
   await assert.rejects(validateSceneDraftCapabilities({ ...draft, homeId: "home-2" }, [{ did: "light-1", homeId: "home-1", model: "vendor.light.v1" }], async () => { throw new Error("must not load"); }), /XIAOMI_SCENE_DEVICE_NOT_FOUND/);
   await assert.rejects(validateSceneDraftCapabilities({ ...draft, actions: [{ ...draft.actions[0], properties: [{ siid: 2, piid: 1, value: "not-boolean" }] }] }, [{ did: "light-1", homeId: "home-1", model: "vendor.light.v1" }], async () => ({ model: "vendor.light.v1", urn: "urn:test", description: "灯", groups: [{ key: "2", name: "light", label: "灯", siid: 2, properties: [{ key: "2.1", name: "on", label: "开关", siid: 2, piid: 1, format: "bool", readable: true, writable: true, notify: true }], actions: [], events: [] }] })), /XIAOMI_SCENE_PROPERTY_UNSUPPORTED/);
   const virtualDraft = { ...draft, actions: [{ ...draft.actions[0], did: "light-1.s2", sourceIndex: 0 }] };
@@ -133,6 +138,16 @@ test("validates scene drafts and checks device MIoT capabilities server-side", a
   await assert.doesNotReject(validateSceneDraftCapabilities(virtualDraft, virtualDevices, loader, true), "an authenticated update may preserve an original virtual target");
   const groupDraft = { ...draft, actions: [{ ...draft.actions[0], did: "group.light-1" }] };
   await assert.doesNotReject(validateSceneDraftCapabilities(groupDraft, [{ did: "group.light-1", homeId: "home-1", name: "灯组", model: "vendor.light.v1" }], loader), "real same-home light groups can be new scene targets");
+});
+
+test("revalidates official template keys and keeps trusted scene ids server-side", async () => {
+  const invoke = assertBasicSceneDraft({ homeId: "home-1", name: "Toggle", actions: [{ clientId: "one", kind: "invoke-action", did: "light-1", deviceName: "Lamp", model: "vendor.light.v1", label: "Toggle", templateKey: "action-1", siid: 2, aiid: 1 }] }, false);
+  const loader = async () => ({ model: "vendor.light.v1", urn: "urn:test", description: "Light", groups: [{ key: "2", name: "light", label: "Light", siid: 2, properties: [], actions: [{ key: "2.a1", name: "toggle", label: "Toggle", siid: 2, aiid: 1, inputs: [] }], events: [] }] });
+  const catalog = [{ did: "light-1", model: "vendor.light.v1", deviceName: "Lamp", room: "Living", source: "tca-v3", actions: [{ key: "action-1", kind: "invoke-action", label: "Toggle", detail: "Light", serviceLabel: "Light", source: "tca-v3", siid: 2, aiid: 1, sceneActionId: 77 }] }];
+  const validated = await validateSceneDraftCapabilities(invoke, [{ did: "light-1", homeId: "home-1", name: "Lamp", model: "vendor.light.v1" }], loader, false, catalog);
+  assert.equal(validated.actions[0].trustedSceneActionId, 77);
+  assert.equal(buildCreatePayload(validated, "user").scene_action.actions[0].sa_id, 77);
+  await assert.rejects(validateSceneDraftCapabilities({ ...invoke, actions: [{ ...invoke.actions[0], templateKey: "action-2" }] }, [{ did: "light-1", homeId: "home-1", name: "Lamp", model: "vendor.light.v1" }], loader, false, catalog), /XIAOMI_SCENE_ACTION_CATALOG_MISMATCH/);
 });
 
 test("exposes only standard user-facing properties with a safe value editor", () => {
@@ -165,6 +180,28 @@ test("maps batch light values by semantic names instead of copying device-specif
   const switchSemantics = [{ serviceName: "switch", propertyName: "on", label: "开关", value: false }];
   const switches = [2, 3].map(siid => ({ name: "switch", properties: [{ name: "on", label: "开关", siid, piid: 1, format: "bool", readable: true, writable: true }] }));
   assert.deepEqual(mapScenePropertySemantics(switchSemantics, switches, { name: "switch", siid: 3 }), [{ siid: 3, piid: 1, value: false, label: "开关" }]);
+});
+
+test("maps enum choices by normalized labels while preserving the source device value", () => {
+  const group = (value, label = "会客模式") => [{ name: "light", properties: [{
+    name: "mode", label: "工作模式", siid: 2, piid: 4, format: "uint8", readable: true, writable: true,
+    choices: [{ value, label }],
+  }] }];
+  const semantics = scenePropertySemantics([{ siid: 2, piid: 4, value: 11 }], group(11, " 会客模式 "), "strip-1");
+  assert.equal(semantics[0].kind, "enum");
+  assert.deepEqual(semantics[0].choice, { key: "会客模式", label: " 会客模式 " });
+  assert.deepEqual(mapScenePropertySemantics(semantics, group(4), undefined, "spotlight-1"), [{ siid: 2, piid: 4, value: 4, label: "工作模式" }]);
+  assert.deepEqual(mapScenePropertySemantics(semantics, group(5), undefined, "pendant-1"), [{ siid: 2, piid: 4, value: 5, label: "工作模式" }]);
+  assert.deepEqual(mapScenePropertySemantics(semantics, group(11), undefined, "strip-1"), [{ siid: 2, piid: 4, value: 11, label: "工作模式" }]);
+});
+
+test("rejects missing and ambiguous enum labels instead of copying raw values", () => {
+  const source = [{ name: "light", properties: [{ name: "mode", label: "工作模式", siid: 2, piid: 4, format: "uint8", readable: true, writable: true, choices: [{ value: 11, label: "会客模式" }] }] }];
+  const semantics = scenePropertySemantics([{ siid: 2, piid: 4, value: 11 }], source, "strip-1");
+  const missing = [{ name: "light", properties: [{ ...source[0].properties[0], choices: [{ value: 4, label: "阅读模式" }] }] }];
+  const ambiguous = [{ name: "light", properties: [{ ...source[0].properties[0], choices: [{ value: 4, label: "会客模式" }, { value: 5, label: " 会客模式 " }] }] }];
+  assert.deepEqual(mapScenePropertySemanticsResult(semantics, missing, undefined, "other"), { ok: false, reason: "choice-label-missing", semantic: semantics[0] });
+  assert.deepEqual(mapScenePropertySemanticsResult(semantics, ambiguous, undefined, "other"), { ok: false, reason: "choice-label-ambiguous", semantic: semantics[0] });
 });
 
 test("submits the exact AppSceneService Edit endpoint and recognizes returned ids", async () => {

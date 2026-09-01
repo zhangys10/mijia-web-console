@@ -109,6 +109,7 @@ test("reading, running or writing scenes requires an authenticated Xiaomi sessio
 
   for (const request of [
     new Request("http://localhost/api/xiaomi/scenes?homeId=home-1"),
+    new Request("http://localhost/api/xiaomi/scenes/action-catalog?homeId=home-1"),
     new Request("http://localhost/api/xiaomi/scenes/run", {
       method: "POST",
       headers: { "content-type": "application/json" },

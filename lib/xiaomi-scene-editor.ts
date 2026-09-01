@@ -2,6 +2,7 @@ import { xiaomiRequest, type XiaomiSession } from "./xiaomi-cloud.ts";
 import { getMiotCapabilities } from "./miot-spec.ts";
 import { parseDerivedDeviceId } from "./device-topology.ts";
 import { isScenePropertyValueSupported, isSceneWritableProperty } from "./xiaomi-scene-properties.ts";
+import { sceneCatalogTemplateSupportsAction, type SceneActionCatalogDevice } from "./xiaomi-scene-action-catalog.ts";
 import {
   parsedSceneRecord,
   type XiaomiRequester,
@@ -28,6 +29,8 @@ export type SceneDraftAction = {
   properties?: SceneDraftProperty[];
   siid?: number;
   aiid?: number;
+  templateKey?: string;
+  trustedSceneActionId?: number;
 };
 
 export type SceneDraftUnsupportedAction = {
@@ -144,14 +147,14 @@ function parsedAction(action: XiaomiSceneRecord, sourceIndex: number): SceneDraf
     }
     if (properties.length) return { ...base, kind: "set-properties", properties };
   }
-  if (command === "action") return {
-    clientId: base.clientId,
-    kind: "unsupported",
-    sourceIndex,
-    label,
-    ...(deviceName ? { deviceName } : {}),
-    reason: "设备动作需要米家场景动作目录，当前仅支持原样保留",
-  };
+  if (command === "action") {
+    const value = record(payload?.value);
+    const siid = integer(value?.siid);
+    const aiid = integer(value?.aiid);
+    const inputs = value?.in;
+    if (did && siid && aiid && Array.isArray(inputs) && inputs.length === 0) return { ...base, kind: "invoke-action", siid, aiid };
+    return { clientId: base.clientId, kind: "unsupported", sourceIndex, label, ...(deviceName ? { deviceName } : {}), reason: "设备动作包含必填或未知输入参数" };
+  }
   return {
     clientId: base.clientId,
     kind: "unsupported",
@@ -211,7 +214,7 @@ function modernAction(action: SceneDraftAction, order: number, source?: XiaomiSc
   output.name = action.label || action.deviceName;
   output.payload = output.payload ?? "";
   output.protocol_type = typeof output.protocol_type === "number" ? output.protocol_type : 2;
-  output.sa_id = typeof output.sa_id === "number" ? output.sa_id : action.kind === "set-properties" ? 5 : 0;
+  output.sa_id = typeof output.sa_id === "number" ? output.sa_id : action.trustedSceneActionId ?? (action.kind === "set-properties" ? 5 : 0);
   output.from = typeof output.from === "number" ? output.from : 3;
   output.device_group_id = typeof output.device_group_id === "number" ? output.device_group_id : 0;
   output.nested_scene_info = output.nested_scene_info ?? null;
@@ -240,7 +243,7 @@ function legacyAction(action: SceneDraftAction, order: number, source?: XiaomiSc
   output.type = 0;
   output.model = action.model;
   output.tr_id = typeof output.tr_id === "number" ? output.tr_id : 0;
-  output.sa_id = typeof output.sa_id === "number" ? output.sa_id : 0;
+  output.sa_id = typeof output.sa_id === "number" ? output.sa_id : action.trustedSceneActionId ?? 0;
   payload.command = action.kind === "set-properties" ? "set_properties" : "action";
   payload.did = action.did;
   payload.delay_time = 0;
@@ -340,13 +343,20 @@ export function assertBasicSceneDraft(value: unknown, editing: boolean): SceneWr
     if (!Array.isArray(draft.actions) || draft.actions.length < 1 || draft.actions.length > 64) throw new Error("INVALID_SCENE_ACTIONS");
     actions = draft.actions.map((item, index) => {
       const action = record(item);
-      if (!action || action.kind !== "set-properties") throw new Error("INVALID_SCENE_ACTION");
+      if (!action || !["set-properties", "invoke-action"].includes(text(action.kind))) throw new Error("INVALID_SCENE_ACTION");
       const did = text(action.did);
       const deviceName = typeof action.deviceName === "string" ? action.deviceName.trim() : "";
       const model = text(action.model);
       const label = typeof action.label === "string" ? action.label.trim() : "";
       if (!did || did.length > 128 || !deviceName || deviceName.length > 100 || !model || model.length > 120 || !label || label.length > 100) throw new Error("INVALID_SCENE_ACTION");
-      const base = { clientId: text(action.clientId) || `action-${index}`, did, deviceName, model, label, ...(Number.isInteger(action.sourceIndex) && Number(action.sourceIndex) >= 0 ? { sourceIndex: Number(action.sourceIndex) } : {}) };
+      const templateKey = typeof action.templateKey === "string" && /^action-\d+$/.test(action.templateKey) ? action.templateKey : undefined;
+      const base = { clientId: text(action.clientId) || `action-${index}`, did, deviceName, model, label, ...(templateKey ? { templateKey } : {}), ...(Number.isInteger(action.sourceIndex) && Number(action.sourceIndex) >= 0 ? { sourceIndex: Number(action.sourceIndex) } : {}) };
+      if (action.kind === "invoke-action") {
+        const siid = integer(action.siid);
+        const aiid = integer(action.aiid);
+        if (!siid || !aiid) throw new Error("INVALID_SCENE_ACTION");
+        return { ...base, kind: "invoke-action" as const, siid, aiid };
+      }
       if (!Array.isArray(action.properties) || action.properties.length < 1 || action.properties.length > 20) throw new Error("INVALID_SCENE_ACTION");
       const properties = action.properties.map(item => {
         const property = record(item);
@@ -381,6 +391,7 @@ export async function validateSceneDraftCapabilities(
   devices: XiaomiSceneRecord[],
   loadCapabilities: CapabilityLoader = getMiotCapabilities,
   allowExistingVirtualTargets = false,
+  catalog?: SceneActionCatalogDevice[],
 ) {
   if (!draft.actions) return draft;
   const byDid = new Map(devices.map(device => [text(device.did), device]));
@@ -405,11 +416,23 @@ export async function validateSceneDraftCapabilities(
         const property = group?.properties.find(item => item.piid === requested.piid);
         if (!group || !property || !isSceneWritableProperty(group.name, property) || !isScenePropertyValueSupported(property, requested.value)) throw new Error("XIAOMI_SCENE_PROPERTY_UNSUPPORTED");
       }
-    } else throw new Error("XIAOMI_SCENE_ACTION_UNSUPPORTED");
+    } else {
+      const group = specification.groups.find(item => item.siid === action.siid);
+      const capability = group?.actions.find(item => item.aiid === action.aiid);
+      if (!group || !capability || capability.inputs.length) throw new Error("XIAOMI_SCENE_ACTION_UNSUPPORTED");
+    }
+    let matchedTemplate: SceneActionCatalogDevice["actions"][number] | undefined;
+    if (catalog && (action.templateKey || action.kind === "invoke-action")) {
+      const entry = catalog.find(item => item.did === action.did);
+      const templates = entry?.actions.filter(template => !action.templateKey || template.key === action.templateKey) ?? [];
+      matchedTemplate = templates.find(template => sceneCatalogTemplateSupportsAction(template, action));
+      if (!matchedTemplate) throw new Error("XIAOMI_SCENE_ACTION_CATALOG_MISMATCH");
+    }
     actions.push({
       ...action,
       model,
       deviceName: text(device.name ?? deviceModel(device)) || action.deviceName,
+      ...(matchedTemplate?.sceneActionId ? { trustedSceneActionId: matchedTemplate.sceneActionId } : {}),
     });
   }
   return { ...draft, actions };

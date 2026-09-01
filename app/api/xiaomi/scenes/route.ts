@@ -1,7 +1,8 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { listDevices, listHomes, unseal, xiaomiErrorInfo, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
-import { assertHomeAccess, listRawManualScenes, parseManualScenes } from "../../../../lib/xiaomi-scenes";
+import { listDevices, listHomeContexts, unseal, xiaomiErrorInfo, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
+import { loadSceneActionCatalog } from "../../../../lib/xiaomi-scene-action-catalog";
+import { assertHomeAccess, listRawManualScenes, loadSceneActionCapabilities, loadSceneDeviceCapabilities, parseManualScenes } from "../../../../lib/xiaomi-scenes";
 import { assertBasicSceneDraft, buildCreatePayload, createEditorDraft, sceneDraftMatchesWrite, sceneIdFromEditResponse, sceneRecordId, submitSceneEdit, validateSceneDraftCapabilities } from "../../../../lib/xiaomi-scene-editor";
 
 function validIdentifier(value: string | null) {
@@ -15,11 +16,12 @@ export async function GET(request: NextRequest) {
     const homeId = request.nextUrl.searchParams.get("homeId");
     if (!validIdentifier(homeId)) return NextResponse.json({ error: "INVALID_HOME_ID" }, { status: 400 });
     const session = await unseal<XiaomiSession>(value);
-    const homes = await listHomes(session);
+    const homes = await listHomeContexts(session);
     try { assertHomeAccess(homes, homeId!); }
     catch { return NextResponse.json({ error: "XIAOMI_HOME_NOT_FOUND" }, { status: 404 }); }
     const rawScenes = await listRawManualScenes(session, homeId!);
-    const scenes = parseManualScenes({ result: rawScenes }, homeId!);
+    const capabilities = await loadSceneActionCapabilities(rawScenes, homeId!);
+    const scenes = parseManualScenes({ result: rawScenes }, homeId!, [], capabilities);
     return NextResponse.json({ ok: true, homeId, scenes, capturedAt: new Date().toISOString() });
   } catch (error) {
     const failure = xiaomiErrorInfo(error);
@@ -37,13 +39,15 @@ export async function POST(request: NextRequest) {
     const draft = assertBasicSceneDraft(await request.json(), false);
     if (!draft.actions?.length) return NextResponse.json({ error: "INVALID_SCENE_ACTIONS" }, { status: 400 });
     const session = await unseal<XiaomiSession>(value);
-    const homes = await listHomes(session);
+    const homes = await listHomeContexts(session);
     try { assertHomeAccess(homes, draft.homeId); }
     catch { return NextResponse.json({ error: "XIAOMI_HOME_NOT_FOUND" }, { status: 404 }); }
     const before = await listRawManualScenes(session, draft.homeId);
     if (before.some(scene => String(scene.name ?? scene.scene_name ?? "").trim() === draft.name)) return NextResponse.json({ error: "XIAOMI_SCENE_NAME_CONFLICT" }, { status: 409 });
     const devices = await listDevices(session);
-    const validated = await validateSceneDraftCapabilities(draft, devices.devices);
+    const home = homes.find(item => item.id === draft.homeId)!;
+    const catalog = await loadSceneActionCatalog(session, draft.homeId, home.ownerUid, devices.devices);
+    const validated = await validateSceneDraftCapabilities(draft, devices.devices, undefined, false, catalog);
     const payload = buildCreatePayload(validated, session.userId);
     const response = await submitSceneEdit(session, payload);
     const responseId = sceneIdFromEditResponse(response);
@@ -57,11 +61,12 @@ export async function POST(request: NextRequest) {
       if (candidate && sceneDraftMatchesWrite(await createEditorDraft(candidate, draft.homeId), validated)) created = candidate;
     }
     if (!created) throw new Error("XIAOMI_SCENE_WRITE_NOT_VISIBLE");
-    const scenes = parseManualScenes({ result: { scene_info_list: [created] } }, draft.homeId, devices.devices);
+    const capabilities = await loadSceneDeviceCapabilities(devices.devices, draft.homeId);
+    const scenes = parseManualScenes({ result: { scene_info_list: [created] } }, draft.homeId, devices.devices, capabilities);
     return NextResponse.json({ ok: true, scene: scenes[0], created: true }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
-    const status = message.startsWith("INVALID_") ? 400 : message.endsWith("_UNSUPPORTED") || message.endsWith("_NOT_FOUND") ? 422 : 502;
+    const status = message.startsWith("INVALID_") ? 400 : message.endsWith("_UNSUPPORTED") || message.endsWith("_NOT_FOUND") || message.endsWith("_MISMATCH") ? 422 : 502;
     console.error("[xiaomi-scenes-create]", JSON.stringify({ error: message }));
     return NextResponse.json({ ok: false, error: message }, { status });
   }

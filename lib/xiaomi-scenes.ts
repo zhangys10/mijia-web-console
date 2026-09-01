@@ -1,3 +1,5 @@
+import { getMiotCapabilities } from "./miot-spec.ts";
+import type { SceneMappableGroup } from "./xiaomi-scene-properties.ts";
 import { xiaomiRequest, type XiaomiSession } from "./xiaomi-cloud.ts";
 
 export type ManualScene = {
@@ -29,6 +31,7 @@ export type ManualSceneActionDetail = {
 type HomeIdentity = { id: string };
 
 export type XiaomiSceneRecord = Record<string, unknown>;
+export type SceneDeviceCapabilities = Map<string, SceneMappableGroup[]>;
 type RawScene = XiaomiSceneRecord;
 export type XiaomiRequester = (
   session: XiaomiSession,
@@ -53,6 +56,71 @@ export function parsedSceneRecord(value: unknown) {
 
 function text(value: unknown) {
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
+}
+
+export function sceneDeviceCapabilityKey(homeId: string, did: string) {
+  return `${homeId}\u0000${did}`;
+}
+
+function deviceHomeId(device: RawScene) {
+  return text(device.homeId ?? device.home_id);
+}
+
+function deviceUrn(device: RawScene) {
+  const value = device.urn ?? device.spec_type ?? device.miot_type;
+  return typeof value === "string" && value.startsWith("urn:") ? value : undefined;
+}
+
+export async function loadSceneDeviceCapabilities(
+  devices: XiaomiSceneRecord[],
+  homeId: string,
+  loadCapabilities: typeof getMiotCapabilities = getMiotCapabilities,
+): Promise<SceneDeviceCapabilities> {
+  const eligible = devices.filter(device => deviceHomeId(device) === homeId && text(device.did) && text(device.model));
+  const byModel = new Map<string, Promise<SceneMappableGroup[]>>();
+  for (const device of eligible) {
+    const model = text(device.model);
+    const urn = deviceUrn(device);
+    const key = `${model}:${urn ?? ""}`;
+    if (!byModel.has(key)) byModel.set(key, loadCapabilities(model, urn).then(result => result.groups).catch(() => []));
+  }
+  const entries = await Promise.all(eligible.map(async device => {
+    const model = text(device.model);
+    const urn = deviceUrn(device);
+    return [sceneDeviceCapabilityKey(homeId, text(device.did)), await byModel.get(`${model}:${urn ?? ""}`)!] as const;
+  }));
+  return new Map(entries);
+}
+
+export async function loadSceneActionCapabilities(
+  scenes: XiaomiSceneRecord[],
+  homeId: string,
+  existing: SceneDeviceCapabilities = new Map(),
+  loadCapabilities: typeof getMiotCapabilities = getMiotCapabilities,
+): Promise<SceneDeviceCapabilities> {
+  const capabilities = new Map(existing);
+  const targets = new Map<string, { did: string; model: string; urn?: string }>();
+  for (const scene of scenes) {
+    if ((text(scene.home_id) || homeId) !== homeId) continue;
+    for (const action of actionEntries(scene)) {
+      const payload = parsedSceneRecord(action.payload_json ?? action.payload);
+      const did = text(payload?.did ?? action.did);
+      const model = text(payload?.model ?? action.model);
+      if (!did || !model || capabilities.get(sceneDeviceCapabilityKey(homeId, did))?.length) continue;
+      const urnValue = payload?.urn ?? payload?.spec_type ?? action.urn ?? action.spec_type;
+      const urn = typeof urnValue === "string" && urnValue.startsWith("urn:") ? urnValue : undefined;
+      targets.set(sceneDeviceCapabilityKey(homeId, did), { did, model, urn });
+    }
+  }
+  const byModel = new Map<string, Promise<SceneMappableGroup[]>>();
+  for (const target of targets.values()) {
+    const key = `${target.model}:${target.urn ?? ""}`;
+    if (!byModel.has(key)) byModel.set(key, loadCapabilities(target.model, target.urn).then(result => result.groups).catch(() => []));
+  }
+  await Promise.all([...targets.entries()].map(async ([key, target]) => {
+    capabilities.set(key, await byModel.get(`${target.model}:${target.urn ?? ""}`)!);
+  }));
+  return capabilities;
 }
 
 function number(value: unknown, fallback: number) {
@@ -100,32 +168,28 @@ function primitive(value: unknown) {
   return "";
 }
 
-function isAirConditioner(device: RawScene | undefined, deviceName: string) {
-  const identity = [device?.model, device?.logicalType, device?.logical_type, device?.name, device?.device_name, deviceName].map(text).join(" ").toLowerCase();
-  return /air[-_ ]?condition|acpartner|\baircon\b|空调/.test(identity);
+function sameValue(left: unknown, right: unknown) {
+  return typeof left === typeof right && left === right;
 }
 
-function airConditionerMode(value: unknown) {
-  const modes = new Map<unknown, string>([[1, "制冷"], [2, "除湿"], [4, "送风"], [8, "制热"]]);
-  return modes.get(value) ?? primitive(value);
-}
-
-function propertyDetail(value: RawScene, device?: RawScene, deviceName = "", actionLabel = "") {
+function propertyDetail(value: RawScene, groups: SceneMappableGroup[] = []) {
   const siid = number(value.siid, 0);
   const piid = number(value.piid, 0);
   const formatted = primitive(value.value);
   if (!formatted) return undefined;
-  if (piid === 1 && typeof value.value === "boolean") return { kind: "power" as const, label: "电源", value: formatted, state: value.value ? "on" as const : "off" as const };
-  if (siid === 2 && isAirConditioner(device, deviceName)) {
-    if (piid === 2 && typeof value.value === "number") return { kind: "property" as const, label: "工作模式", value: airConditionerMode(value.value) };
-    if (piid === 4 && typeof value.value === "number") return { kind: "property" as const, label: "目标温度", value: `${formatted}°C` };
-  }
-  if (siid === 2 && piid === 2 && typeof value.value === "number") return { kind: "brightness" as const, label: "亮度", value: `${formatted}%` };
-  if (siid === 2 && piid === 3 && typeof value.value === "number") return { kind: "color-temperature" as const, label: "色温", value: `${formatted} K` };
-  const description = actionLabel && !["设置设备属性", "执行设备动作", "设备动作"].includes(actionLabel)
-    ? actionLabel
-    : "未识别属性";
-  return { kind: "property" as const, label: description, value: formatted };
+  const property = groups.flatMap(group => group.properties).find(item => item.siid === siid && item.piid === piid);
+  if (!property) return { kind: "property" as const, label: "未识别属性", value: formatted };
+  const choiceMatches = property.choices?.filter(choice => sameValue(choice.value, value.value)) ?? [];
+  const described = property.choices?.length
+    ? choiceMatches.length === 1 ? choiceMatches[0].label : `未知（${formatted}）`
+    : property.name === "brightness" ? `${formatted}%`
+      : property.name === "color-temperature" ? `${formatted} K`
+        : property.unit === "celsius" || property.name === "target-temperature" ? `${formatted}°C`
+          : formatted;
+  if (property.name === "on" && typeof value.value === "boolean") return { kind: "power" as const, label: property.label, value: described, state: value.value ? "on" as const : "off" as const };
+  if (property.name === "brightness") return { kind: "brightness" as const, label: property.label, value: described };
+  if (property.name === "color-temperature") return { kind: "color-temperature" as const, label: property.label, value: described };
+  return { kind: "property" as const, label: property.label, value: described };
 }
 
 function commandLabel(command: string) {
@@ -135,7 +199,7 @@ function commandLabel(command: string) {
   return command || "执行动作";
 }
 
-function normalizeActions(scene: RawScene, roomsByDid: Map<string, string>, devicesByDid: Map<string, RawScene>): ManualSceneAction[] {
+function normalizeActions(scene: RawScene, roomsByDid: Map<string, string>, capabilities: SceneDeviceCapabilities, homeId: string): ManualSceneAction[] {
   return actionEntries(scene).map((action, index) => {
     const payload = parsedSceneRecord(action.payload_json ?? action.payload);
     const command = text(payload?.command);
@@ -143,9 +207,9 @@ function normalizeActions(scene: RawScene, roomsByDid: Map<string, string>, devi
     const deviceName = text(payload?.device_name) || text(action.device_name);
     const did = text(payload?.did ?? action.did);
     const room = roomsByDid.get(did);
-    const device = devicesByDid.get(did);
+    const groups = capabilities.get(sceneDeviceCapabilityKey(homeId, did));
     const values = Array.isArray(payload?.value) ? payload.value.filter((item): item is RawScene => Boolean(record(item))) : [];
-    const details: ManualSceneActionDetail[] = values.map(value => propertyDetail(value, device, deviceName, label)).filter((item): item is NonNullable<ReturnType<typeof propertyDetail>> => Boolean(item));
+    const details: ManualSceneActionDetail[] = values.map(value => propertyDetail(value, groups)).filter((item): item is NonNullable<ReturnType<typeof propertyDetail>> => Boolean(item));
     const delay = number(payload?.delay_time ?? action.delay_time, 0);
     if (delay > 0) details.unshift({ kind: "delay", label: "延时", value: `${delay} 秒` });
     if (!details.length && command && label !== commandLabel(command)) details.push({ kind: "command", label: "方式", value: commandLabel(command) });
@@ -166,12 +230,7 @@ function enabled(value: unknown) {
   return !["0", "false", "disabled", "off"].includes(String(value).toLowerCase());
 }
 
-export function parseManualScenes(response: Record<string, unknown>, homeId: string, devices: XiaomiSceneRecord[] = []): ManualScene[] {
-  const devicesByDid = new Map(devices.flatMap(device => {
-    const deviceHomeId = text(device.homeId ?? device.home_id);
-    const did = text(device.did);
-    return deviceHomeId === homeId && did ? [[did, device] as const] : [];
-  }));
+export function parseManualScenes(response: Record<string, unknown>, homeId: string, devices: XiaomiSceneRecord[] = [], capabilities: SceneDeviceCapabilities = new Map()): ManualScene[] {
   const roomsByDid = new Map(devices.flatMap(device => {
     const deviceHomeId = text(device.homeId ?? device.home_id);
     const did = text(device.did);
@@ -187,7 +246,7 @@ export function parseManualScenes(response: Record<string, unknown>, homeId: str
     if (!id || !name || sceneHomeId !== homeId) continue;
     const icon = text(scene.icon ?? scene.icon_url);
     const updatedAt = text(scene.update_time ?? scene.updated_at ?? scene.modify_time);
-    const actions = normalizeActions(scene, roomsByDid, devicesByDid);
+    const actions = normalizeActions(scene, roomsByDid, capabilities, homeId);
     scenes.set(id, {
       id,
       homeId,

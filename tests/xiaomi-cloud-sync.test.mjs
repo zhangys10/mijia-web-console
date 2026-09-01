@@ -214,7 +214,8 @@ test("the unified route reuses device results for scenes and logs no device iden
   const devicesRoute = await readFile(new URL("../app/api/xiaomi/devices/route.ts", import.meta.url), "utf8");
   const scenesRoute = await readFile(new URL("../app/api/xiaomi/scenes/route.ts", import.meta.url), "utf8");
   assert.match(devicesRoute, /includeScenes/);
-  assert.match(devicesRoute, /parseManualScenes\(\{ result: rawScenes \}, selectedHomeId, result\.devices\)/);
+  assert.match(devicesRoute, /loadSceneActionCapabilities\(rawScenes, selectedHomeId, runtime\.sceneCapabilities\)/);
+  assert.match(devicesRoute, /parseManualScenes\(\{ result: rawScenes \}, selectedHomeId, result\.devices, sceneCapabilities\)/);
   assert.match(devicesRoute, /devices: result\.completeness/);
   assert.match(devicesRoute, /properties: runtime\.timedOut \|\| runtime\.failedPropertyBatchCount/);
   assert.match(devicesRoute, /totalXiaomiRequestAttemptCount: result\.requestAttemptCount \+ runtime\.propertyBatchCount \+ sceneAttemptCount/);

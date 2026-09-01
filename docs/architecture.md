@@ -21,13 +21,13 @@ flowchart TB
     subgraph API[HTTP 边界 · app/api/xiaomi]
         AuthAPI[QR / Status]
         DeviceAPI[Devices / Spec / Control]
-        SceneAPI[Scenes / Run]
+        SceneAPI[Scenes / Run / Action Catalog]
         AutomationAPI[Automations / Catalog]
     end
 
     subgraph Service[服务与应用编排 · 当前分布在 lib 和 Route Handler]
         Cloud[xiaomi-cloud<br/>会话、签名、云请求、设备发现]
-        SceneService[xiaomi-scenes<br/>xiaomi-scene-editor]
+        SceneService[xiaomi-scenes<br/>xiaomi-scene-editor<br/>xiaomi-scene-action-catalog]
         AutomationService[xiaomi-automations<br/>xiaomi-automation-editor<br/>xiaomi-automation-catalog]
         SpecService[miot-spec<br/>规格获取与缓存]
     end
@@ -232,6 +232,23 @@ sequenceDiagram
 
 这种“原始记录保真 + 能力校验 + 乐观并发控制 + 写后验证”的模式，是场景和自动化模块最重要的可复用设计。
 
+### 2.5 场景动作目录
+
+```mermaid
+flowchart LR
+    Browser[场景编辑器] --> Route[GET /api/xiaomi/scenes/action-catalog]
+    Route -->|鉴权、homeId 校验| Catalog[xiaomi-scene-action-catalog]
+    Catalog --> TCA[实例级 TCA]
+    TCA -->|不可用| Model[官方型号目录]
+    Model -->|不可用| Spec[MIoT Spec]
+    TCA -->|成功但为空| Empty[权威空列表]
+    Catalog --> Validate[按目标设备规格校验<br/>枚举、范围、空参数动作]
+    Validate --> DTO[脱敏模板与 opaque key]
+    DTO --> Browser
+```
+
+动作目录以设备实例为首选证据，严格应用 `black_dids`；实例目录成功但为空时不继续猜测。服务端保留真实目录动作 ID，客户端只接收 opaque key、官方原文和经过 MIoT 规格验证的参数约束。创建或更新场景时，服务端重新加载当前目录并校验模板，避免目录变化后写入失效或跨设备的数值。
+
 ## 3. 外部与内部 API
 
 ### 3.1 外部 API
@@ -270,6 +287,7 @@ sequenceDiagram
 | `/api/xiaomi/control` | `GET`, `POST` | 读取/写入属性或执行动作 |
 | `/api/xiaomi/scenes` | `GET`, `POST` | 列出或创建手动场景 |
 | `/api/xiaomi/scenes/:sceneId` | `GET`, `PUT` | 获取编辑草稿或安全更新场景 |
+| `/api/xiaomi/scenes/action-catalog` | `GET` | 按家庭和设备实例返回脱敏、可重新验证的官方动作模板 |
 | `/api/xiaomi/scenes/run` | `POST` | 执行手动场景 |
 | `/api/xiaomi/automations` | `GET`, `POST` | 列出或创建自动化 |
 | `/api/xiaomi/automations/:automationId` | `GET`, `PUT` | 获取草稿或安全更新自动化 |
@@ -292,6 +310,7 @@ flowchart LR
     Management[device-management]
     Scenes[xiaomi-scenes]
     SceneEditor[xiaomi-scene-editor]
+    SceneActionCatalog[xiaomi-scene-action-catalog]
     SceneProperties[xiaomi-scene-properties]
     SceneGroups[scene-action-groups]
     Automations[xiaomi-automations]
@@ -305,6 +324,7 @@ flowchart LR
     Management --> Topology
     Scenes --> Cloud
     SceneEditor --> Cloud & Miot & Topology & SceneProperties & Scenes
+    SceneActionCatalog --> AutomationCatalog & Miot & Topology & SceneProperties & SceneEditor
     SceneGroups --> Management & SceneEditor & Scenes
     Automations --> Cloud & Topology & Scenes
     AutomationEditor --> SceneEditor & Scenes & Automations
@@ -323,7 +343,7 @@ flowchart LR
 | 开关语义 | `switch-channel-mode`, `switch-bindings` | 解析有线/无线模式，识别可安全调用的绑定能力 | 未知值保持 `unknown` |
 | 设备聚合 | `device-management`, `device-views`, `device-groups` | 生成硬件视图、受控设备视图、照明目标和活动设备 | 与 UI DTO 有一定耦合 |
 | MIoT 能力 | `miot-spec`, `xiaomi-scene-properties` | 规范化服务/属性/动作/事件，限制场景可写能力 | 获取与解析仍在同一模块 |
-| 场景 | `xiaomi-scenes`, `xiaomi-scene-editor`, `scene-action-groups` | 解析、展示、草稿、校验和保真写入 | 网络服务与领域逻辑混合 |
+| 场景 | `xiaomi-scenes`, `xiaomi-scene-editor`, `xiaomi-scene-action-catalog`, `scene-action-groups` | 解析、展示、草稿、实例动作目录、校验和保真写入 | 网络服务与领域逻辑混合 |
 | 自动化 | `xiaomi-automations`, `xiaomi-automation-editor`, `xiaomi-automation-catalog` | 触发器分类、编辑、能力目录与安全投影 | 复用场景写入内核 |
 
 #### 关键领域不变量
@@ -525,7 +545,7 @@ flowchart LR
 - 家庭隔离、派生 DID、灯组和设备拓扑。
 - 属性批次、设备分页、部分成功、错误分类和时间预算。
 - 场景/自动化识别、草稿校验、未知节点保真和写后验证。
-- TCA 目录分页、黑名单、脱敏投影和逐型号降级。
+- TCA 目录分页、黑名单、脱敏投影、实例动作验证和逐型号降级。
 - Route Handler 未登录保护、参数校验和稳定错误响应。
 - Cloudflare、EdgeOne、Vercel 构建配置及响应式 UI。
 
