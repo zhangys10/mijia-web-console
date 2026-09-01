@@ -75,6 +75,7 @@ export type LightingTopology<T extends ManagedDevice = ManagedDevice> = {
   room: string;
   kind: LightingTopologyKind;
   lights: T[];
+  groupMembers: T[];
   loads: T[];
   aliases: T[];
   controls: LightingControl<T>[];
@@ -242,7 +243,7 @@ function addControl<T extends ManagedDevice>(
 }
 
 function createTopology<T extends ManagedDevice>(key: string, name: string, homeId: string, room: string, kind: LightingTopologyKind): LightingTopology<T> {
-  return { key, name, homeId, room, kind, lights: [], loads: [], aliases: [], controls: [], on: null, online: null, stateSource: "unknown", unresolved: false };
+  return { key, name, homeId, room, kind, lights: [], groupMembers: [], loads: [], aliases: [], controls: [], on: null, online: null, stateSource: "unknown", unresolved: false };
 }
 
 function namedWiredLoad(device: ManagedDevice, channel: DeviceControlChannel) {
@@ -290,11 +291,12 @@ export function buildDeviceManagementModel<T extends ManagedDevice>(devices: T[]
 
   const topologies = new Map<string, LightingTopology<T>>();
   const byName = new Map<string, LightingTopology<T>[]>();
-  for (const device of devices.filter(independentLight)) {
+  for (const device of devices.filter(candidate => independentLight(candidate) && (!candidate.did || !claimedMembers.has(`${candidate.homeId}:${candidate.did}`)))) {
     const kind: LightingTopologyKind = groupId(device.did) ? "smart-light-group" : "smart-light";
     const key = `${device.homeId}:${device.room}:${targetName(device.name)}:${device.did}`;
     const topology = createTopology<T>(key, device.name, device.homeId, device.room, kind);
     topology.lights.push(device);
+    if (kind === "smart-light-group") topology.groupMembers.push(...(groupMembersById.get(`${device.homeId}:${device.did}`) ?? []));
     topology.on = device.online === false ? null : device.on;
     topology.online = device.online ?? null;
     topology.stateSource = "smart-device";

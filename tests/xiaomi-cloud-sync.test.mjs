@@ -218,7 +218,15 @@ test("the unified route reuses device results for scenes and logs no device iden
   assert.match(devicesRoute, /parseManualScenes\(\{ result: rawScenes \}, selectedHomeId, result\.devices, sceneCapabilities\)/);
   assert.match(devicesRoute, /devices: result\.completeness/);
   assert.match(devicesRoute, /properties: runtime\.timedOut \|\| runtime\.failedPropertyBatchCount/);
-  assert.match(devicesRoute, /totalXiaomiRequestAttemptCount: result\.requestAttemptCount \+ runtime\.propertyBatchCount \+ sceneAttemptCount/);
+  assert.match(devicesRoute, /totalXiaomiRequestAttemptCount: result\.requestAttemptCount \+ \(groupDids\.length \? 1 : 0\) \+ runtime\.propertyBatchCount \+ sceneAttemptCount/);
   assert.doesNotMatch(scenesRoute.slice(0, scenesRoute.indexOf("export async function POST")), /listDevices\(/, "scene-only reads must not repeat a full device sync");
   assert.doesNotMatch(devicesRoute, /redactedDid|did:\s*(?:mapped|redacted|did)/, "diagnostics must not include full or partial DIDs");
+});
+
+test("device synchronization enriches light groups through the published group status endpoint", async () => {
+  const devicesRoute = await readFile(new URL("../app/api/xiaomi/devices/route.ts", import.meta.url), "utf8");
+  assert.match(devicesRoute, /loadDeviceGroupMemberships\(session, groupDids\)/);
+  assert.match(devicesRoute, /mergeDeviceGroupMemberships\(collectDeviceGroupMembers\(result\.devices\), queriedGroupMembership\.members\)/);
+  assert.match(devicesRoute, /groupMemberIds: members\.map\(member => text\(member\.did\)\)/, "only same-home devices present in discovery may leave the API as group members");
+  assert.match(devicesRoute, /groupRequestAttemptCount/);
 });
