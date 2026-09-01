@@ -35,7 +35,7 @@ flowchart TB
     subgraph Domain[领域层 · lib 中的纯规则]
         Topology[device-topology<br/>xiaomi-control-objects]
         Management[device-management<br/>device-views / device-groups]
-        Switch[switch-channel-mode<br/>switch-bindings]
+        Switch[device-capabilities<br/>switch-channel-mode / switch-bindings]
         SceneDomain[场景/自动化解析<br/>校验、保真写入、展示分组]
     end
 
@@ -302,6 +302,7 @@ flowchart LR
     Cloud[xiaomi-cloud]
     ControlObjects[xiaomi-control-objects]
     Miot[miot-spec]
+    Capabilities[device-capabilities]
     Topology[device-topology]
     ChannelMode[switch-channel-mode]
     Bindings[switch-bindings]
@@ -318,6 +319,7 @@ flowchart LR
     AutomationCatalog[xiaomi-automation-catalog]
 
     Cloud --> ControlObjects
+    Capabilities --> Miot
     Topology --> ChannelMode
     Bindings --> Miot & Topology
     Views --> Topology
@@ -342,7 +344,7 @@ flowchart LR
 | 设备身份与拓扑 | `device-topology`, `xiaomi-control-objects` | 识别物理设备、`.sN` 端点、控制通道、控制对象和证据 | 纯规则为主，家庭隔离明确 |
 | 开关语义 | `switch-channel-mode`, `switch-bindings` | 解析有线/无线模式，识别可安全调用的绑定能力 | 未知值保持 `unknown` |
 | 设备聚合 | `device-management`, `device-views`, `device-groups` | 生成硬件视图、受控设备视图、照明目标和活动设备 | 与 UI DTO 有一定耦合 |
-| MIoT 能力 | `miot-spec`, `xiaomi-scene-properties` | 规范化服务/属性/动作/事件，限制场景可写能力 | 获取与解析仍在同一模块 |
+| MIoT 能力 | `miot-spec`, `device-capabilities`, `xiaomi-scene-properties` | 规范化服务/属性/动作/事件，划分只读、读写、仅写和 Action，并限制场景可写能力 | 获取与解析仍在同一模块 |
 | 场景 | `xiaomi-scenes`, `xiaomi-scene-editor`, `xiaomi-scene-action-catalog`, `scene-action-groups` | 解析、展示、草稿、实例动作目录、校验和保真写入 | 网络服务与领域逻辑混合 |
 | 自动化 | `xiaomi-automations`, `xiaomi-automation-editor`, `xiaomi-automation-catalog` | 触发器分类、编辑、能力目录与安全投影 | 复用场景写入内核 |
 

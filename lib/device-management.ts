@@ -80,7 +80,8 @@ export type LightingTopology<T extends ManagedDevice = ManagedDevice> = {
   controls: LightingControl<T>[];
   on: boolean | null;
   online: boolean | null;
-  stateSource: "smart-device" | "wired-endpoint" | "unknown";
+  stateSource: "smart-device" | "wired-endpoint" | "controller-channel" | "unknown";
+  powerControl?: ManagedPowerControl;
   unresolved: boolean;
 };
 
@@ -210,9 +211,10 @@ function addControl<T extends ManagedDevice>(
   evidence: ControlEvidence = inferred ? "inferred" : "confirmed",
   evidenceSource: ControlEvidenceSource = inferred ? "name-match" : "split-device",
   target?: T,
+  channelOverride?: DeviceControlChannel,
 ) {
   if (!owner) return;
-  const channel = endpoint ? channelFor(endpoint, owner) : owner.topology?.channels.find(item => item.edges.some(edge => edge.relation === relation && edge.targetKey === topology.key));
+  const channel = channelOverride ?? (endpoint ? channelFor(endpoint, owner) : owner.topology?.channels.find(item => item.edges.some(edge => edge.relation === relation && edge.targetKey === topology.key)));
   const channelSiid = channel?.channelSiid ?? endpoint?.topology?.channelSiid ?? null;
   const connection = connectionForRelation(relation);
   const existing = topology.controls.find(control => control.device.did === owner.did && control.channelSiid === channelSiid && control.relation === relation);
@@ -241,6 +243,13 @@ function addControl<T extends ManagedDevice>(
 
 function createTopology<T extends ManagedDevice>(key: string, name: string, homeId: string, room: string, kind: LightingTopologyKind): LightingTopology<T> {
   return { key, name, homeId, room, kind, lights: [], loads: [], aliases: [], controls: [], on: null, online: null, stateSource: "unknown", unresolved: false };
+}
+
+function namedWiredLoad(device: ManagedDevice, channel: DeviceControlChannel) {
+  const genericChannelName = /^(?:按键|服务)\s*\d+$/;
+  const channelName = channel.label.trim();
+  if (!genericChannelName.test(channelName) && lightName.test(channelName)) return channelName;
+  return lightName.test(device.name) ? device.name : undefined;
 }
 
 function selectTarget<T extends ManagedDevice>(candidates: LightingTopology<T>[], endpoint: T, owner?: T) {
@@ -341,6 +350,36 @@ export function buildDeviceManagementModel<T extends ManagedDevice>(devices: T[]
     addControl(topology, record.owner, record.device, "wireless-control", !candidate || candidate.kind === "smart-light" || candidate.kind === "smart-light-group");
   }
 
+  // Some single-channel wall switches publish the switch service and its live state,
+  // but Xiaomi does not publish a separate `.sN` load record. A concrete light name
+  // is sufficient evidence to retain that physical relay as an ordinary light load.
+  for (const record of records.filter(item => item.category === "switch")) {
+    const channels = record.device.topology?.channels ?? [];
+    if (channels.length !== 1) continue;
+    const channel = channels[0];
+    const hasEndpoint = endpoints.some(endpoint => endpoint.homeId === record.device.homeId
+      && endpoint.parentId === record.device.did
+      && endpoint.topology?.channelSiid === channel.channelSiid);
+    const name = namedWiredLoad(record.device, channel);
+    if (
+      hasEndpoint
+      || !name
+      || channel.modeCapability === "wireless-only"
+      || !channel.relayEnabled
+      || channel.edges.some(edge => edge.relation !== "unknown")
+    ) continue;
+    const key = `${record.device.homeId}:${record.device.room}:${targetName(name)}:named-relay`;
+    if (topologies.has(key)) continue;
+    const topology = createTopology<T>(key, name, record.device.homeId, record.device.room, "ordinary-load");
+    topology.loads.push(record.device);
+    topology.on = typeof record.device.on === "boolean" ? record.device.on : channel.reportedOn;
+    topology.online = record.device.online ?? null;
+    topology.stateSource = "controller-channel";
+    topology.powerControl = channel.powerControl ?? record.device.powerControl;
+    addControl(topology, record.device, undefined, "wired-load", true, "inferred", "name-match", undefined, channel);
+    topologies.set(key, topology);
+  }
+
   const controllerIndex = new Map(controllers.flatMap(controller => controller.did ? [[deviceTopologyIdentity(controller.homeId, controller.did), controller] as const] : []));
   const deviceIndex = new Map(devices.flatMap(device => device.did ? [[deviceTopologyIdentity(device.homeId, device.did), device] as const] : []));
   for (const controller of controllers) {
@@ -398,7 +437,7 @@ export function buildActiveDeviceGroups<T extends ManagedDevice>(devices: T[]): 
       ?? topology.controls.find(candidate => candidate.endpoint)
       ?? topology.controls[0];
     const device = topology.stateSource === "smart-device" ? stateDevice : control?.device ?? stateDevice;
-    const mappedDevice = topology.stateSource === "smart-device" ? undefined : control?.endpoint ?? stateDevice;
+    const mappedDevice = topology.stateSource === "smart-device" || topology.stateSource === "controller-channel" ? undefined : control?.endpoint ?? stateDevice;
     items.push({
       key: `light:${topology.key}`,
       name: topology.name,
@@ -406,13 +445,13 @@ export function buildActiveDeviceGroups<T extends ManagedDevice>(devices: T[]): 
       kind: topology.kind === "smart-light-group" ? "灯组" : "灯光",
       icon: stateDevice.icon || "☀",
       color: stateDevice.color || "orange",
-      status: stateDevice.status || "已开启",
+      status: topology.on === true ? "已开启" : topology.on === false ? "已关闭" : stateDevice.status,
       device,
       mappedDevice,
-      stateDeviceIds: topology.stateSource === "smart-device"
+      stateDeviceIds: topology.stateSource === "smart-device" || topology.stateSource === "controller-channel"
         ? [stateDevice.id]
         : [...new Set(topology.loads.filter(item => item.on === true).map(item => item.id))],
-      powerControl: stateDevice.powerControl,
+      powerControl: topology.powerControl ?? stateDevice.powerControl,
     });
   }
 

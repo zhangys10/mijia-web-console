@@ -1,3 +1,6 @@
+import { miotPropertyAccess } from "./device-capabilities.ts";
+import type { MiotCapabilityGroup, MiotCapabilityProperty } from "./miot-spec.ts";
+
 export type SceneCapabilityProperty = {
   name: string;
   format: string;
@@ -61,7 +64,11 @@ function hasSafeEditor(property: SceneCapabilityProperty) {
 }
 
 export function isSceneWritableProperty(serviceName: string, property: SceneCapabilityProperty) {
-  return Boolean(property.readable && property.writable && allowedProperties[serviceName]?.has(property.name) && hasSafeEditor(property));
+  return Boolean(miotPropertyAccess(property) === "read-write" && allowedProperties[serviceName]?.has(property.name) && hasSafeEditor(property));
+}
+
+export function listSceneWritableProperties(group: Pick<MiotCapabilityGroup, "name" | "properties">): MiotCapabilityProperty[] {
+  return group.properties.filter(property => isSceneWritableProperty(group.name, property));
 }
 
 export function isScenePropertyValueSupported(property: SceneCapabilityProperty, value: ScenePropertyValue) {
