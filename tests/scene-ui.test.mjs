@@ -129,9 +129,10 @@ test("scene editor supports safe create and update workflows", async () => {
   assert.match(source, /onClick=\{composerOpen\?cancelComposer:close\}/, "the action-step back button must return to the scene form");
   assert.match(source, /actionGroups\.map\(group=>/);
   assert.match(source, /group\.rooms\.map\(room=>/, "the editor must group properties before rooms");
-  assert.match(source, /groupIndices=group\.rooms\.flatMap/, "batch editing must collect every action across room sections");
-  assert.match(source, /className="scene-group-tools"/, "a property group must expose one shared edit control");
-  assert.match(source, /editable&&!batchGroup&&/, "room items must not duplicate edit controls for a batch group");
+  assert.match(source, /groupIndices=group\.rooms\.flatMap/, "group editing must collect every action across room sections");
+  assert.match(source, /groupEditable=groupActions\.length===group\.actionCount/, "single and batch property groups must share the same edit eligibility");
+  assert.match(source, /className="scene-group-tools"/, "every editable property group must expose one shared edit control");
+  assert.doesNotMatch(source, /startEdit\(action,item\.indices\)/, "room items must not duplicate property edit controls");
   assert.match(styles, /\.scene-group-tools/, "the shared group edit control must be styled");
   assert.match(source, /switchGroup\?\{deviceName:`\$\{device\?\.name\?\?action\.deviceName\} · \$\{switchGroup\.label\}`/, "switch actions must identify their concrete device and button outside the property-group name");
   assert.match(styles, /@media\(max-width:760px\)/);
