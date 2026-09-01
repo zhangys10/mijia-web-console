@@ -114,7 +114,7 @@ test("scene editor supports safe create and update workflows", async () => {
   assert.match(source, /mapScenePropertySemantics\(semantics,specification\.groups,option\.preferredService,device\.did\)/, "batch properties must map by MIoT semantic name and target device");
   assert.match(source, /没有对应的枚举选项/);
   assert.match(source, /枚举选项名称不唯一/);
-  assert.match(source, /value:`enum:\$\{semantics\[index\]\.choice\.key\}`/, "device-specific enum values must fold by their shared semantic label");
+  assert.match(source, /semanticValueKey:`enum:\$\{semantics\[index\]\.choice\.key\}`/, "device-specific enum values must fold by their shared semantic label");
   assert.match(source, /source\?\.sourceIndex/, "editing a folded group must preserve source action identities");
   assert.match(source, /isLightGroup\(device\)\?"灯组"/, "light groups must be visible as targets");
   assert.doesNotMatch(source, /!\/\^group\\\.\*\/i/, "light groups must not be excluded from editable targets");
@@ -131,6 +131,10 @@ test("scene editor supports safe create and update workflows", async () => {
   assert.match(source, /group\.rooms\.map\(room=>/, "the editor must group properties before rooms");
   assert.match(source, /groupIndices=group\.rooms\.flatMap/, "group editing must collect every action across room sections");
   assert.match(source, /groupActions=groupIndices\.flatMap\(index=>\{const action=draft\.actions\[index\]/, "group editing must use raw draft actions rather than display projections");
+  assert.match(source, /semanticValueKey:`enum:\$\{semantics\[index\]\.choice\.key\}`/, "enum grouping must use a stable semantic key");
+  assert.match(source, /catalogTemplate=actionCatalog\.find/, "existing scenes must resolve display names through the official action catalog");
+  assert.match(source, /displayValue:catalogTemplate\?\.label\|\|semantics\[index\]\.choice\.label/, "enum groups must prefer the matched official localized action name");
+  assert.match(source, /if\(!composerOpen&&!sceneId\)return/, "existing scene summaries must load the official catalog before action editing starts");
   assert.match(source, /groupEditable=groupActions\.length===group\.actionCount/, "single and batch property groups must share the same edit eligibility");
   assert.match(source, /className="scene-group-tools"/, "every editable property group must expose one shared edit control");
   assert.doesNotMatch(source, /startEdit\(action,item\.indices\)/, "room items must not duplicate property edit controls");

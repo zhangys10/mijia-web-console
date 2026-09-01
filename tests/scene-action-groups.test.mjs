@@ -117,3 +117,18 @@ test("editor group labels hide enum transport keys", () => {
   const groups = groupSceneDraftActions(actions, devices);
   assert.equal(groups[0].label, "工作模式 · 会客模式");
 });
+
+test("editor groups enum values by semantic key and displays the localized choice label", () => {
+  const action = (clientId, did, value) => ({
+    clientId,
+    kind: "set-properties",
+    did,
+    deviceName: did,
+    model: "light.v1",
+    label: "设置设备属性",
+    properties: [{ siid: 2, piid: 4, label: "工作模式", value, semanticValueKey: "enum:lighting", displayValue: "明亮模式" }],
+  });
+  const groups = groupSceneDraftActions([action("one", "living-1", 4), action("two", "living-2", 5)], devices);
+  assert.equal(groups.length, 1, "equivalent enum choices can use different raw values on different device models");
+  assert.equal(groups[0].label, "工作模式 · 明亮模式");
+});

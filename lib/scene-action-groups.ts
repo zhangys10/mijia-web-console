@@ -40,6 +40,7 @@ export type SceneDraftActionGroup = {
 };
 
 type DeviceIdentity = Pick<ManagedDevice, "did" | "name" | "room" | "kind" | "topology">;
+type DraftPropertyDisplay = { semanticValueKey?: string; displayValue?: string };
 
 const unassignedRoom = "未分配";
 
@@ -73,7 +74,10 @@ function manualActionSignature(action: ManualSceneAction) {
 
 function draftActionSignature(action: SceneEditorDraft["actions"][number]) {
   if (action.kind !== "set-properties" || !action.properties?.length) return undefined;
-  return action.properties.map(property => `${property.label || `${property.siid}.${property.piid}`}:${valueKey(property.value)}`).sort().join("|");
+  return action.properties.map(property => {
+    const display = property as typeof property & DraftPropertyDisplay;
+    return `${property.label || `${property.siid}.${property.piid}`}:${display.semanticValueKey ?? valueKey(property.value)}`;
+  }).sort().join("|");
 }
 
 function manualActionLabel(action: ManualSceneAction) {
@@ -97,9 +101,10 @@ function draftActionLabel(action: SceneEditorDraft["actions"][number]) {
   if (action.kind !== "set-properties" || !action.properties?.length) return action.label;
   const fallback = action.label && action.label !== "设置设备属性" ? action.label : "未识别属性";
   return action.properties.map(property => {
+    const display = property as typeof property & DraftPropertyDisplay;
     if (typeof property.value === "boolean" && /^(?:开关|电源)$/.test(property.label ?? "")) return draftValueLabel(property.value);
-    const separator = typeof property.value === "string" && property.value.startsWith("enum:") ? " · " : " ";
-    return `${property.label || fallback}${separator}${draftValueLabel(property.value)}`;
+    const separator = display.displayValue !== undefined || typeof property.value === "string" && property.value.startsWith("enum:") ? " · " : " ";
+    return `${property.label || fallback}${separator}${display.displayValue ?? draftValueLabel(property.value)}`;
   }).join(" · ");
 }
 
