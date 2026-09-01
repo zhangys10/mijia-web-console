@@ -354,6 +354,21 @@ test("links wireless derived power aliases to a smart-light group without invent
   assert.deepEqual(model.records.find(record => record.device.did === "group.900").groupMembers, []);
 });
 
+test("nests published fixtures under their light-group topology without duplicate targets", () => {
+  const raw = [
+    { did: "group.900", homeId: "fabric", name: "客厅射灯", model: "yeelink.light.group", roomName: "客厅", groupMemberIds: ["light-1", "light-2"] },
+    { did: "light-1", homeId: "fabric", name: "客厅射灯1", model: "yeelink.light.ceiling", roomName: "客厅", groupIds: ["group.900"] },
+    { did: "light-2", homeId: "fabric", name: "客厅射灯2", model: "yeelink.light.ceiling", roomName: "客厅", groupIds: ["group.900"] },
+    { did: "standalone", homeId: "fabric", name: "落地灯", model: "yeelink.light.lamp", roomName: "客厅" },
+  ];
+  const model = buildDeviceManagementModel(records(raw));
+  const group = model.topologies.find(item => item.name === "客厅射灯");
+
+  assert.deepEqual(group.groupMembers.map(device => device.did), ["light-1", "light-2"]);
+  assert.deepEqual(model.topologies.map(item => item.name), ["客厅射灯", "落地灯"]);
+  assert.deepEqual(model.records.map(record => record.device.did), ["group.900", "standalone"]);
+});
+
 test("keeps unknown channel mode unknown and never defaults it to wired", () => {
   const raw = [
     { did: "switch", homeId: "fabric", name: "未识别开关", model: "linp.switch.unknown", roomName: "书房" },

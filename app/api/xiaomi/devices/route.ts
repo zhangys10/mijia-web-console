@@ -14,6 +14,7 @@ import { getMiotCapabilities, type MiotCapabilityGroup, type MiotCapabilityPrope
 import { diagnoseSwitchMode, isSwitchModeProperty } from "../../../../lib/switch-channel-mode";
 import { withTimeoutFallback } from "../../../../lib/time-budget";
 import { listDevices, unseal, xiaomiErrorInfo, xiaomiRequest, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
+import { loadDeviceGroupMemberships, mergeDeviceGroupMemberships } from "../../../../lib/xiaomi-device-groups";
 import { listRawManualScenes, loadSceneActionCapabilities, parseManualScenes, sceneDeviceCapabilityKey } from "../../../../lib/xiaomi-scenes";
 
 type RawDevice = Record<string, unknown>;
@@ -288,6 +289,10 @@ export async function GET(request: NextRequest) {
     const discoveryStartedAt = Date.now();
     const result = await listDevices(session);
     const discoveryDurationMs = Date.now() - discoveryStartedAt;
+    const groupDids = result.devices.map(device => text(device.did)).filter(isDeviceGroupId);
+    const groupMembershipRequest = loadDeviceGroupMemberships(session, groupDids)
+      .then(members => ({ members, error: undefined as unknown }))
+      .catch(error => ({ members: new Map<string, string[]>(), error }));
     const runtimeStartedAt = Date.now();
     const runtime = await withTimeoutFallback(loadRuntimeState(session, result.devices), 12_000, () => {
       runtimeDiagnostic("runtime-state-budget-exceeded", { budgetMs: 12_000, devices: result.devices.length });
@@ -316,7 +321,8 @@ export async function GET(request: NextRequest) {
         });
       }
     }
-    const groupMembers = collectDeviceGroupMembers(result.devices);
+    const queriedGroupMembership = await groupMembershipRequest;
+    const groupMembers = mergeDeviceGroupMemberships(collectDeviceGroupMembers(result.devices), queriedGroupMembership.members);
     const devices = result.devices.map(device => {
       const did = text(device.did);
       const homeId = deviceHome(device);
@@ -344,14 +350,18 @@ export async function GET(request: NextRequest) {
         parentId: mappedTopology?.parentId ?? null,
         logicalType: typeof device.type === "string" ? device.type : typeof device.device_type === "string" ? device.device_type : typeof device.deviceType === "string" ? device.deviceType : typeof device.category === "string" ? device.category : "",
         urn: deviceUrn(device) ?? null,
-        groupMemberIds: groupMembers.get(did) ?? [],
-        groupIds: [...groupMembers].filter(([, ids]) => ids.includes(did)).map(([groupId]) => groupId),
+        groupMemberIds: members.map(member => text(member.did)),
+        groupIds: [...groupMembers].filter(([groupId, ids]) => ids.includes(did) && result.devices.some(item => text(item.did) === groupId && deviceHome(item) === homeId)).map(([groupId]) => groupId),
         powerControl: devicePower?.powerControl ?? channelState?.powerControl ?? null,
         topology: mappedTopology ?? null,
       };
     });
     const selectedHomeId = result.homes.some(home => home.id === requestedHomeId) ? requestedHomeId! : result.homes[0]?.id ?? null;
     const warnings: Array<{ code: string; scope: "devices" | "properties" | "specifications" | "scenes"; retryable: boolean; retryAfterSeconds?: number }> = [...result.warnings];
+    if (queriedGroupMembership.error) {
+      const failure = xiaomiErrorInfo(queriedGroupMembership.error);
+      warnings.push({ code: errorCode(queriedGroupMembership.error), scope: "devices", retryable: failure.retryable, ...(failure.retryAfterSeconds ? { retryAfterSeconds: failure.retryAfterSeconds } : {}) });
+    }
     if (runtime.timedOut) warnings.push({ code: "XIAOMI_RUNTIME_STATE_TIMEOUT", scope: "properties", retryable: true, retryAfterSeconds: 8 });
     if (runtime.failedPropertyBatchCount > 0) warnings.push({ code: "XIAOMI_PROPERTIES_PARTIAL", scope: "properties", retryable: runtime.retryablePropertyBatchCount > 0 });
     if (runtime.specificationFailureCount > 0) warnings.push({ code: "MIOT_SPECIFICATIONS_PARTIAL", scope: "specifications", retryable: false });
@@ -384,9 +394,10 @@ export async function GET(request: NextRequest) {
       runtimeDurationMs,
       sceneDurationMs,
       deviceRequestAttemptCount: result.requestAttemptCount,
+      groupRequestAttemptCount: groupDids.length ? 1 : 0,
       propertyRequestAttemptCount: runtime.propertyBatchCount,
       sceneRequestAttemptCount: sceneAttemptCount,
-      totalXiaomiRequestAttemptCount: result.requestAttemptCount + runtime.propertyBatchCount + sceneAttemptCount,
+      totalXiaomiRequestAttemptCount: result.requestAttemptCount + (groupDids.length ? 1 : 0) + runtime.propertyBatchCount + sceneAttemptCount,
       successfulHomeCount: result.successfulHomeCount,
       failedHomeCount: result.failedHomeCount,
       propertyBatchFailureCount: runtime.failedPropertyBatchCount,
