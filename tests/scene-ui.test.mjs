@@ -130,6 +130,7 @@ test("scene editor supports safe create and update workflows", async () => {
   assert.match(source, /actionGroups\.map\(group=>/);
   assert.match(source, /group\.rooms\.map\(room=>/, "the editor must group properties before rooms");
   assert.match(source, /groupIndices=group\.rooms\.flatMap/, "group editing must collect every action across room sections");
+  assert.match(source, /groupActions=groupIndices\.flatMap\(index=>\{const action=draft\.actions\[index\]/, "group editing must use raw draft actions rather than display projections");
   assert.match(source, /groupEditable=groupActions\.length===group\.actionCount/, "single and batch property groups must share the same edit eligibility");
   assert.match(source, /className="scene-group-tools"/, "every editable property group must expose one shared edit control");
   assert.doesNotMatch(source, /startEdit\(action,item\.indices\)/, "room items must not duplicate property edit controls");
