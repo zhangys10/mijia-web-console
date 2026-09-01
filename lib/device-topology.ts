@@ -92,6 +92,7 @@ export type DeviceControlChannel = {
   controlObjects: ButtonControlObject[];
   edges: ControlEdge[];
   reportedOn: boolean | null;
+  powerControl?: { did: string; siid: number; piid: number };
   modeValue: boolean | number | string | null;
   evidence: DeviceChannelEvidence;
 };
@@ -506,6 +507,7 @@ export function buildDeviceTopology(
         controlObjects: channelControlObjects,
         edges,
         reportedOn: runtime.reportedOn,
+        powerControl: runtime.powerControl,
         modeValue: runtime.modeValue,
         evidence,
       };

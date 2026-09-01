@@ -78,6 +78,41 @@ test("builds one active lighting card from wired and wireless representations", 
   assert.deepEqual(groups[0].items[0].powerControl, { did: "main", siid: 2, piid: 1 });
 });
 
+test("keeps a named single-channel physical relay as an active light without a derived endpoint", () => {
+  const raw = [
+    { did: "bathroom-relay", homeId: "fabric", name: "筒灯", model: "linp.switch.t2dbw1", roomName: "卫生间", online: true },
+  ];
+  const devices = records(raw, [{
+    ...runtime("fabric", "bathroom-relay", 2, "unknown", true, 1),
+    label: "按键 1",
+    modeCapability: "relay-enabled",
+  }]);
+  const model = buildDeviceManagementModel(devices);
+  const target = model.topologies.find(item => item.name === "筒灯");
+
+  assert.equal(target.kind, "ordinary-load");
+  assert.equal(target.on, true);
+  assert.equal(target.stateSource, "controller-channel");
+  assert.deepEqual(target.powerControl, { did: "bathroom-relay", siid: 2, piid: 1 });
+  assert.equal(target.controls[0].relation, "wired-load");
+  assert.equal(target.controls[0].evidence, "inferred");
+  assert.equal(target.controls[0].evidenceSource, "name-match");
+  assert.deepEqual(buildActiveDeviceGroups(devices).map(group => [group.room, group.items.map(item => item.name)]), [["卫生间", ["筒灯"]]]);
+});
+
+test("does not turn wireless-only or generically named switches into light loads", () => {
+  const raw = [
+    { did: "wireless", homeId: "fabric", name: "筒灯", model: "linp.switch.t2dbw1", roomName: "卫生间" },
+    { did: "generic", homeId: "fabric", name: "单键开关", model: "linp.switch.t2dbw1", roomName: "走廊" },
+  ];
+  const devices = records(raw, [
+    { ...runtime("fabric", "wireless", 2, "wireless", true, 1), modeCapability: "wireless-only" },
+    { ...runtime("fabric", "generic", 2, "unknown", true, 1), modeCapability: "relay-enabled" },
+  ]);
+
+  assert.deepEqual(buildDeviceManagementModel(devices).topologies, []);
+});
+
 test("active device groups include online appliances and exclude stale or control hardware states", () => {
   const devices = records([
     { did: "purifier", homeId: "fabric", name: "空气净化器", model: "zhimi.airpurifier.v1", roomName: "主卧", online: true, on: true, powerControl: { did: "purifier", siid: 2, piid: 1 } },

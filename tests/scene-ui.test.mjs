@@ -118,7 +118,7 @@ test("scene editor supports safe create and update workflows", async () => {
   assert.match(source, /source\?\.sourceIndex/, "editing a folded group must preserve source action identities");
   assert.match(source, /isLightGroup\(device\)\?"灯组"/, "light groups must be visible as targets");
   assert.doesNotMatch(source, /!\/\^group\\\.\*\/i/, "light groups must not be excluded from editable targets");
-  assert.match(source, /isSceneWritableProperty\(group\.name,property\)/);
+  assert.match(source, /listSceneWritableProperties\(group\)/, "scene UI must consume the shared safe property projection");
   assert.doesNotMatch(source, /group\.properties\.filter\(property=>property\.writable/);
   assert.doesNotMatch(source, />执行动作</);
   assert.match(source, /moveAction/);

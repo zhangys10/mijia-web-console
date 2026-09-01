@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { listDevices, listHomeContexts, unseal, type XiaomiSession } from "../../../../../lib/xiaomi-cloud";
 import { parseDerivedDeviceId } from "../../../../../lib/device-topology";
 import { getMiotCapabilities, listMiotAutomationTriggerCapabilities } from "../../../../../lib/miot-spec";
-import { isSceneWritableProperty } from "../../../../../lib/xiaomi-scene-properties";
+import { listSceneWritableProperties } from "../../../../../lib/xiaomi-scene-properties";
 import { assertHomeAccess } from "../../../../../lib/xiaomi-scenes";
 import { buildAutomationTriggerCatalog, listRawAutomations } from "../../../../../lib/xiaomi-automations";
 import { discoverDeviceAutomationCatalog } from "../../../../../lib/xiaomi-automation-catalog";
@@ -74,8 +74,9 @@ export async function GET(request: NextRequest) {
         discovery: "miot-spec",
       });
       for (const group of specification.groups) {
+        const sceneWritableKeys = new Set(listSceneWritableProperties(group).map(property => property.key));
         for (const property of group.properties) {
-          const editable = isSceneWritableProperty(group.name, property);
+          const editable = sceneWritableKeys.has(property.key);
           propertyDescriptions.push({
             did: text(device.did),
             serviceLabel: group.label,
