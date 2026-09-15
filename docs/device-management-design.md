@@ -688,6 +688,8 @@ clear-wireless
 
 自动化列表使用与手动场景相同的 `AppSceneService/GetSceneList`，并以触发器是否为 `user.click` 区分手动场景与自动化。所有索引、设备条件、动作候选和名称冲突检查均以 `homeId` 为第一层作用域。
 
+列表读取和编辑使用同一服务、同一区域化主机。`AppSceneService/GetSceneList` 请求必须携带 `app_version: 25, get_type: 2`：缺少协议版本时服务端只返回旧 App 兼容子集，导致米家 App 中新建的规则缺席。该参数作用于已验证的 `api.io.mi.com` 主机，不需要独立主机或服务票据。返回列表中的自动化按同一套触发器模板规则判定可编辑范围：模板可识别的条件可编辑，模板不识别的条件保持原样并在编辑时锁定。
+
 自动化编辑遵循以下约束：
 
 1. 客户端只接收脱敏后的条件/动作节点和服务端生成的 revision，不接收原始 scene record、位置坐标、账号字段或厂商私有 payload。

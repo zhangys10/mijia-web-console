@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { listHomes, unseal, type XiaomiSession } from "../../../../../lib/xiaomi-cloud";
+import { listHomes, readXiaomiSession } from "../../../../../lib/xiaomi-cloud";
 import { assertHomeAccess, listManualScenes, runManualScene, selectRunnableManualScene } from "../../../../../lib/xiaomi-scenes";
 
 function validIdentifier(value: unknown) {
@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     if (!validIdentifier(body.homeId) || !validIdentifier(body.sceneId)) return NextResponse.json({ error: "INVALID_SCENE_COMMAND" }, { status: 400 });
     const homeId = body.homeId as string;
     const sceneId = body.sceneId as string;
-    const session = await unseal<XiaomiSession>(value);
+    const session = await readXiaomiSession(value);
     const homes = await listHomes(session);
     try { assertHomeAccess(homes, homeId); }
     catch { return NextResponse.json({ error: "XIAOMI_HOME_NOT_FOUND" }, { status: 404 }); }

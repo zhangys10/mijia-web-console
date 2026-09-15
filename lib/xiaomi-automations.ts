@@ -3,6 +3,7 @@ import { parseDerivedDeviceId } from "./device-topology.ts";
 import {
   parsedSceneRecord,
   parseManualScenes,
+  sceneListPayload,
   type ManualSceneAction,
   type XiaomiRequester,
   type XiaomiSceneRecord,
@@ -193,7 +194,7 @@ export function parseAutomations(response: XiaomiSceneRecord, homeId: string, de
 }
 
 export async function listRawAutomations(session: XiaomiSession, homeId: string, request: XiaomiRequester = xiaomiRequest) {
-  const response = await request(session, AUTOMATION_LIST_PATH, { home_id: homeId });
+  const response = await request(session, AUTOMATION_LIST_PATH, sceneListPayload(homeId));
   return sceneEntries(response).filter(scene => (text(scene.home_id) || homeId) === homeId && isAutomationRecord(scene));
 }
 

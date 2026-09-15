@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { listDevices, listHomeContexts, unseal, type XiaomiSession } from "../../../../../lib/xiaomi-cloud";
+import { listDevices, listHomeContexts, readXiaomiSession } from "../../../../../lib/xiaomi-cloud";
 import { loadSceneActionCatalog } from "../../../../../lib/xiaomi-scene-action-catalog";
 import { assertHomeAccess, listRawManualScenes, loadSceneDeviceCapabilities, parseManualScenes } from "../../../../../lib/xiaomi-scenes";
 import { assertBasicSceneDraft, assertSceneActionSources, buildUpdatePayload, createEditorDraft, sceneDraftMatchesWrite, sceneRecordId, sceneRevision, submitSceneEdit, validateSceneDraftCapabilities } from "../../../../../lib/xiaomi-scene-editor";
@@ -14,7 +14,7 @@ async function context(request: NextRequest, sceneId: string) {
   if (!value) return { response: NextResponse.json({ error: "XIAOMI_NOT_CONNECTED" }, { status: 401 }) };
   const homeId = request.nextUrl.searchParams.get("homeId");
   if (!validIdentifier(homeId) || !validIdentifier(sceneId)) return { response: NextResponse.json({ error: "INVALID_SCENE_COMMAND" }, { status: 400 }) };
-  const session = await unseal<XiaomiSession>(value);
+  const session = await readXiaomiSession(value);
   const homes = await listHomeContexts(session);
   try { assertHomeAccess(homes, homeId!); }
   catch { return { response: NextResponse.json({ error: "XIAOMI_HOME_NOT_FOUND" }, { status: 404 }) }; }

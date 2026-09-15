@@ -42,6 +42,16 @@ export type XiaomiRequester = (
 export const SCENE_LIST_PATH = "/app/appgateway/miot/appsceneservice/AppSceneService/GetSceneList";
 export const SCENE_RUN_PATH = "/app/appgateway/miot/appsceneservice/AppSceneService/NewRunScene";
 
+// Upstream hides automations created by newer Mi Home builds unless the caller announces a protocol
+// version: the same home returned 13 automations without it and 16 with it. `app_version` 25 is the
+// highest value observed to add records, and the count stays flat above the version that introduced
+// the rule. `get_type` must be 2 — 1 returns no scene list at all.
+export const SCENE_LIST_APP_VERSION = 25;
+
+export function sceneListPayload(homeId: string) {
+  return { home_id: homeId, app_version: SCENE_LIST_APP_VERSION, get_type: 2 };
+}
+
 function record(value: unknown): RawScene | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   return value as RawScene;
@@ -277,7 +287,7 @@ export async function listManualScenes(
   homeId: string,
   request: XiaomiRequester = xiaomiRequest,
 ) {
-  const response = await request(session, SCENE_LIST_PATH, { home_id: homeId });
+  const response = await request(session, SCENE_LIST_PATH, sceneListPayload(homeId));
   return parseManualScenes(response, homeId);
 }
 
@@ -286,7 +296,7 @@ export async function listRawManualScenes(
   homeId: string,
   request: XiaomiRequester = xiaomiRequest,
 ) {
-  const response = await request(session, SCENE_LIST_PATH, { home_id: homeId });
+  const response = await request(session, SCENE_LIST_PATH, sceneListPayload(homeId));
   return sceneEntries(response).filter(scene => {
     const sceneHomeId = text(scene.home_id) || homeId;
     return sceneHomeId === homeId && isManualSceneRecord(scene);

@@ -4,13 +4,20 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 export const REGIONS = new Set(["cn", "sg", "de", "us", "ru", "i2", "in"]);
-const USER_AGENT = "mijiawebconsole-ABCDABCDEABCD APP/com.xiaomi.mihome APPV/10.5.201";
+const DEFAULT_LOCALE = "zh_CN";
+const DEFAULT_TIMEZONE = "GMT%2B08%3A00";
+const DEFAULT_TIMEZONE_ID = "Asia/Shanghai";
+const DEFAULT_CHANNEL = "MI_APP_STORE";
+const DEFAULT_COUNTRY_CODE = "CN";
 
 export type XiaomiSession = {
   userId: string;
+  cUserId: string;
   ssecurity: string;
   serviceToken: string;
   region: string;
+  deviceId: string;
+  userAgent: string;
   createdAt: number;
 };
 
@@ -67,7 +74,7 @@ export function xiaomiErrorInfo(error: unknown) {
               : 502;
     return { message, status, retryable: error.retryable, retryAfterSeconds: error.retryAfterSeconds };
   }
-  if (message === "XIAOMI_NOT_CONNECTED" || message === "INVALID_SESSION") return { message, status: 401, retryable: false };
+  if (message === "XIAOMI_NOT_CONNECTED" || message === "INVALID_SESSION" || message === "XIAOMI_RELOGIN_REQUIRED") return { message, status: 401, retryable: false };
   if (message === "XIAOMI_CLOUD_TIMEOUT") return { message, status: 504, retryable: true };
   if (message === "XIAOMI_CLOUD_NETWORK") return { message, status: 503, retryable: true };
   const statusMatch = message.match(/^XIAOMI_CLOUD_HTTP_(\d{3})$/);
@@ -84,8 +91,83 @@ export type XiaomiQrState = {
   loginUrl: string;
   region: string;
   cookieHeader: string;
+  deviceId: string;
+  userAgent: string;
   createdAt: number;
 };
+
+function randomString(length: number, alphabet: string) {
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  return [...bytes].map((byte) => alphabet[byte % alphabet.length]).join("");
+}
+
+function randomDeviceId() {
+  return randomString(16, "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-");
+}
+
+function randomHex(length: number) {
+  return randomString(length, "0123456789ABCDEF");
+}
+
+function buildUserAgent() {
+  const anchor = randomHex(40);
+  const middle = randomHex(32);
+  const suffix = randomHex(32);
+  const tail = randomHex(40);
+  const passO = randomHex(16);
+  return `Android-15-11.0.701-Xiaomi-23046RP50C-OS2.0.212.0.VMYCNXM-${anchor}-${DEFAULT_COUNTRY_CODE}-${suffix}-${middle}-SmartHome-${DEFAULT_CHANNEL}-${anchor}|${tail}|${passO}-64`;
+}
+
+function appCookieHeader(session: XiaomiSession) {
+  return [
+    `deviceId=${session.deviceId}`,
+    `PassportDeviceId=${session.deviceId}`,
+    `userId=${session.userId}`,
+    `cUserId=${session.cUserId}`,
+    `serviceToken=${session.serviceToken}`,
+    `yetAnotherServiceToken=${session.serviceToken}`,
+    `locale=${DEFAULT_LOCALE}`,
+    `uLocale=${DEFAULT_LOCALE}`,
+    `timezone_id=${DEFAULT_TIMEZONE_ID}`,
+    `timezone=${DEFAULT_TIMEZONE}`,
+    "is_daylight=0",
+    "dst_offset=0",
+    `channel=${DEFAULT_CHANNEL}`,
+    `countryCode=${DEFAULT_COUNTRY_CODE}`,
+  ].join("; ");
+}
+
+function qrAccountCookieHeader(deviceId: string) {
+  return `sdkVersion=accountsdk-18.8.15; deviceId=${deviceId}`;
+}
+
+function completeSession(session: XiaomiSession) {
+  if (!session.userId || !session.cUserId || !session.ssecurity || !session.serviceToken || !session.region || !session.deviceId || !session.userAgent) {
+    throw new Error("XIAOMI_RELOGIN_REQUIRED");
+  }
+  if (!REGIONS.has(session.region)) throw new Error("XIAOMI_RELOGIN_REQUIRED");
+  return session;
+}
+
+export async function readXiaomiSession(value: string): Promise<XiaomiSession> {
+  return completeSession(await unseal<XiaomiSession>(value));
+}
+
+/** Follows an STS redirect chain and reads the service ticket it deposits into the cookie jar. */
+async function harvestServiceToken(location: string, cookies: string, userAgent: string) {
+  let current = location;
+  let jar = cookies;
+  for (let hop = 0; hop < 6; hop++) {
+    const response = await fetch(current, { headers: { "User-Agent": userAgent, Cookie: jar }, redirect: "manual", signal: AbortSignal.timeout(12000) });
+    jar = mergeCookies(jar, cookiePairs(response));
+    const token = jar.match(/(?:^|;\s*)serviceToken=([^;]+)/)?.[1];
+    if (token) return decodeURIComponent(token);
+    const next = response.headers.get("location");
+    if (!next) break;
+    current = new URL(next, current).toString();
+  }
+  throw new Error("XIAOMI_SERVICE_TOKEN_MISSING");
+}
 
 function bytesToBase64(bytes: Uint8Array) {
   let binary = "";
@@ -151,23 +233,21 @@ function mergeCookies(existing: string, additions: string[]) {
   return [...merged.entries()].map(([name, value]) => `${name}=${value}`).join("; ");
 }
 
-function randomDeviceId() {
-  return [...crypto.getRandomValues(new Uint8Array(6))].map((byte) => String.fromCharCode(97 + byte % 26)).join("");
-}
-
 export async function startQrLogin(region: string): Promise<XiaomiQrState> {
   if (!REGIONS.has(region)) throw new Error("INVALID_REGION");
+  const deviceId = randomDeviceId();
+  const userAgent = buildUserAgent();
   const url = new URL("https://account.xiaomi.com/longPolling/loginUrl");
   for (const [key, value] of Object.entries({ _qrsize: "480", qs: "%3Fsid%3Dxiaomiio%26_json%3Dtrue", callback: "https://sts.api.io.mi.com/sts", _hasLogo: "false", sid: "xiaomiio", serviceParam: "", _locale: "zh_CN", _dc: String(Date.now()) })) url.searchParams.set(key, value);
-  const response = await fetch(url, { headers: { "User-Agent": USER_AGENT, Cookie: `sdkVersion=accountsdk-18.8.15; deviceId=${randomDeviceId()}` }, signal: AbortSignal.timeout(12000) });
+  const response = await fetch(url, { headers: { "User-Agent": userAgent, Cookie: qrAccountCookieHeader(deviceId) }, signal: AbortSignal.timeout(12000) });
   if (!response.ok) throw new Error(`XIAOMI_LOGIN_HTTP_${response.status}`);
   const result = parseXiaomiJson(await response.text());
   if (!result.qr || !result.lp || !result.loginUrl) throw new Error("XIAOMI_QR_UNAVAILABLE");
-  return { pollUrl: result.lp, imageUrl: result.qr, loginUrl: result.loginUrl, region, cookieHeader: mergeCookies("", cookiePairs(response)), createdAt: Date.now() };
+  return { pollUrl: result.lp, imageUrl: result.qr, loginUrl: result.loginUrl, region, cookieHeader: mergeCookies("", cookiePairs(response)), deviceId, userAgent, createdAt: Date.now() };
 }
 
 export async function loadQrImage(state: XiaomiQrState) {
-  const response = await fetch(state.imageUrl, { headers: { "User-Agent": USER_AGENT, Cookie: state.cookieHeader }, signal: AbortSignal.timeout(12000) });
+  const response = await fetch(state.imageUrl, { headers: { "User-Agent": state.userAgent, Cookie: state.cookieHeader }, signal: AbortSignal.timeout(12000) });
   if (!response.ok) throw new Error(`XIAOMI_QR_IMAGE_HTTP_${response.status}`);
   return { data: await response.arrayBuffer(), contentType: response.headers.get("content-type") || "image/png" };
 }
@@ -175,26 +255,17 @@ export async function loadQrImage(state: XiaomiQrState) {
 export async function pollQrLogin(state: XiaomiQrState): Promise<{ pending: true } | { pending: false; session: XiaomiSession }> {
   if (Date.now() - state.createdAt > 5 * 60 * 1000) throw new Error("XIAOMI_QR_EXPIRED");
   let response: Response;
-  try { response = await fetch(state.pollUrl, { headers: { "User-Agent": USER_AGENT, Cookie: state.cookieHeader }, signal: AbortSignal.timeout(8000) }); }
+  try { response = await fetch(state.pollUrl, { headers: { "User-Agent": state.userAgent, Cookie: state.cookieHeader }, signal: AbortSignal.timeout(8000) }); }
   catch (error) { if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) return { pending: true }; throw error; }
   if (response.status === 408 || response.status === 504) return { pending: true };
   if (!response.ok) throw new Error(`XIAOMI_POLL_HTTP_${response.status}`);
   const result = parseXiaomiJson(await response.text());
   if (!result.ssecurity || !result.userId || !result.location) return { pending: true };
-  let cookies = mergeCookies(state.cookieHeader, cookiePairs(response));
-  let current = String(result.location);
-  let token = "";
-  for (let hop = 0; hop < 6; hop++) {
-    const hopResponse = await fetch(current, { headers: { "User-Agent": USER_AGENT, Cookie: cookies }, redirect: "manual", signal: AbortSignal.timeout(12000) });
-    cookies = mergeCookies(cookies, cookiePairs(hopResponse));
-    const tokenMatch = cookies.match(/(?:^|;\s*)serviceToken=([^;]+)/);
-    if (tokenMatch) { token = decodeURIComponent(tokenMatch[1]); break; }
-    const location = hopResponse.headers.get("location");
-    if (!location) break;
-    current = new URL(location, current).toString();
-  }
-  if (!token) throw new Error("XIAOMI_SERVICE_TOKEN_MISSING");
-  return { pending: false, session: { userId: String(result.userId), ssecurity: String(result.ssecurity), serviceToken: token, region: state.region, createdAt: Date.now() } };
+  const cookies = mergeCookies(state.cookieHeader, cookiePairs(response));
+  const cUserId = String(result.cUserId ?? cookies.match(/(?:^|;\s*)cUserId=([^;]+)/)?.[1] ?? "");
+  if (!cUserId) throw new Error("XIAOMI_CUSER_ID_MISSING");
+  const serviceToken = await harvestServiceToken(String(result.location), cookies, state.userAgent);
+  return { pending: false, session: completeSession({ userId: String(result.userId), cUserId, ssecurity: String(result.ssecurity), serviceToken, region: state.region, deviceId: state.deviceId, userAgent: state.userAgent, createdAt: Date.now() }) };
 }
 
 function nonce() {
@@ -244,7 +315,7 @@ export async function xiaomiRequest(session: XiaomiSession, path: string, data: 
   const fields = new URLSearchParams({ ...encrypted, signature, ssecurity: session.ssecurity, _nonce: nonceValue });
   let response: Response;
   try {
-    response = await fetch(`${base}${path}?${fields.toString()}`, { method: "POST", headers: { "User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded", "Accept-Encoding": "identity", "x-xiaomi-protocal-flag-cli": "PROTOCAL-HTTP2", "MIOT-ENCRYPT-ALGORITHM": "ENCRYPT-RC4", Cookie: `userId=${session.userId}; serviceToken=${session.serviceToken}; yetAnotherServiceToken=${session.serviceToken}; locale=zh_CN; timezone=GMT%2B08%3A00; is_daylight=0; dst_offset=0; channel=MI_APP_STORE` }, signal: AbortSignal.timeout(9000) });
+    response = await fetch(`${base}${path}?${fields.toString()}`, { method: "POST", headers: { "User-Agent": session.userAgent, "Content-Type": "application/x-www-form-urlencoded", "Accept-Encoding": "identity", "x-xiaomi-protocal-flag-cli": "PROTOCAL-HTTP2", "MIOT-ENCRYPT-ALGORITHM": "ENCRYPT-RC4", Cookie: appCookieHeader(session) }, signal: AbortSignal.timeout(9000) });
   } catch (error) {
     throw transportError(error);
   }
@@ -269,7 +340,7 @@ async function signedXiaomiRequest(session: XiaomiSession, path: string, data: R
   try {
     response = await fetch(`https://${region}api.io.mi.com${path}`, {
       method: "POST",
-      headers: { "User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded", Cookie: `userId=${session.userId}; serviceToken=${session.serviceToken}; locale=zh_CN; timezone=GMT%2B08%3A00` },
+      headers: { "User-Agent": session.userAgent, "Content-Type": "application/x-www-form-urlencoded", Cookie: appCookieHeader(session) },
       body: new URLSearchParams({ data: payload, _nonce: nonceValue, signature }),
       signal: AbortSignal.timeout(9000),
     });

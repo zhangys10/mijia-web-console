@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { miotActionPayload, unseal, xiaomiRequest, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
+import { miotActionPayload, readXiaomiSession, xiaomiRequest } from "../../../../lib/xiaomi-cloud";
 
 function propertyResult(response: Record<string, unknown>) {
   const items = response.result;
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
       if (!did) return NextResponse.json({ error: "INVALID_DEVICE_COMMAND" }, { status: 400 });
       const mappings = properties.split(",").map(mapping => mapping.split(".").map(Number));
       if (mappings.length > 40 || mappings.some(mapping => mapping.length !== 2 || mapping.some(item => !Number.isInteger(item) || item < 1))) return NextResponse.json({ error: "INVALID_PROPERTY_MAPPING" }, { status: 400 });
-      const response = await xiaomiRequest(await unseal<XiaomiSession>(value), "/app/miotspec/prop/get", { params: mappings.map(([siid, piid]) => ({ did, siid, piid })) });
+      const response = await xiaomiRequest(await readXiaomiSession(value), "/app/miotspec/prop/get", { params: mappings.map(([siid, piid]) => ({ did, siid, piid })) });
       if (!Array.isArray(response.result)) throw new Error("XIAOMI_DEVICE_RESPONSE_INVALID");
       const values: Record<string, unknown> = {};
       const errors: Record<string, number> = {};
@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
     const siid = Number(request.nextUrl.searchParams.get("siid") ?? 2);
     const piid = Number(request.nextUrl.searchParams.get("piid") ?? 1);
     if (!did || !Number.isInteger(siid) || !Number.isInteger(piid) || siid < 1 || piid < 1) return NextResponse.json({ error: "INVALID_DEVICE_COMMAND" }, { status: 400 });
-    const response = await xiaomiRequest(await unseal<XiaomiSession>(value), "/app/miotspec/prop/get", { params: [{ did, siid, piid }] });
+    const response = await xiaomiRequest(await readXiaomiSession(value), "/app/miotspec/prop/get", { params: [{ did, siid, piid }] });
     const result = propertyResult(response);
     return NextResponse.json({ ok: true, did, value: result.value, siid, piid, capturedAt: new Date().toISOString() });
   } catch (error) {
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
     if (body.action === true) {
       const aiid = Number(body.aiid);
       if (!Number.isInteger(aiid) || aiid < 1) return NextResponse.json({ error: "INVALID_PROPERTY_MAPPING" }, { status: 400 });
-      const response = await xiaomiRequest(await unseal<XiaomiSession>(value), "/app/miotspec/action", miotActionPayload(body.did, siid, aiid, Array.isArray(body.params) ? body.params : []));
+      const response = await xiaomiRequest(await readXiaomiSession(value), "/app/miotspec/action", miotActionPayload(body.did, siid, aiid, Array.isArray(body.params) ? body.params : []));
       const result = response.result as Record<string, unknown> | undefined;
       if (result && typeof result.code === "number" && result.code !== 0) throw new Error(`XIAOMI_PROPERTY_CODE_${result.code}`);
       return NextResponse.json({ ok: true, did: body.did, result });
@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
     if (!["boolean", "number", "string"].includes(typeof body.value) || (typeof body.value === "number" && !Number.isFinite(body.value))) return NextResponse.json({ error: "INVALID_DEVICE_COMMAND" }, { status: 400 });
     const piid = Number(body.piid ?? 1);
     if (!Number.isInteger(piid) || piid < 1) return NextResponse.json({ error: "INVALID_PROPERTY_MAPPING" }, { status: 400 });
-    const response = await xiaomiRequest(await unseal<XiaomiSession>(value), "/app/miotspec/prop/set", { params: [{ did: body.did, siid, piid, value: body.value }] });
+    const response = await xiaomiRequest(await readXiaomiSession(value), "/app/miotspec/prop/set", { params: [{ did: body.did, siid, piid, value: body.value }] });
     const result = propertyResult(response);
     return NextResponse.json({ ok: true, did: body.did, value: body.value, result });
   } catch (error) {

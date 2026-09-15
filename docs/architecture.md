@@ -232,6 +232,8 @@ sequenceDiagram
 
 这种“原始记录保真 + 能力校验 + 乐观并发控制 + 写后验证”的模式，是场景和自动化模块最重要的可复用设计。
 
+自动化列表读取与写入使用同一服务、同一主机。请求时声明 `app_version: 25, get_type: 2`，避免服务端按旧协议兼容性过滤掉米家 App 新建规则。
+
 ### 2.5 场景动作目录
 
 ```mermaid
@@ -264,7 +266,7 @@ flowchart LR
 | 同上 | `/app/miotspec/prop/get` | 批量读取属性 | 单批最多 40 项；批次失败局部降级 |
 | 同上 | `/app/miotspec/prop/set` | 写入标准 MIoT 属性 | 服务端校验标识符和值类型 |
 | 同上 | `/app/miotspec/action` | 执行标准 MIoT Action | 使用对象形 `params` envelope |
-| 同上 | `AppSceneService/GetSceneList` | 读取场景和自动化 | 按用户触发器区分手动场景与自动化 |
+| 同上 | `AppSceneService/GetSceneList` | 读取场景、自动化和编辑回读 | 按用户触发器区分手动场景与自动化；请求带 `app_version: 25, get_type: 2` |
 | 同上 | `AppSceneService/NewRunScene` | 运行手动场景 | 先验证家庭归属、启用状态和场景 ID |
 | 同上 | `AppSceneService/Edit` | 创建或修改场景/自动化 | revision、能力校验、原始节点保真、回读验证 |
 | 同上 | `AppSceneService/GetSceneTCAConfigV3` | 获取实例级条件和动作目录 | 按真实 DID、型号、`black_dids` 过滤 |
@@ -272,7 +274,7 @@ flowchart LR
 | 同上 | `/miot-spec-v2/instance?type=...` | 获取服务、属性、动作和事件 | 30 分钟进程内缓存 |
 | `home.mi.com` | `/cgi-op/api/v1/baike/v2/scene?model=...` | 自动化型号目录后备源 | 单型号失败不影响其他设备 |
 
-小米云主机按区域生成：中国大陆为 `api.io.mi.com`，其他区域为 `{region}.api.io.mi.com`。支持区域为 `cn`、`sg`、`de`、`us`、`ru`、`i2`、`in`。
+小米云主机按区域生成：中国大陆为 `api.io.mi.com`，其他区域为 `{region}.api.io.mi.com`。支持区域为 `cn`、`sg`、`de`、`us`、`ru`、`i2`、`in`。`AppSceneService/GetSceneList` 需要声明 `app_version: 25, get_type: 2` 才能返回米家 App 新建自动化；缺少协议版本时服务端按旧协议兼容性过滤，导致最新规则缺席。该参数对同一区域化主机生效，不需要独立主机或服务票据。
 
 ### 3.2 内部 Route Handler
 
