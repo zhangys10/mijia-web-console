@@ -209,7 +209,7 @@ test("uses the verified scene-list endpoint and propagates upstream failures", a
   });
   assert.deepEqual(call, {
     path: "/app/appgateway/miot/appsceneservice/AppSceneService/GetSceneList",
-    data: { home_id: "home-1" },
+    data: { home_id: "home-1", app_version: 25, get_type: 2 },
   });
   assert.equal(scenes[0].homeId, "home-1");
   await assert.rejects(

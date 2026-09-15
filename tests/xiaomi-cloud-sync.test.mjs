@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { listDevices, listHomeContexts, miotActionPayload, XiaomiCloudError, xiaomiErrorInfo } from "../lib/xiaomi-cloud.ts";
+import { listDevices, listHomeContexts, miotActionPayload, XiaomiCloudError, xiaomiErrorInfo, xiaomiRequest } from "../lib/xiaomi-cloud.ts";
 
 const session = {
   userId: "fake-user",
@@ -208,6 +208,46 @@ test("cloud errors expose stable HTTP and retry semantics", () => {
   assert.deepEqual(xiaomiErrorInfo(new XiaomiCloudError("XIAOMI_CLOUD_NETWORK", "network", true)), {
     message: "XIAOMI_CLOUD_NETWORK", status: 503, retryable: true, retryAfterSeconds: undefined,
   });
+});
+
+test("legacy cookies without the newer session fields force a fresh login", async () => {
+  process.env.XIAOMI_SESSION_SECRET = "cloud-sync-test-secret-with-at-least-32-characters";
+  const { readXiaomiSession, seal } = await import("../lib/xiaomi-cloud.ts");
+  const legacy = await seal({ userId: "fake-user", ssecurity: "ZmFrZQ==", serviceToken: "fake-token", region: "cn", createdAt: 0 });
+  await assert.rejects(readXiaomiSession(legacy), /XIAOMI_RELOGIN_REQUIRED/);
+  assert.deepEqual(xiaomiErrorInfo(new Error("XIAOMI_RELOGIN_REQUIRED")), { message: "XIAOMI_RELOGIN_REQUIRED", status: 401, retryable: false });
+
+  const complete = await seal({
+    userId: "fake-user", cUserId: "fake-cuser", ssecurity: "ZmFrZQ==", serviceToken: "fake-token", region: "cn", deviceId: "fake-device", userAgent: "fake-agent", createdAt: 0,
+  });
+  const session = await readXiaomiSession(complete);
+  assert.equal(session.deviceId, "fake-device");
+  assert.equal(session.cUserId, "fake-cuser");
+});
+
+test("app requests sign the form body and carry the Xiaomi app identity", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ code: 0, result: { scene_info_list: [] } }), { status: 200 });
+  };
+  let result;
+  try {
+    result = await xiaomiRequest({
+      userId: "fake-user", cUserId: "fake-cuser", ssecurity: "ZmFrZQ==", serviceToken: "fake-app-token", region: "cn", deviceId: "fake-device", userAgent: "fake-agent", createdAt: 0,
+    }, "/app/appgateway/miot/appsceneservice/AppSceneService/GetSceneList", { home_id: "home-1", app_version: 25, get_type: 2 });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.deepEqual(result, { code: 0, result: { scene_info_list: [] } });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /^https:\/\/api\.io\.mi\.com\/app\/appgateway\/miot\/appsceneservice\/AppSceneService\/GetSceneList\?/);
+  assert.equal(calls[0].init.method, "POST");
+  assert.match(calls[0].init.headers.Cookie, /cUserId=fake-cuser/);
+  assert.match(calls[0].init.headers.Cookie, /PassportDeviceId=fake-device/);
+  assert.match(calls[0].init.headers.Cookie, /serviceToken=fake-app-token/);
+  assert.equal(calls[0].init.headers["User-Agent"], "fake-agent");
 });
 
 test("the unified route reuses device results for scenes and logs no device identifiers", async () => {

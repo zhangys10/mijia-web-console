@@ -13,7 +13,7 @@ import { inferHardwareRole } from "../../../../lib/device-views";
 import { getMiotCapabilities, type MiotCapabilityGroup, type MiotCapabilityProperty } from "../../../../lib/miot-spec";
 import { diagnoseSwitchMode, isSwitchModeProperty } from "../../../../lib/switch-channel-mode";
 import { withTimeoutFallback } from "../../../../lib/time-budget";
-import { listDevices, unseal, xiaomiErrorInfo, xiaomiRequest, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
+import { listDevices, readXiaomiSession, xiaomiErrorInfo, xiaomiRequest, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
 import { loadDeviceGroupMemberships, mergeDeviceGroupMemberships } from "../../../../lib/xiaomi-device-groups";
 import { listRawManualScenes, loadSceneActionCapabilities, parseManualScenes, sceneDeviceCapabilityKey } from "../../../../lib/xiaomi-scenes";
 
@@ -285,7 +285,7 @@ export async function GET(request: NextRequest) {
     if (requestedHomeId && !validIdentifier(requestedHomeId)) return NextResponse.json({ error: "INVALID_HOME_ID", retryable: false }, { status: 400 });
     const value = (await cookies()).get("xiaomi_session")?.value;
     if (!value) return NextResponse.json({ error: "XIAOMI_NOT_CONNECTED" }, { status: 401 });
-    const session = await unseal<XiaomiSession>(value);
+    const session = await readXiaomiSession(value);
     const discoveryStartedAt = Date.now();
     const result = await listDevices(session);
     const discoveryDurationMs = Date.now() - discoveryStartedAt;

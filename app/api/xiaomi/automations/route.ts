@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { listDevices, listHomes, unseal, xiaomiErrorInfo, type XiaomiSession } from "../../../../lib/xiaomi-cloud";
+import { listDevices, listHomes, readXiaomiSession, xiaomiErrorInfo } from "../../../../lib/xiaomi-cloud";
 import { assertHomeAccess } from "../../../../lib/xiaomi-scenes";
 import { listRawAutomations, parseAutomations } from "../../../../lib/xiaomi-automations";
 import { assertAutomationDraft, automationDraftMatchesWrite, buildAutomationCreatePayload, resolveAutomationTriggerSelections } from "../../../../lib/xiaomi-automation-editor";
@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     if (!value) return NextResponse.json({ error: "XIAOMI_NOT_CONNECTED" }, { status: 401 });
     const homeId = request.nextUrl.searchParams.get("homeId");
     if (!validIdentifier(homeId)) return NextResponse.json({ error: "INVALID_HOME_ID" }, { status: 400 });
-    const session = await unseal<XiaomiSession>(value);
+    const session = await readXiaomiSession(value);
     const homes = await listHomes(session);
     try { assertHomeAccess(homes, homeId!); }
     catch { return NextResponse.json({ error: "XIAOMI_HOME_NOT_FOUND" }, { status: 404 }); }
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
     if (!value) return NextResponse.json({ error: "XIAOMI_NOT_CONNECTED" }, { status: 401 });
     const draft = assertAutomationDraft(await request.json(), false);
     if (!draft.schedule && !draft.triggerSelections?.length || !draft.actions?.length) return NextResponse.json({ error: "INVALID_AUTOMATION_DRAFT" }, { status: 400 });
-    const session = await unseal<XiaomiSession>(value);
+    const session = await readXiaomiSession(value);
     const homes = await listHomes(session);
     try { assertHomeAccess(homes, draft.homeId); }
     catch { return NextResponse.json({ error: "XIAOMI_HOME_NOT_FOUND" }, { status: 404 }); }

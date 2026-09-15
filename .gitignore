@@ -50,3 +50,6 @@ next-env.d.ts
 /outputs/
 /work/
 /.claude/
+
+# local agent tooling
+/.codex/

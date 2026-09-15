@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { listDevices, listHomeContexts, unseal, type XiaomiSession } from "../../../../../lib/xiaomi-cloud";
+import { listDevices, listHomeContexts, readXiaomiSession } from "../../../../../lib/xiaomi-cloud";
 import { parseDerivedDeviceId } from "../../../../../lib/device-topology";
 import { getMiotCapabilities, listMiotAutomationTriggerCapabilities } from "../../../../../lib/miot-spec";
 import { listSceneWritableProperties } from "../../../../../lib/xiaomi-scene-properties";
@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     if (!value) return NextResponse.json({ error: "XIAOMI_NOT_CONNECTED" }, { status: 401 });
     const homeId = request.nextUrl.searchParams.get("homeId");
     if (!validIdentifier(homeId)) return NextResponse.json({ error: "INVALID_HOME_ID" }, { status: 400 });
-    const session = await unseal<XiaomiSession>(value);
+    const session = await readXiaomiSession(value);
     const homes = await listHomeContexts(session);
     try { assertHomeAccess(homes, homeId!); }
     catch { return NextResponse.json({ error: "XIAOMI_HOME_NOT_FOUND" }, { status: 404 }); }

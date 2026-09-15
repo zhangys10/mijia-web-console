@@ -8,6 +8,7 @@ import {
   listRawAutomations,
   parseAutomations,
 } from "../lib/xiaomi-automations.ts";
+import { sceneListPayload } from "../lib/xiaomi-scenes.ts";
 import {
   assertAutomationDraft,
   buildAutomationCreatePayload,
@@ -16,7 +17,7 @@ import {
   resolveAutomationTriggerSelections,
 } from "../lib/xiaomi-automation-editor.ts";
 
-const session = { userId: "test-user", ssecurity: "fake", serviceToken: "fake", region: "cn", createdAt: 0 };
+const session = { userId: "test-user", cUserId: "fake-cuser", ssecurity: "fake", serviceToken: "fake", region: "cn", deviceId: "fake-device", userAgent: "fake-agent", createdAt: 0 };
 const timerAutomation = {
   scene_id: "automation-1",
   home_id: "home-1",
@@ -123,12 +124,20 @@ test("keeps unknown trigger bytes unchanged during metadata-only edits", async (
   assert.equal(updated.scene_trigger, source.scene_trigger);
 });
 
-test("uses the shared verified list endpoint and filters manual scenes", async () => {
+test("announces the newer protocol version so recent automations are not filtered out", async () => {
   let call;
   const items = await listRawAutomations(session, "home-1", async (_session, path, data) => {
     call = { path, data };
     return { result: [timerAutomation, { scene_id: "manual", home_id: "home-1", name: "手动", scene_trigger: { triggers: [{ src: "user", key: "user.click" }] } }] };
   });
-  assert.deepEqual(call, { path: AUTOMATION_LIST_PATH, data: { home_id: "home-1" } });
+  assert.deepEqual(call, {
+    path: AUTOMATION_LIST_PATH,
+    data: { home_id: "home-1", app_version: 25, get_type: 2 },
+  });
   assert.deepEqual(items.map(item => item.scene_id), ["automation-1"]);
+});
+
+test("uses one protocol-versioned payload for every home", () => {
+  assert.deepEqual(sceneListPayload("home-1"), { home_id: "home-1", app_version: 25, get_type: 2 });
+  assert.deepEqual(sceneListPayload("home-2"), { home_id: "home-2", app_version: 25, get_type: 2 });
 });
