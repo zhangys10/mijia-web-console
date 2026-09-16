@@ -6,14 +6,12 @@ export type AiBindingPayload = {
   userId: string;
   session: XiaomiSession;
   homeId?: string;
-  sceneId?: string;
   createdAt: number;
 };
 
 export async function createAiBindingToken(
   session: XiaomiSession,
   homeId?: string,
-  sceneId?: string,
 ): Promise<string> {
   const payload: AiBindingPayload = {
     version: 1,
@@ -21,7 +19,6 @@ export async function createAiBindingToken(
     userId: session.userId,
     session,
     homeId,
-    sceneId,
     createdAt: Date.now(),
   };
   return seal(payload as unknown as XiaomiSession);

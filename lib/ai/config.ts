@@ -1,5 +1,7 @@
 const DEFAULT_LLM_MODEL = "qwen3.7-flash-2026-07-15";
 const DEFAULT_LLM_TIMEOUT_MS = 3000;
+const DEFAULT_CONVERSATION_MAX_TURNS = 5;
+const MAX_CONVERSATION_TURNS_LIMIT = 20;
 
 export type AiCommandConfig = {
   enabled: boolean;
@@ -13,7 +15,17 @@ export type AiCommandConfig = {
   model: string;
   timeoutMs: number;
   deterministicFallback: boolean;
+  enableThinking: boolean;
+  maxOutputTokens: number;
+  /** 单次会话保留的最大问答轮数（一轮 = 1 条 user + 1 条 assistant）。 */
+  conversationMaxTurns: number;
 };
+
+function positiveInt(value: string | undefined, fallback: number, max: number) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, max);
+}
 
 function bool(value: string | undefined, fallback: boolean) {
   if (value === "true") return true;
@@ -34,5 +46,8 @@ export function loadAiCommandConfig(env: NodeJS.ProcessEnv = process.env): AiCom
     model: env.LLM_MODEL ?? DEFAULT_LLM_MODEL,
     timeoutMs: Number.parseInt(env.LLM_TIMEOUT_MS ?? `${DEFAULT_LLM_TIMEOUT_MS}`, 10),
     deterministicFallback: bool(env.AI_DETERMINISTIC_FALLBACK, true),
+    enableThinking: bool(env.LLM_ENABLE_THINKING, false),
+    maxOutputTokens: Number.parseInt(env.LLM_MAX_OUTPUT_TOKENS ?? "128", 10),
+    conversationMaxTurns: positiveInt(env.AI_CONVERSATION_MAX_TURNS, DEFAULT_CONVERSATION_MAX_TURNS, MAX_CONVERSATION_TURNS_LIMIT),
   };
 }

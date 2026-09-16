@@ -5,7 +5,7 @@ import type { SceneExecutionResult } from "../types.ts";
 
 export interface SceneExecutor {
   readonly kind: "mi_cloud" | "home_assistant";
-  execute(sceneId: "home", requestId: string): Promise<SceneExecutionResult>;
+  execute(sceneId: string, requestId: string): Promise<SceneExecutionResult>;
 }
 
 type RunScene = (session: XiaomiSession, sceneId: string, request?: XiaomiRequester) => Promise<void>;
@@ -26,12 +26,13 @@ export class MiCloudSceneExecutor implements SceneExecutor {
     this.request = request;
   }
 
-  async execute(sceneId: "home", requestId: string): Promise<SceneExecutionResult> {
-    if (sceneId !== "home" || !this.config.homeId || !this.config.sceneId) {
+  async execute(sceneId: string, requestId: string): Promise<SceneExecutionResult> {
+    const targetSceneId = sceneId || this.config.sceneId;
+    if (!this.config.homeId || !targetSceneId) {
       throw new Error("SCENE_NOT_CONFIGURED");
     }
     try {
-      await this.request(this.session, this.config.sceneId, undefined);
+      await this.request(this.session, targetSceneId, undefined);
       return {
         status: "success",
         succeeded: 1,
@@ -39,9 +40,12 @@ export class MiCloudSceneExecutor implements SceneExecutor {
         message: "欢迎回来，已经开启回家模式。",
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "MI_CLOUD_ERROR";
-      if (message.includes("TIMEOUT") || message.includes("timeout")) throw new Error("DEVICE_TIMEOUT");
-      throw new Error("MI_CLOUD_ERROR");
+      console.error("MiCloudSceneExecutor Run Failed for sceneId:", targetSceneId, error instanceof Error ? error.message : error);
+      const rawMessage = error instanceof Error ? error.message : "MI_CLOUD_ERROR";
+      if (rawMessage.includes("TIMEOUT") || rawMessage.includes("timeout")) {
+        throw new Error("DEVICE_TIMEOUT");
+      }
+      throw error instanceof Error ? error : new Error("MI_CLOUD_ERROR");
     } finally {
       void requestId;
     }

@@ -94,6 +94,8 @@ LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_API_KEY=<server-side Qwen API key>
 LLM_MODEL=qwen3.7-flash-2026-07-15
 LLM_TIMEOUT_MS=3000
+LLM_ENABLE_THINKING=false
+AI_CONVERSATION_MAX_TURNS=5
 AI_DETERMINISTIC_FALLBACK=true
 ```
 
