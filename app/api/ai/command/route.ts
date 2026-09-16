@@ -22,6 +22,27 @@ async function createExecutor(config: AiCommandConfig) {
   return new SceneService(new MiCloudSceneExecutor(session, config));
 }
 
+export async function GET() {
+  return NextResponse.json({
+    status: "ok",
+    service: "mijia-web-console-ai",
+    endpoint: "POST /api/ai/command",
+    message: "请使用 POST 方法发送请求，并附带 Authorization 与 Idempotency-Key 标头。",
+  });
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      Allow: "GET, POST, OPTIONS",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+      "Access-Control-Allow-Headers": "Authorization, Idempotency-Key, Content-Type",
+    },
+  });
+}
+
 export async function POST(request: NextRequest) {
   const config = loadAiCommandConfig();
   const requestId = `req_${crypto.randomUUID().replaceAll("-", "")}`;

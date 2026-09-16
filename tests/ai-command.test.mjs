@@ -97,3 +97,21 @@ test("scene service exposes only the audited home scene", async () => {
   assert.deepEqual(executor.calls, [{ sceneId: "home", requestId: "request-1" }]);
   assert.equal((await service.activate("away", "request-1")).succeeded, 0);
 });
+
+test("ai command route rejects GET before auth but reports supported methods", async () => {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("test", `ai-command-methods-${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
+  const context = { waitUntil() {}, passThroughOnException() {} };
+
+  const getResponse = await worker.fetch(new Request("http://localhost/api/ai/command"), env, context);
+  assert.equal(getResponse.status, 200);
+  const getJson = await getResponse.json();
+  assert.equal(getJson.status, "ok");
+  assert.match(getJson.message, /POST/);
+
+  const optionsResponse = await worker.fetch(new Request("http://localhost/api/ai/command", { method: "OPTIONS" }), env, context);
+  assert.equal(optionsResponse.status, 204);
+  assert.equal(optionsResponse.headers.get("Allow"), "GET, POST, OPTIONS");
+});
