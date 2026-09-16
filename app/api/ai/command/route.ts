@@ -18,6 +18,12 @@ function errorResponse(code: string, status: number, message: string, requestId?
 }
 
 async function createExecutor(config: AiCommandConfig) {
+  if (!config.session) {
+    throw new Error("XIAOMI_AI_SESSION_NOT_CONFIGURED");
+  }
+  if (!config.homeId || !config.sceneId) {
+    throw new Error("AI_SCENE_NOT_CONFIGURED");
+  }
   const session = await readXiaomiSession(config.session);
   return new SceneService(new MiCloudSceneExecutor(session, config));
 }
@@ -123,7 +129,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(response, { status: 200 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "MI_CLOUD_ERROR";
-    const code = message === "DEVICE_TIMEOUT" ? "DEVICE_TIMEOUT" : message === "SCENE_NOT_CONFIGURED" ? "MI_CLOUD_ERROR" : "MI_CLOUD_ERROR";
+    if (message === "XIAOMI_AI_SESSION_NOT_CONFIGURED" || message === "AI_SCENE_NOT_CONFIGURED") {
+      idempotency.fail(idempotencyKey, { code: "MI_CLOUD_ERROR", message: "米家服务尚未完成配置", requestId }, 502);
+      aiCommandLog("ai_command_failed", { requestId, code: "MI_CLOUD_ERROR", executorError: message });
+      return errorResponse("MI_CLOUD_ERROR", 502, "米家服务尚未完成配置", requestId);
+    }
+    const code = message === "DEVICE_TIMEOUT" ? "DEVICE_TIMEOUT" : "MI_CLOUD_ERROR";
     const status = code === "DEVICE_TIMEOUT" ? 504 : 502;
     idempotency.fail(idempotencyKey, { code, message: code === "DEVICE_TIMEOUT" ? "设备响应超时" : "米家服务暂时不可用", requestId }, status);
     aiCommandLog("ai_command_failed", { requestId, code, executorError: message });
