@@ -37,11 +37,11 @@ async function createExecutor(
       if (homes.length > 0) {
         homeId = homeId || homes[0].id;
         const scenes = await listManualScenes(session, homeId);
-        const homeScene = scenes.find(s => s.name.includes("回家")) ?? scenes[0];
+        const homeScene = scenes.find(s => /回家|到家|进门|到家模式|回家模式/.test(s.name)) ?? scenes[0];
         if (homeScene) sceneId = sceneId || homeScene.id;
       }
     } catch {
-      // Fall back to configured IDs
+      // Keep explicit binding/config values if scene discovery is unavailable.
     }
   }
 

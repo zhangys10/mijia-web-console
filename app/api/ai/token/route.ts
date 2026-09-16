@@ -21,14 +21,16 @@ export async function GET(request: NextRequest) {
         if (homes.length > 0) {
           homeId = homeId ?? homes[0].id;
           const scenes = await listManualScenes(session, homeId);
-          const homeScene = scenes.find(s => s.name.includes("回家")) ?? scenes[0];
+          const homeScene = scenes.find(s => /回家|到家|进门|到家模式|回家模式/.test(s.name)) ?? scenes[0];
           if (homeScene) {
             sceneId = sceneId ?? homeScene.id;
             sceneName = homeScene.name;
           }
         }
-      } catch {
-        // Fall back to token with session only
+      } catch (error) {
+        console.warn("ai_token_scene_resolve_failed", JSON.stringify({
+          error: error instanceof Error ? error.message : "UNKNOWN",
+        }));
       }
     }
 
