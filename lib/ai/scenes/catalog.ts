@@ -1,5 +1,5 @@
 export type AllowedScene = {
-  id: "home";
+  id: string;
   name: string;
   aliases: string[];
   description: string;
@@ -9,7 +9,7 @@ export type AllowedScene = {
   enabledForAi: true;
 };
 
-export const allowedScenes: AllowedScene[] = [
+export const staticAllowedScenes: AllowedScene[] = [
   {
     id: "home",
     name: "回家模式",
@@ -21,3 +21,22 @@ export const allowedScenes: AllowedScene[] = [
     enabledForAi: true,
   },
 ];
+
+export function runtimeScenes(
+  scenes: Array<{ id: string; name: string; enabled?: boolean }>,
+): AllowedScene[] {
+  return scenes
+    .filter(scene => scene.id && scene.name && scene.enabled !== false)
+    .map(scene => ({
+      id: scene.id,
+      name: scene.name,
+      aliases: [scene.name],
+      description: `用户请求与“${scene.name}”匹配的已审核手动场景`,
+      source: "mi_home_existing_scene",
+      executor: "mi_cloud",
+      riskLevel: "low",
+      enabledForAi: true,
+    }));
+}
+
+export const allowedScenes: AllowedScene[] = [];
