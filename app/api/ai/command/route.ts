@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readXiaomiSession } from "../../../../lib/xiaomi-cloud.ts";
+import { listHomes, readXiaomiSession, type XiaomiSession } from "../../../../lib/xiaomi-cloud.ts";
+import { listManualScenes } from "../../../../lib/xiaomi-scenes.ts";
 import { loadAiCommandConfig, type AiCommandConfig } from "../../../../lib/ai/config.ts";
 import { IntentOrchestrator } from "../../../../lib/ai/intent-orchestrator.ts";
 import { QwenOpenAiCompatibleProvider } from "../../../../lib/ai/providers/qwen-openai-provider.ts";
 import { IdempotencyStore, requestHash } from "../../../../lib/ai/security/idempotency.ts";
-import { verifyShortcutAuth } from "../../../../lib/ai/security/auth.ts";
+import { extractBearerToken, verifyShortcutAuth } from "../../../../lib/ai/security/auth.ts";
+import { verifyAndExtractBinding } from "../../../../lib/ai/security/binding.ts";
 import { MiCloudSceneExecutor } from "../../../../lib/ai/executors/scene-executor.ts";
 import { SceneService } from "../../../../lib/ai/scenes/scene-service.ts";
 import { aiCommandLog } from "../../../../lib/ai/observability/logger.ts";
@@ -17,15 +19,35 @@ function errorResponse(code: string, status: number, message: string, requestId?
   return NextResponse.json({ code, message, requestId }, { status });
 }
 
-async function createExecutor(config: AiCommandConfig) {
-  if (!config.session) {
-    throw new Error("XIAOMI_AI_SESSION_NOT_CONFIGURED");
+async function createExecutor(
+  config: AiCommandConfig,
+  boundSession?: XiaomiSession,
+  boundHomeId?: string,
+  boundSceneId?: string,
+) {
+  const session = boundSession ?? (config.session ? await readXiaomiSession(config.session) : undefined);
+  if (!session) throw new Error("XIAOMI_AI_SESSION_NOT_CONFIGURED");
+
+  let homeId = boundHomeId || config.homeId;
+  let sceneId = boundSceneId || config.sceneId;
+
+  if (!homeId || !sceneId) {
+    try {
+      const homes = await listHomes(session);
+      if (homes.length > 0) {
+        homeId = homeId || homes[0].id;
+        const scenes = await listManualScenes(session, homeId);
+        const homeScene = scenes.find(s => s.name.includes("回家")) ?? scenes[0];
+        if (homeScene) sceneId = sceneId || homeScene.id;
+      }
+    } catch {
+      // Fall back to configured IDs
+    }
   }
-  if (!config.homeId || !config.sceneId) {
-    throw new Error("AI_SCENE_NOT_CONFIGURED");
-  }
-  const session = await readXiaomiSession(config.session);
-  return new SceneService(new MiCloudSceneExecutor(session, config));
+
+  if (!homeId || !sceneId) throw new Error("AI_SCENE_NOT_CONFIGURED");
+  const effectiveConfig = { ...config, homeId, sceneId };
+  return new SceneService(new MiCloudSceneExecutor(session, effectiveConfig));
 }
 
 export async function GET() {
@@ -53,7 +75,23 @@ export async function POST(request: NextRequest) {
   const config = loadAiCommandConfig();
   const requestId = `req_${crypto.randomUUID().replaceAll("-", "")}`;
   if (!config.enabled) return errorResponse("AI_COMMAND_DISABLED", 503, "AI 控制暂未启用", requestId);
-  if (!(await verifyShortcutAuth(request.headers.get("authorization"), config.authHash))) {
+
+  const authHeader = request.headers.get("authorization");
+  const bearerToken = extractBearerToken(authHeader);
+  let boundSession: XiaomiSession | undefined;
+  let boundHomeId: string | undefined;
+  let boundSceneId: string | undefined;
+
+  if (bearerToken) {
+    const binding = await verifyAndExtractBinding(bearerToken);
+    if (binding) {
+      boundSession = binding.session;
+      boundHomeId = binding.homeId;
+      boundSceneId = binding.sceneId;
+    }
+  }
+
+  if (!boundSession && !(await verifyShortcutAuth(authHeader, config.authHash))) {
     return errorResponse("UNAUTHORIZED", 401, "快捷指令认证失败", requestId);
   }
   const idempotencyKey = request.headers.get("idempotency-key");
@@ -113,7 +151,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(response, { status: 200 });
     }
 
-    const sceneService = await createExecutor(config);
+    const sceneService = await createExecutor(config, boundSession, boundHomeId, boundSceneId);
     const execution = await sceneService.activate(decision.arguments.sceneId, requestId);
     const response: AiCommandResponse = {
       requestId,

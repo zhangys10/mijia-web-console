@@ -79,6 +79,8 @@ npm run dev
 
 PoC 提供 `POST /api/ai/command`，用于 iPhone 快捷指令触发已审核的米家“回家模式”场景。请求必须携带独立的 Shortcut Bearer Token 和 `Idempotency-Key`；服务端只向 LLM 暴露 `activate_scene(home)` 工具，并在执行前做工具名、参数、场景白名单和幂等校验。
 
+扫码登录后，可在“账号与连接”弹窗中点击“生成 Token”，获取当前账号专属的 Siri 绑定令牌。该令牌会封装当前米家会话及默认回家场景，直接粘贴到 iPhone 快捷指令的 `Authorization` 标头中使用，无需再手动复制 `XIAOMI_AI_SESSION`。
+
 推荐配置：
 
 ```text

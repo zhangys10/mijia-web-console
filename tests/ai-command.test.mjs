@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { verifyShortcutAuth } from "../lib/ai/security/auth.ts";
+import { createAiBindingToken, verifyAndExtractBinding } from "../lib/ai/security/binding.ts";
 import { IdempotencyStore, requestHash } from "../lib/ai/security/idempotency.ts";
 import { isDeterministicFallback } from "../lib/ai/fallback.ts";
 import { validateToolCall } from "../lib/ai/tools/tool-validator.ts";
@@ -16,6 +17,25 @@ test("shortcut authentication accepts only the exact bearer token hash", async (
   assert.equal(hash, true);
   assert.equal(await verifyShortcutAuth(`Bearer ${"b".repeat(32)}`, (await import("node:crypto")).createHash("sha256").update(token).digest("hex")), false);
   assert.equal(await verifyShortcutAuth(null, "abc"), false);
+});
+
+test("ai binding token is user scoped and cannot be forged", async () => {
+  const session = {
+    userId: "user-a",
+    ssecurity: "unused-in-test",
+    serviceToken: "unused-in-test",
+    region: "cn",
+    createdAt: Date.now(),
+  };
+  process.env.XIAOMI_SESSION_SECRET = "ai-binding-test-secret-with-at-least-32-characters";
+  const token = await createAiBindingToken(session, "home-a", "scene-a");
+  const binding = await verifyAndExtractBinding(token);
+  assert.equal(binding.kind, "siri_binding");
+  assert.equal(binding.userId, "user-a");
+  assert.equal(binding.homeId, "home-a");
+  assert.equal(binding.sceneId, "scene-a");
+  assert.equal(await verifyAndExtractBinding("not-a-token"), null);
+  assert.equal(await verifyAndExtractBinding("fake.iv.ciphertext"), null);
 });
 
 test("idempotency store replays completed records and rejects body conflicts", () => {
