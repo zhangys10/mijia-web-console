@@ -305,12 +305,12 @@ flowchart TD
 
 | 方法与路径 | 鉴权 | 用途 | 持久化 |
 |---|---|---|---|
-| \`POST /api/ai/automation-token\` | 有效 \`xiaomi_session\` | 验证用户自己的 LLM Key，并生成自包含 Token | 服务端不保存 |
-| \`POST /api/ai/command\` | Automation Token | 解密米家身份与 LLM 凭据，执行 AI 指令 | 服务端不保存 |
+| `POST /api/ai/automation-token` | 有效 `xiaomi_session` | 验证用户自己的 LLM Key，并生成自包含 Token | 服务端不保存 |
+| `POST /api/ai/command` | Automation Token | 解密米家身份与 LLM 凭据，执行 AI 指令 | 服务端不保存 |
 
 签发请求：
 
-\`\`\`json
+```json
 {
   "provider": "qwen-cn",
   "apiKey": "<user-owned-token>",
@@ -318,11 +318,11 @@ flowchart TD
   "homeId": "123456",
   "expiresInDays": 30
 }
-\`\`\`
+```
 
 签发响应：
 
-\`\`\`json
+```json
 {
   "token": "v1.key-2026-01.<iv>.<ciphertext>.<auth-tag>",
   "provider": "qwen-cn",
@@ -330,11 +330,11 @@ flowchart TD
   "homeId": "123456",
   "expiresAt": "2026-10-16T00:00:00.000Z"
 }
-\`\`\`
+```
 
-服务端必须忽略或拒绝客户端提交的 \`baseUrl\`，并从 Provider Catalog 选择中国大陆 endpoint。原始 API Key 只存在于签发请求和本次服务端内存中；签发完成后，浏览器只获得不可读的 Automation Token。配置页不得把原始 Key 或 Automation Token 写入 Local Storage。
+服务端必须忽略或拒绝客户端提交的 `baseUrl`，并从 Provider Catalog 选择中国大陆 endpoint。原始 API Key 只存在于签发请求和本次服务端内存中；签发完成后，浏览器只获得不可读的 Automation Token。配置页不得把原始 Key 或 Automation Token 写入 Local Storage。
 
-\`\`\`mermaid
+```mermaid
 sequenceDiagram
     participant U as 已登录用户
     participant P as AI自动化配置页
@@ -349,11 +349,11 @@ sequenceDiagram
     A->>A: 合并米家 Binding 与 LLM 凭据并加密
     A-->>P: 返回 Automation Token
     P-->>U: 用户复制到 Siri 快捷指令
-\`\`\`
+```
 
 Token 密文中的载荷：
 
-\`\`\`ts
+```ts
 type AutomationTokenPayload = {
   version: 1;
   purpose: "ai-home-automation";
@@ -367,11 +367,11 @@ type AutomationTokenPayload = {
   issuedAt: number;
   expiresAt: number;
 };
-\`\`\`
+```
 
 默认有效期 30 天，服务端允许范围为 1–90 天。Token 必须使用独立密钥执行 AES-256-GCM 密封，使用随机 96-bit IV，并把应用名、环境、用途和版本加入 AAD。生产、Preview 和开发环境使用不同密钥；EdgeOne 与同一生产域的多个源站实例才共享生产密钥。
 
-由于没有服务端状态，Automation Token 无法被单独吊销。泄露处置只能依赖到期、用户轮换原始 LLM Key，或轮换 \`AI_AUTOMATION_TOKEN_SECRET\` 使该环境全部 Token 失效。
+由于没有服务端状态，Automation Token 无法被单独吊销。泄露处置只能依赖到期、用户轮换原始 LLM Key，或轮换 `AI_AUTOMATION_TOKEN_SECRET` 使该环境全部 Token 失效。
 
 ## 7. LLM 层设计
 
@@ -401,7 +401,7 @@ flowchart TD
 
 ### 7.2 Provider 与请求级凭据抽象
 
-\`\`\`ts
+```ts
 interface LlmProvider {
   decide(
     input: IntentDecisionInput,
@@ -420,11 +420,11 @@ type ResolvedProviderCredential = {
   baseUrl: string;   // 来自服务端 Provider Catalog
   model: string;
 };
-\`\`\`
+```
 
-首个实现仍为 \`QwenOpenAiCompatibleProvider\`，但 Provider 不再从全局环境变量取得业务 API Token。Command API 从 \`Authorization: Bearer <automation-token>\` 解密并校验载荷，再将其中的用户 API Key 转为请求级 \`ResolvedProviderCredential\`。Provider Catalog 决定大陆 endpoint 和模型白名单，Token 中的 \`baseUrl\` 即使存在也不得使用。
+首个实现仍为 `QwenOpenAiCompatibleProvider`，但 Provider 不再从全局环境变量取得业务 API Token。Command API 从 `Authorization: Bearer <automation-token>` 解密并校验载荷，再将其中的用户 API Key 转为请求级 `ResolvedProviderCredential`。Provider Catalog 决定大陆 endpoint 和模型白名单，Token 中的 `baseUrl` 即使存在也不得使用。
 
-\`\`\`mermaid
+```mermaid
 sequenceDiagram
     participant S as Siri
     participant A as AI Command API
@@ -439,7 +439,7 @@ sequenceDiagram
     A->>P: decide(input, requestCredential)
     P->>Q: Bearer 用户自己的 API Key
     Q-->>P: Tool Call / 文本结果
-\`\`\`
+```
 
 Automation Token 中的模型 Key 只允许在调用 Provider 前短暂解密到请求内存，不得缓存、持久化、输出到日志或附加到异常对象。
 
@@ -447,7 +447,7 @@ Automation Token 中的模型 Key 只允许在调用 Provider 前短暂解密到
 
 目标架构中的部署级配置只定义平台策略、默认值和凭据加密，不包含任何用户的模型 API Token：
 
-\`\`\`env
+```env
 LLM_ALLOWED_PROVIDERS=qwen-cn
 LLM_DEFAULT_PROVIDER=qwen-cn
 LLM_DEFAULT_MODEL=qwen3.7-flash-2026-07-15
@@ -459,7 +459,7 @@ AI_AUTOMATION_TOKEN_KEY_ID=key-2026-01
 AI_AUTOMATION_TOKEN_DEFAULT_DAYS=30
 AI_AUTOMATION_TOKEN_MAX_DAYS=90
 AI_CONVERSATION_MAX_TURNS=5
-\`\`\`
+```
 
 明确禁止配置共享 `LLM_API_KEY` 作为正常或 fallback 调用凭据。所有模型调用优先使用阿里云百炼中国大陆地域。选择固定版本而不是浮动 alias，便于回归测试与避免行为漂移。若大陆地域未提供该固定版本，可把系统默认模型替换为大陆地域当前可用的 Flash 型号，例如 `qwen3.8-flash`；不得自动切换到境外 endpoint。
 
@@ -744,20 +744,20 @@ stateDiagram-v2
 
 ### 9.1 用户身份与 Automation Token 鉴权
 
-浏览器端使用现有 \`xiaomi_session\` 识别登录用户。只有登录用户可以调用签发接口；Siri 后续使用签发出的 Automation Token。
+浏览器端使用现有 `xiaomi_session` 识别登录用户。只有登录用户可以调用签发接口；Siri 后续使用签发出的 Automation Token。
 
-\`\`\`text
+```text
 principalId = SHA-256("xiaomi:" + region + ":" + userId)
-\`\`\`
+```
 
-签发时，服务端必须确认 Token 载荷中的 \`principalId\`、米家 Session 与 \`homeId\` 均属于当前登录用户。Command API 每次请求重新验证以下内容：
+签发时，服务端必须确认 Token 载荷中的 `principalId`、米家 Session 与 `homeId` 均属于当前登录用户。Command API 每次请求重新验证以下内容：
 
 1. AES-GCM 认证标签有效；
-2. \`purpose = ai-home-automation\`；
+2. `purpose = ai-home-automation`；
 3. Token 环境与当前部署一致；
-4. \`issuedAt/expiresAt\` 合法且未过期；
-5. 解密后的米家身份与 \`principalId\` 一致；
-6. \`homeId\` 位于该用户可访问家庭范围；
+4. `issuedAt/expiresAt` 合法且未过期；
+5. 解密后的米家身份与 `principalId` 一致；
+6. `homeId` 位于该用户可访问家庭范围；
 7. Provider 与模型位于服务端 allowlist。
 
 Automation Token 是可重放的 Bearer 凭据。加密只隐藏内容，不降低 Token 被盗后的调用能力，因此只允许通过 HTTPS Authorization Header 传输，不进入 URL、请求体、日志或错误消息。
@@ -768,11 +768,11 @@ Automation Token 是可重放的 Bearer 凭据。加密只隐藏内容，不降�
 |---|---|---:|---:|
 | 原始用户 LLM Key | 仅签发请求和服务端短期内存 | 用户输入时可见 | 验证和实际调用时使用 |
 | Automation Token | Siri 快捷指令；内容由服务端密封 | 配置页生成后一次性可见 | 否 |
-| \`AI_AUTOMATION_TOKEN_SECRET\` | EdgeOne/Vercel 环境变量 | 否 | 否 |
+| `AI_AUTOMATION_TOKEN_SECRET` | EdgeOne/Vercel 环境变量 | 否 | 否 |
 | Mi Cloud session/token | Automation Token 密文与请求内存 | 否 | 否 |
 | HA token（未来） | 服务端安全存储 | 否 | 否 |
 
-\`\`\`mermaid
+```mermaid
 flowchart TD
     A["米家登录"] --> B["提交个人 LLM Key"]
     B --> C["服务端验证并密封"]
@@ -781,17 +781,17 @@ flowchart TD
     E --> F["服务端解密"]
     F --> G["Qwen：用户自己的 Key"]
     F --> H["Mi Cloud：该用户会话"]
-\`\`\`
+```
 
-必须使用独立密钥，禁止复用 \`XIAOMI_SESSION_SECRET\` 或会话上下文密钥。建议 Token 格式为：
+必须使用独立密钥，禁止复用 `XIAOMI_SESSION_SECRET` 或会话上下文密钥。建议 Token 格式为：
 
-\`\`\`text
+```text
 v1.<keyId>.<base64url(iv)>.<base64url(ciphertext)>.<base64url(authTag)>
-\`\`\`
+```
 
 ### 9.3 Automation Token 生命周期与撤销边界
 
-\`\`\`mermaid
+```mermaid
 stateDiagram-v2
     [*] --> Draft: 用户输入配置
     Draft --> Active: Key验证成功并签发
@@ -804,13 +804,13 @@ stateDiagram-v2
     Replaced --> [*]
     Invalid --> [*]
     GloballyRevoked --> [*]
-\`\`\`
+```
 
 - 默认有效期 30 天，最大 90 天。
 - 用户更新模型或 API Key 后需要重新生成并替换快捷指令中的 Token。
-- Provider 返回 \`401/403\` 时返回 \`LLM_CREDENTIAL_INVALID\`，不得自动使用共享 Key。
+- Provider 返回 `401/403` 时返回 `LLM_CREDENTIAL_INVALID`，不得自动使用共享 Key。
 - 无数据库时不能单独吊销某个已签发 Token，也不能可靠标记其状态。
-- 紧急泄露通过轮换 \`AI_AUTOMATION_TOKEN_KEY_ID\` 与 Secret 全局撤销。
+- 紧急泄露通过轮换 `AI_AUTOMATION_TOKEN_KEY_ID` 与 Secret 全局撤销。
 - 正常密钥轮换可短期保留“当前 + 上一个”解密密钥；是否启用重叠窗口必须由部署配置明确控制。
 - 日志永不记录 Authorization、Automation Token、用户 LLM Key 或解密后的米家会话。
 
@@ -1018,14 +1018,14 @@ PoC 首次 E2E 应使用低风险设备，例如一盏测试灯；确认稳定�
 | 独立签发 | 用户 A Key | 用户 B Key | 密文和 principal 均不同 |
 | A 发起命令 | 携带 A Token | 不访问 | Provider 只收到 A Key |
 | B 发起命令 | 不访问 | 携带 B Token | Provider 只收到 B Key |
-| 篡改密文 | 修改任意字节 | - | AES-GCM 校验失败，返回 \`AUTOMATION_TOKEN_INVALID\` |
+| 篡改密文 | 修改任意字节 | - | AES-GCM 校验失败，返回 `AUTOMATION_TOKEN_INVALID` |
 | 跨环境使用 | 生产 Token | Preview | 解密失败或环境 AAD 不匹配 |
-| 过期 Token | 已过期 | - | 返回 \`AUTOMATION_TOKEN_EXPIRED\` |
+| 过期 Token | 已过期 | - | 返回 `AUTOMATION_TOKEN_EXPIRED` |
 | A Token 改写 homeId | 篡改载荷 | - | 校验失败，不访问米家 |
-| Provider 拒绝 Key | 有效密文、失效 Key | - | 返回 \`LLM_CREDENTIAL_INVALID\`，不使用共享 Key |
+| Provider 拒绝 Key | 有效密文、失效 Key | - | 返回 `LLM_CREDENTIAL_INVALID`，不使用共享 Key |
 | Secret 轮换 | 旧 keyId | 新 keyId | 按部署的重叠窗口策略接受或统一失效 |
 
-\`\`\`mermaid
+```mermaid
 flowchart TD
     A["请求 + Automation Token"] --> B{"认证标签、用途、环境有效?"}
     B -- 否 --> C["拒绝并返回稳定错误"]
@@ -1034,7 +1034,7 @@ flowchart TD
     D -- 是 --> F["解密到请求内存"]
     F --> G["调用对应 Provider"]
     F --> H["调用该用户 Mi Cloud"]
-\`\`\`
+```
 
 安全测试还必须断言响应、结构化日志、异常栈、Provider mock 之外的 spy 和测试快照中都不包含原始 Key 或完整 Automation Token。
 
@@ -1057,7 +1057,7 @@ LLM_MODEL=qwen3.7-flash-2026-07-15
 
 目标部署环境只保留平台策略和 Automation Token 密封密钥：
 
-\`\`\`env
+```env
 AI_COMMAND_ENABLED=true
 LLM_ALLOWED_PROVIDERS=qwen-cn
 LLM_DEFAULT_PROVIDER=qwen-cn
@@ -1078,9 +1078,9 @@ SCENE_ACTION_CONCURRENCY=3
 
 IDEMPOTENCY_TTL_SECONDS=600
 AI_LOG_RAW_TEXT=false
-\`\`\`
+```
 
-目标配置中不存在共享 \`LLM_API_KEY\`、\`LLM_CREDENTIAL_STORE\` 或数据库连接。用户 API Key 由登录后的签发接口验证并密封进 Automation Token。
+目标配置中不存在共享 `LLM_API_KEY`、`LLM_CREDENTIAL_STORE` 或数据库连接。用户 API Key 由登录后的签发接口验证并密封进 Automation Token。
 
 部署检查：
 
@@ -1096,7 +1096,7 @@ AI_LOG_RAW_TEXT=false
 - 不配置境外模型自动 fallback；
 - 明确记录无数据库导致“无法单 Token 吊销”的运维限制。
 
-\`\`\`mermaid
+```mermaid
 flowchart TD
     A["iPhone / Siri"] --> B["腾讯 EdgeOne"]
     B --> C["中国大陆源站"]
@@ -1104,13 +1104,13 @@ flowchart TD
     D --> E["百炼大陆地域"]
     D --> F["Mi Cloud 中国大陆区"]
     G["Vercel Preview"] --> H["独立 Preview Secret"]
-\`\`\`
+```
 
 ## 14. 建议代码结构
 
-仓库当前采用 \`app/\`、\`lib/ai/\` 与 \`worker/\` 边界。下面标记 \`[现有]\` 和 \`[目标新增]\`；本次 PR 只更新文档：
+仓库当前采用 `app/`、`lib/ai/` 与 `worker/` 边界。下面标记 `[现有]` 和 `[目标新增]`；本次 PR 只更新文档：
 
-\`\`\`text
+```text
 app/
   ai/settings/page.tsx                  [目标新增：配置与一次性签发页面]
   api/ai/
@@ -1132,22 +1132,22 @@ lib/ai/
   scenes/
     catalog.ts                          [现有]
     scene-service.ts                    [现有]
-\`\`\`
+```
 
-加密、载荷校验、Provider Catalog 和模型凭据解析放在 \`lib/ai/\` 的纯服务端模块；Route Handler 只负责 HTTP 边界。客户端配置页不得获得密封 Secret，也不得自行实现“加密”。
+加密、载荷校验、Provider Catalog 和模型凭据解析放在 `lib/ai/` 的纯服务端模块；Route Handler 只负责 HTTP 边界。客户端配置页不得获得密封 Secret，也不得自行实现“加密”。
 
 ## 15. 实施阶段
 
 完整可领取任务与文件级验收标准见 [AI Home 实现 TODO](./ai-home-implementation-todo.md)。
 
-\`\`\`mermaid
+```mermaid
 flowchart TD
     A["Phase 0：Token Contract与威胁模型"] --> B["Phase 1：Token Codec"]
     B --> C["Phase 2：Provider Catalog与签发API"]
     C --> D["Phase 3：配置页"]
     D --> E["Phase 4：Command API接入"]
     E --> F["Phase 5：Siri E2E与部署"]
-\`\`\`
+```
 
 实施顺序不能跳过 Token Codec 的单元测试。签发 API 和 Command API 接入前，必须先证明篡改、过期、跨环境和错误用途的 Token 均无法解密或使用。
 
@@ -1160,8 +1160,8 @@ PoC 完成必须同时满足：
 3. Siri 只需保存一个 Automation Token，并通过 HTTPS Authorization Header 调用。
 4. Token 被篡改、过期、跨环境使用或用途错误时，在访问 Qwen/Mi Cloud 前拒绝。
 5. 用户 A 的请求只使用 Token A 中的 Key 和米家会话，不能访问用户 B 的凭据或家庭。
-6. 不存在共享 \`LLM_API_KEY\` fallback。
-7. LLM 只能调用审核后的 \`activate_scene\`，非法工具和参数实际执行数为 0。
+6. 不存在共享 `LLM_API_KEY` fallback。
+7. LLM 只能调用审核后的 `activate_scene`，非法工具和参数实际执行数为 0。
 8. 现有米家场景优先；真实 sceneId、设备 DID 与 Mi Cloud Token 不进入模型上下文。
 9. 否定、条件、疑问和转述语句不会触发场景。
 10. 同一请求重试不会重复产生有副作用的执行。
@@ -1193,7 +1193,7 @@ PoC 完成必须同时满足：
 | ADR-016 | Automation Token 使用独立 AES-256-GCM 密钥 | 已确认 | 提供机密性、完整性、用途和环境隔离 |
 | ADR-017 | 无单 Token 吊销能力 | 已接受限制 | 通过短有效期、用户 Key 轮换和全局 Secret 轮换降低风险 |
 
-\`\`\`mermaid
+```mermaid
 pie showData
     title 架构决策状态
     "已确认" : 13
@@ -1201,7 +1201,7 @@ pie showData
     "待确认" : 2
     "PoC暂定" : 1
     "已接受限制" : 1
-\`\`\`
+```
 
 ## 18. 已关闭与待确认的架构问题
 
