@@ -1451,6 +1451,11 @@ select {
 }
 
 @media (max-width: 760px) {
+  .site-footer {
+    margin-top: 28px;
+    padding-bottom: 8px;
+  }
+
   .shell {
     display: block;
   }
