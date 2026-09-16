@@ -18,11 +18,12 @@ flowchart TB
         AutomationUI[automation-center.tsx]
     end
 
-    subgraph API[HTTP 边界 · app/api/xiaomi]
+    subgraph API[HTTP 边界 · app/api]
         AuthAPI[QR / Status]
         DeviceAPI[Devices / Spec / Control]
         SceneAPI[Scenes / Run / Action Catalog]
         AutomationAPI[Automations / Catalog]
+        AIAPI[AI Command API<br/>/api/ai/command]
     end
 
     subgraph Service[服务与应用编排 · 当前分布在 lib 和 Route Handler]
@@ -30,6 +31,7 @@ flowchart TB
         SceneService[xiaomi-scenes<br/>xiaomi-scene-editor<br/>xiaomi-scene-action-catalog]
         AutomationService[xiaomi-automations<br/>xiaomi-automation-editor<br/>xiaomi-automation-catalog]
         SpecService[miot-spec<br/>规格获取与缓存]
+        AIService[lib/ai<br/>Intent Orchestrator / LLM Provider]
     end
 
     subgraph Domain[领域层 · lib 中的纯规则]
@@ -37,6 +39,7 @@ flowchart TB
         Management[device-management<br/>device-views / device-groups]
         Switch[device-capabilities<br/>switch-channel-mode / switch-bindings]
         SceneDomain[场景/自动化解析<br/>校验、保真写入、展示分组]
+        AIDomain[AI/场景白名单、幂等、回退与审计<br/>lib/ai/security + lib/ai/scenes]
     end
 
     subgraph External[外部服务]
@@ -44,10 +47,12 @@ flowchart TB
         XiaomiCloud[region api.io.mi.com]
         MiotSpec[miot-spec.org<br/>spec.miot-spec.com]
         ModelCatalog[home.mi.com 型号场景目录]
+        LLMProvider[百炼 / OpenAI 兼容接口]
     end
 
     User --> Page
     Page --> DeviceUI & SceneUI & AutomationUI
+    User -->|Siri 快捷指令| AIAPI
     Page --> AuthAPI & DeviceAPI & SceneAPI & AutomationAPI
     AuthAPI --> Cloud
     DeviceAPI --> Cloud & SpecService & Topology & Management & Switch
@@ -56,6 +61,10 @@ flowchart TB
     Cloud --> Account & XiaomiCloud
     SpecService --> MiotSpec
     AutomationService --> XiaomiCloud & ModelCatalog
+    AIAPI --> AIService
+    AIService --> AIDomain
+    AIDomain --> SceneService
+    AIService --> LLMProvider
 ```
 
 ### 1.1 部署形态
@@ -251,6 +260,32 @@ flowchart LR
 
 动作目录以设备实例为首选证据，严格应用 `black_dids`；实例目录成功但为空时不继续猜测。服务端保留真实目录动作 ID，客户端只接收 opaque key、官方原文和经过 MIoT 规格验证的参数约束。创建或更新场景时，服务端重新加载当前目录并校验模板，避免目录变化后写入失效或跨设备的数值。
 
+### 2.6 AI Home PoC
+
+```mermaid
+sequenceDiagram
+    actor Siri as Siri 快捷指令
+    participant API as /api/ai/command
+    participant Intent as lib/ai Intent Orchestrator
+    participant LLM as 百炼 OpenAI 兼容接口
+    participant Scene as Scene Service
+    participant Xiaomi as AppSceneService
+
+    Siri->>API: POST + Bearer Token + Idempotency-Key
+    API->>API: 鉴权、请求体校验、幂等检查
+    API->>Intent: interpret(text, context)
+    Intent->>LLM: system prompt + activate_scene(home)
+    LLM-->>Intent: tool call 或 no_action
+    Intent->>Intent: 工具名、参数、场景白名单强校验
+    Intent->>Scene: activate(home)
+    Scene->>Xiaomi: NewRunScene
+    Xiaomi-->>Scene: 执行结果
+    Scene-->>API: SceneExecutionResult
+    API-->>Siri: 状态与朗读文案
+```
+
+AI Command API 与浏览器登录会话、小米会话和 LLM API Key 完全隔离。LLM 只收到文本、客户端类型、时区和白名单场景目录，不接触米家 token、DID、`siid`/`piid` 或真实米家场景 ID。服务端在执行前重新校验工具名、参数、场景白名单、权限、启用状态、幂等和风险策略；模型失败时仅对固定高置信度短语执行确定性回退，并记录 `decisionSource=deterministic_fallback`。
+
 ## 3. 外部与内部 API
 
 ### 3.1 外部 API
@@ -294,6 +329,7 @@ flowchart LR
 | `/api/xiaomi/automations` | `GET`, `POST` | 列出或创建自动化 |
 | `/api/xiaomi/automations/:automationId` | `GET`, `PUT` | 获取草稿或安全更新自动化 |
 | `/api/xiaomi/automations/catalog` | `GET` | 返回脱敏后的触发条件和动作目录 |
+| `/api/ai/command` | `POST` | Siri 快捷指令入口：鉴权、幂等、意图判断、场景白名单与执行 |
 
 ## 4. 当前分层与模块依赖
 
