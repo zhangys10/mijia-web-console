@@ -95,6 +95,17 @@ AI Gateway Provider 必需的三个服务端变量，由 EdgeOne 项目环境注
 
 详细设计见 [AI Home PoC 设计](docs/ai-home-poc-design.md)，冻结接口见 [AI Home Phase 0 Contract](docs/ai-home-phase-0-contract.md)，实施顺序见 [AI Home 实现 TODO](docs/ai-home-implementation-todo.md)。
 
+### Makers Agent
+
+Phase 4 已实现 EdgeOne Makers Agent 入口、密封内部身份上下文、会话存储、幂等执行和 `list_scenes` / `activate_scene` 两个受控工具。Agent 请求不是公开 Web API；后续 Web Chat API 会先校验小米登录、家庭归属和用户配额，再携带内部鉴权调用 Agent。
+
+- 模型只看到场景别名、名称和描述；Gateway Key、小米会话、真实场景 ID、DID 和原始用户 ID 不进入模型上下文。
+- `AI_AGENT_INTERNAL_SECRET`：Web API 调用 Agent 的内部 Bearer Secret，每个部署环境独立，至少 32 个字符。
+- `AI_SCENE_APPROVED_IDS`：逗号分隔的低风险手动场景 ID 审核名单；默认为空，任何场景都不会被执行。
+- 连续对话由 Makers Agent 的 `Makers-Conversation-Id` 和服务端 principal/home 派生的存储键隔离。
+- 副作用必须携带 Idempotency-Key；相同请求只执行一次，不同请求复用同一 key 会返回冲突。
+- stop 请求按官方 contract 使用 body 中的 `conversation_id`，不读取同名 Header，并调用运行时 `abortActiveRun`。
+
 ### `AI_PRINCIPAL_SECRET`
 
 必填于后续 AI Home 路径。服务端使用 HMAC-SHA256 从小米会话中的 `userId` 派生 `usr_` 前缀的 principalId。

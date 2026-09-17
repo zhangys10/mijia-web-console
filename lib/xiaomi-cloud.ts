@@ -201,15 +201,19 @@ async function sessionKey(secret = process.env.XIAOMI_SESSION_SECRET) {
   return crypto.subtle.importKey("raw", keyBytes as BufferSource, "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 
-export async function seal(value: XiaomiQrState | XiaomiSession) {
-  const key = await sessionKey();
+export async function sealWithSecret(value: object, secret?: string) {
+  const key = await sessionKey(secret);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const data = encoder.encode(JSON.stringify(value));
   const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data));
   return `${bytesToBase64(iv)}.${bytesToBase64(encrypted)}`;
 }
 
-export async function unsealWithSecret<T extends XiaomiQrState | XiaomiSession>(value: string, secret?: string): Promise<T> {
+export async function seal(value: object) {
+  return sealWithSecret(value);
+}
+
+export async function unsealWithSecret<T>(value: string, secret?: string): Promise<T> {
   const [iv, payload] = value.split(".");
   if (!iv || !payload) throw new Error("INVALID_SESSION");
   const key = await sessionKey(secret);
@@ -217,7 +221,7 @@ export async function unsealWithSecret<T extends XiaomiQrState | XiaomiSession>(
   return JSON.parse(decoder.decode(plain)) as T;
 }
 
-export async function unseal<T extends XiaomiQrState | XiaomiSession>(value: string): Promise<T> {
+export async function unseal<T>(value: string): Promise<T> {
   return unsealWithSecret<T>(value);
 }
 
