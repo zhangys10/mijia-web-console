@@ -92,6 +92,12 @@ Phase 1 只落地新的 Gateway Provider 与服务端配置：Provider 不接受
 - [x] 模型不在 allowlist 时调用前失败。
 - [x] usage 正常与缺失路径均有测试。
 
+### 人工验证
+
+- [x] 2026-09-17 使用本地服务端环境完成一次真实 Gateway smoke 请求；模型返回 `no_action`，未执行任何场景。
+- [x] 上游返回实际 `prompt/completion/total` usage，未触发估算路径。
+- [x] 验证输出不包含 Gateway Key 或完整上游响应。
+
 ## 5. Phase 2：可信 Principal
 
 建议文件：
