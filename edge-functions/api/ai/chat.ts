@@ -40,7 +40,7 @@ export function createChatHandler(dependencies: ChatHandlerDependencies = {}) {
         now: dependencies.now,
       });
       const agent = new MakersAgentClient({
-        baseUrl: new URL("/", context.request.url).toString(),
+        baseUrl: context.env.AI_AGENT_BASE_URL || new URL("/", context.request.url).toString(),
         internalSecret: context.env.AI_AGENT_INTERNAL_SECRET,
         fetchImpl: dependencies.fetchImpl,
       });

@@ -197,6 +197,10 @@ export class MakersAgentClient implements WebAgentClient {
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: MakersAgentClientOptions) {
+    const endpoint = new URL(options.baseUrl);
+    if (!['https:', 'http:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+      throw new AgentClientError("AI_AGENT_UNAVAILABLE", "Agent URL 配置无效", 502);
+    }
     this.baseUrl = options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`;
     this.internalSecret = options.internalSecret;
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -210,6 +214,7 @@ export class MakersAgentClient implements WebAgentClient {
     try {
       response = await this.fetchImpl(new URL(path, this.baseUrl), {
         method: "POST",
+        redirect: "error",
         headers: {
           "Content-Type": "application/json",
           "Makers-Conversation-Id": conversationId,
