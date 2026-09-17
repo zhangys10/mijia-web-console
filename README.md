@@ -83,6 +83,16 @@ AI Home 正在从“用户自带模型 Key 的 Siri PoC”迁移到“EdgeOne Ma
 
 Phase 0 已冻结 Web Chat、Agent 内部请求、错误码、Preview 策略和人工验证门禁。目标 EdgeOne 项目启用 Agents 且批准模型 ID 经人工验证后，才进入 Gateway Provider 实现。
 
+### `AI_GATEWAY_API_KEY` / `AI_GATEWAY_BASE_URL` / `AI_GATEWAY_MODEL`
+
+AI Gateway Provider 必需的三个服务端变量，由 EdgeOne 项目环境注入，客户端和请求体不提供任何 Gateway 凭据。
+
+- `AI_GATEWAY_ALLOWED_MODELS`：逗号分隔的模型 allowlist，缺省只允许当前 `AI_GATEWAY_MODEL`。
+- `AI_GATEWAY_TIMEOUT_MS`：上游调用超时，默认 `5000`，范围 `1–60000`。
+- `AI_GATEWAY_MAX_OUTPUT_TOKENS`：单次最大输出 Token，默认 `256`，范围 `1–4096`。
+- `AI_GATEWAY_API_KEY` 只进入上游 `Authorization: Bearer` 头；错误、日志和客户端响应不得包含该值。
+- 模型固定使用非思考模式（`enable_thinking=false`），不设源码默认模型。
+
 详细设计见 [AI Home PoC 设计](docs/ai-home-poc-design.md)，冻结接口见 [AI Home Phase 0 Contract](docs/ai-home-phase-0-contract.md)，实施顺序见 [AI Home 实现 TODO](docs/ai-home-implementation-todo.md)。
 
 ## 常用命令

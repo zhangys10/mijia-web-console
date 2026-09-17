@@ -73,22 +73,24 @@ tests/ai-makers-gateway-provider.test.mjs
 
 ### TODO
 
-- [ ] 通过 OpenAI 兼容协议接入 `AI_GATEWAY_BASE_URL`。
-- [ ] 只从服务端 env/context 读取 `AI_GATEWAY_API_KEY`。
-- [ ] 实现模型 allowlist、超时、最大输出 Token 和非思考模式配置。
-- [ ] 解析 Gateway 返回的 prompt/completion/total token usage。
-- [ ] usage 缺失时提供保守估算并标记 `estimated=true`。
-- [ ] 统一映射 401/403、429、timeout 和 5xx。
-- [ ] 清理错误对象，禁止序列化 Authorization Header。
-- [ ] 删除用户 API Key 校验和请求级模型凭据依赖。
+- [x] 通过 OpenAI 兼容协议接入 `AI_GATEWAY_BASE_URL`。
+- [x] 只从服务端 env/context 读取 `AI_GATEWAY_API_KEY`。
+- [x] 实现模型 allowlist、超时、最大输出 Token 和非思考模式配置。
+- [x] 解析 Gateway 返回的 prompt/completion/total token usage。
+- [x] usage 缺失时提供保守估算并标记 `estimated=true`。
+- [x] 统一映射 401/403、429、timeout 和 5xx。
+- [x] 清理错误对象，禁止序列化 Authorization Header。
+- [x] 删除用户 API Key 校验和请求级模型凭据依赖。
+
+Phase 1 只落地新的 Gateway Provider 与服务端配置：Provider 不接受请求级凭据，也不调用用户 Key 校验。旧 `/api/ai/command` 兼容入口按 Phase 0 决策保持关闭，待 Phase 7 统一迁移到 `AiAgentService` 后移除。
 
 ### 测试
 
-- [ ] Provider 请求指向配置的 Gateway URL。
-- [ ] API Key 只出现在上游 Authorization Header。
-- [ ] 日志、异常和响应不包含 Gateway Key。
-- [ ] 模型不在 allowlist 时调用前失败。
-- [ ] usage 正常与缺失路径均有测试。
+- [x] Provider 请求指向配置的 Gateway URL。
+- [x] API Key 只出现在上游 Authorization Header。
+- [x] 日志、异常和响应不包含 Gateway Key。
+- [x] 模型不在 allowlist 时调用前失败。
+- [x] usage 正常与缺失路径均有测试。
 
 ## 5. Phase 2：可信 Principal
 

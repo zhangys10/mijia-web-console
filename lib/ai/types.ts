@@ -3,6 +3,13 @@ export type ChatMessage = {
   content: string;
 };
 
+export type ModelUsage = {
+  completionTokens: number;
+  estimated: boolean;
+  promptTokens: number;
+  totalTokens: number;
+};
+
 export type IntentDecision =
   | {
       type: "tool_call";
@@ -11,6 +18,7 @@ export type IntentDecision =
       model: string;
       latencyMs: number;
       llmOutput?: string;
+      usage?: ModelUsage;
     }
   | {
       type: "no_action";
@@ -18,6 +26,7 @@ export type IntentDecision =
       model: string;
       latencyMs: number;
       llmOutput?: string;
+      usage?: ModelUsage;
     };
 
 export type RawIntentDecision =
@@ -28,6 +37,7 @@ export type RawIntentDecision =
       model: string;
       latencyMs: number;
       llmOutput?: string;
+      usage?: ModelUsage;
     }
   | {
       type: "no_action";
@@ -35,6 +45,7 @@ export type RawIntentDecision =
       model: string;
       latencyMs: number;
       llmOutput?: string;
+      usage?: ModelUsage;
     };
 
 export type AiCommandResponse = {
