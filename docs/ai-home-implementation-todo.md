@@ -139,28 +139,28 @@ tests/ai-quota-*.test.mjs
 
 ### 3.1 策略 TODO
 
-- [ ] 读取并 schema 校验默认分钟请求数、日请求数、月 Token 数。
-- [ ] 解析 `AI_QUOTA_UNLIMITED_IDS`。
-- [ ] 解析 `AI_QUOTA_OVERRIDES_JSON`。
-- [ ] 实现固定优先级：unlimited > override > default。
-- [ ] 配置非法时 fail fast，不静默使用无限额度。
-- [ ] unlimited 用户仍写入 metrics。
+- [x] 读取并 schema 校验默认分钟请求数、日请求数、月 Token 数。
+- [x] 解析 `AI_QUOTA_UNLIMITED_IDS`。
+- [x] 解析 `AI_QUOTA_OVERRIDES_JSON`。
+- [x] 实现固定优先级：unlimited > override > default。
+- [x] 配置非法时 fail fast，不静默使用无限额度。
+- [x] unlimited 用户仍写入 metrics。
 
 ### 3.2 Store TODO
 
-- [ ] 定义 `reserve/commit/release/getSnapshot` 接口。
-- [ ] 本地和单元测试实现 InMemory adapter。
+- [x] 定义 `reserve/commit/release/getSnapshot` 接口。
+- [x] 本地和单元测试实现 InMemory adapter。
 - [ ] 在 EdgeOne 控制台启用 KV、创建 `ai-quota` namespace，并绑定全局变量 `ai_quota_kv`。
-- [ ] 在 Edge Function 中直接使用绑定的全局变量，禁止错误地读取 `context.env.ai_quota_kv`。
-- [ ] 实现 EdgeOne KV adapter；Agent/Node Function 不直接访问 KV。
-- [ ] 明确实现为软限额：KV 最终一致性最长约 60 秒，且没有原子自增/CAS。
-- [ ] key 使用 `q_v1_<env>_<principalKey>_<period>_<date>`，只包含字母、数字和下划线。
-- [ ] `principalKey` 使用 principalId 的 SHA-256 十六进制截断值，不包含原始 userId。
-- [ ] Value 记录 requests、prompt/completion/estimated tokens 和 updatedAt。
+- [x] 在 Edge Function 中直接使用绑定的全局变量，禁止错误地读取 `context.env.ai_quota_kv`。
+- [x] 实现 EdgeOne KV adapter；Agent/Node Function 不直接访问 KV。
+- [x] 明确实现为软限额：KV 最终一致性最长约 60 秒，且没有原子自增/CAS。
+- [x] key 使用 `q_v1_<env>_<principalKey>_<period>_<date>`，只包含字母、数字和下划线。
+- [x] `principalKey` 使用 principalId 的 SHA-256 十六进制截断值，不包含原始 userId。
+- [x] Value 记录 requests、prompt/completion/estimated tokens 和 updatedAt。
 - [ ] 不依赖未公开的 KV TTL；按日/月 key 自然换窗并增加旧 key 清理任务。
 - [ ] 以真实多节点并发测试量化 60 秒传播窗口内的最大超用量。
 - [ ] 根据测试结果为默认额度设置安全余量。
-- [ ] 周期按 `Asia/Shanghai` 计算并测试月末、闰日和 DST 无关性。
+- [x] 周期按 `Asia/Shanghai` 计算并测试月末、闰日和 DST 无关性。
 
 ### 3.3 API TODO
 
@@ -168,17 +168,19 @@ tests/ai-quota-*.test.mjs
 - [ ] 成功后按 actual usage commit。
 - [ ] 失败、取消或超时 release/部分结算。
 - [ ] 配额不足返回 429 `AI_QUOTA_EXCEEDED` 和恢复时间。
-- [ ] Store 故障按 `AI_QUOTA_FAIL_MODE` 处理，生产默认 closed。
-- [ ] 增加 `GET /api/ai/quota`，只返回当前用户摘要。
+- [x] Store 故障按 `AI_QUOTA_FAIL_MODE` 处理，生产默认 closed。
+- [x] 增加 `GET /api/ai/quota`，只返回当前用户摘要。
+
+Agent 调用生命周期中的 `reserve/commit/release` 与 429 映射在 Phase 4 接入 `AiAgentService` 时完成。EdgeOne KV namespace 创建、全局绑定和真实多节点传播窗口测试需要目标项目环境人工执行。
 
 ### 测试
 
-- [ ] 默认、覆盖和 unlimited 三种策略。
-- [ ] 客户端伪造 ID 不影响配额主体。
-- [ ] 并发测试明确记录软限额偏差，不能断言 EdgeOne KV 提供硬限额。
-- [ ] Token 估算和实际 usage 差额正确结算。
-- [ ] 用户 A 无法读取用户 B 的 quota snapshot。
-- [ ] Store 故障不会无意放开生产额度。
+- [x] 默认、覆盖和 unlimited 三种策略。
+- [x] 客户端伪造 ID 不影响配额主体。
+- [x] 并发测试明确记录软限额偏差，不能断言 EdgeOne KV 提供硬限额。
+- [x] Token 估算和实际 usage 差额正确结算。
+- [x] 用户 A 无法读取用户 B 的 quota snapshot。
+- [x] Store 故障不会无意放开生产额度。
 
 ## 7. Phase 4：Makers Agent
 

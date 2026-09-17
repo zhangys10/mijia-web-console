@@ -106,6 +106,19 @@ AI Gateway Provider 必需的三个服务端变量，由 EdgeOne 项目环境注
 - Secret 轮换会改变同一用户派生出的 principalId，历史配额与会话需要迁移或重置。
 - PoC 默认不轮换，如确需轮换请提前同步配额迁移方案。
 
+### AI Quota
+
+Phase 3 提供 `GET /api/ai/quota`（EdgeOne Edge Function），只返回当前 Cookie 会话对应 principal 的额度摘要。
+
+- `AI_QUOTA_ENABLED`：默认 `true`。
+- `AI_QUOTA_DEFAULT_REQUESTS_PER_MINUTE` / `AI_QUOTA_DEFAULT_REQUESTS_PER_DAY` / `AI_QUOTA_DEFAULT_TOKENS_PER_MONTH`：默认 `10` / `50` / `100000`。
+- `AI_QUOTA_UNLIMITED_IDS`：逗号分隔的服务端 principalId，优先级最高，仍记录 usage。
+- `AI_QUOTA_OVERRIDES_JSON`：按 principalId 覆盖部分额度，未覆盖字段继承默认值。
+- `AI_QUOTA_FAIL_MODE`：`closed`（默认）或 `open`；存储不可用时默认阻断请求。
+- `AI_QUOTA_KV_BINDING`：EdgeOne KV 全局绑定名，默认 `ai_quota_kv`；Edge Function 只从 `globalThis` 读取该绑定。
+
+EdgeOne KV 没有原子自增/CAS，且跨节点传播最长约 60 秒。日/月额度是软限额，并发或传播窗口内可能少量超额；不要将其作为精确硬限额或商业计费依据。
+
 ## 常用命令
 
 ```bash
