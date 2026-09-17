@@ -1,7 +1,7 @@
 # AI Home Agent PoC 详细设计
 
 > 项目：`mijia-web-console`  
-> 状态：Draft v0.6  
+> 状态：Phase 0 contract frozen
 > 更新日期：2026-09-17  
 > 当前目标：在 WebApp 中提供可对话的 AI 助手，统一使用 EdgeOne Makers AI Gateway，并为每个登录用户实施应用级用量配额；后续复用同一能力接入 Siri 等自动化客户端。
 
@@ -38,7 +38,9 @@ EdgeOne Makers Agents 官方文档确认：
 - 定时任务是官方列出的适用场景之一；
 - 免费额度及平台限制是账号级、所有项目共享，不能替代本项目的用户级配额。
 
-参考：[EdgeOne Makers Agents 概览](https://cloud.tencent.com/document/product/1552/132759)
+快速入门进一步确认：已有项目需使用 `agents/<name>/index.ts` 文件即路由结构并导出 `onRequest(context)`；连续对话必须携带格式受限的 `Makers-Conversation-Id`；Agent 运行参数由根目录 `edgeone.json` 的 `agents` 字段声明。详见 [Phase 0 Contract](./ai-home-phase-0-contract.md) 和 [EdgeOne Makers Agents 快速开始](https://cloud.tencent.com/document/product/1552/132786)。
+
+当前只确认平台公开能力，目标 EdgeOne 项目是否已启用 Agents、项目实际可用模型 ID 仍需在 Phase 0 merge 后人工验证。未经验证的模型名不得成为源码默认值。
 
 ## 2. 目标与非目标
 
@@ -181,6 +183,7 @@ flowchart TD
 AI_GATEWAY_API_KEY=<platform-injected>
 AI_GATEWAY_BASE_URL=https://ai-gateway.edgeone.link/v1
 AI_GATEWAY_MODEL=<approved-fast-model>
+AI_AGENT_INTERNAL_SECRET=<environment-specific-secret>
 
 AI_PRINCIPAL_SECRET=<high-entropy-secret>
 AI_QUOTA_ENABLED=true
@@ -507,6 +510,7 @@ AI_GATEWAY_BASE_URL=https://ai-gateway.edgeone.link/v1
 AI_GATEWAY_MODEL=<approved-fast-model>
 AI_GATEWAY_TIMEOUT_MS=5000
 AI_GATEWAY_MAX_OUTPUT_TOKENS=256
+AI_AGENT_INTERNAL_SECRET=<environment-specific-secret>
 
 AI_PRINCIPAL_SECRET=<environment-specific-secret>
 AI_QUOTA_ENABLED=true
@@ -568,6 +572,10 @@ PoC 到 P4 即形成可用闭环；P5 不阻塞网页测试。
 | ADR-025 | 长期习惯默认只产生建议，不自动执行 | 已确认 |
 | ADR-026 | PoC 配额账本使用 EdgeOne KV | 已确认 |
 | ADR-027 | 接受 KV 最终一致性带来的软配额窗口 | 已确认 |
+| ADR-028 | Web Chat、Agent 内部请求和错误码按 Phase 0 Contract 冻结 | 已确认 |
+| ADR-029 | 旧用户模型 Key 方案 superseded，迁移期间 `/api/ai/command` 默认关闭 | 已确认 |
+| ADR-030 | Vercel Preview 只读，不调用真实 Agent 或米家场景 | 已确认 |
+| ADR-031 | 平台 `conversation_id` 由服务端派生，浏览器只持有不透明句柄 | 已确认 |
 
 ## 16. 尚待实现时验证
 

@@ -77,25 +77,13 @@ npm run dev
 
 ### AI Home PoC
 
-PoC 提供 `POST /api/ai/command`，用于 iPhone 快捷指令触发已审核的米家“回家模式”场景。请求必须在 `Authorization: Bearer <token>` 中携带加密自包含的 Automation Token，并在触发有副作用操作时提供 `Idempotency-Key`。服务端只向 LLM 暴露 `activate_scene` 工具，并在执行前做工具名、参数、场景白名单、用户凭据隔离与幂等校验。
+AI Home 正在从“用户自带模型 Key 的 Siri PoC”迁移到“EdgeOne Makers Agent + 项目级 AI Gateway + 用户配额”的 Web 助手。目标方案不要求用户输入或保存模型 Key，Gateway 凭据只通过服务端项目环境注入。
 
-扫码登录后，可在侧边栏点击「设置」进入 AI 自动化配置页（或直接访问 `/ai/settings`）输入个人 DashScope / 通义千问 API Key，生成专属的加密 Automation Token。该令牌使用 AES-256-GCM 封装个人模型 Key 和米家会话，服务端不持久化用户 Key，确保多用户间的额度与凭据物理隔离。将该令牌粘贴到 iPhone 快捷指令的 `Authorization` 标头即可完成配置。
+当前仓库仍保留旧 `/api/ai/command`、Automation Token 和 AI 设置页面作为待迁移兼容实现；它们不代表新架构 contract。新部署在迁移完成前应设置 `AI_COMMAND_ENABLED=false`，不要向用户开放旧模型 Key 流程。
 
-推荐配置：
+Phase 0 已冻结 Web Chat、Agent 内部请求、错误码、Preview 策略和人工验证门禁。目标 EdgeOne 项目启用 Agents 且批准模型 ID 经人工验证后，才进入 Gateway Provider 实现。
 
-```text
-AI_COMMAND_ENABLED=true
-AI_AUTOMATION_TOKEN_SECRET=<32-byte-or-longer-random-secret>
-AI_AUTOMATION_TOKEN_KEY_ID=key-2026-01
-AI_SCENE_HOME_ID=<home id>
-AI_SCENE_HOME_SCENE_ID=<audited Mi Home scene id>
-LLM_TIMEOUT_MS=3000
-LLM_ENABLE_THINKING=false
-AI_CONVERSATION_MAX_TURNS=5
-AI_DETERMINISTIC_FALLBACK=true
-```
-
-详细设计、Siri 快捷指令步骤、测试集和架构决策见 [AI Home PoC 设计](docs/ai-home-poc-design.md)。
+详细设计见 [AI Home PoC 设计](docs/ai-home-poc-design.md)，冻结接口见 [AI Home Phase 0 Contract](docs/ai-home-phase-0-contract.md)，实施顺序见 [AI Home 实现 TODO](docs/ai-home-implementation-todo.md)。
 
 ## 常用命令
 

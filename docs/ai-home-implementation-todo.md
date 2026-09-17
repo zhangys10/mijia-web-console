@@ -4,6 +4,8 @@
 > 状态：Ready for implementation  
 > 更新日期：2026-09-17
 
+Phase 0 的冻结 contract 见 [AI Home Phase 0 Contract](./ai-home-phase-0-contract.md)。后续阶段必须先完成人工门禁，不得跳过项目可用性和模型 ID 验证。
+
 ## 1. 后续 Agent 开始前必读
 
 1. 阅读根目录 `AGENTS.md`、`README.md`。
@@ -44,19 +46,20 @@ flowchart TD
 
 ### TODO
 
-- [ ] 确认 Makers Agents 在当前 EdgeOne 项目可用。
-- [ ] 确认 `AI_GATEWAY_API_KEY`、`AI_GATEWAY_BASE_URL` 注入方式。
-- [ ] 查询并记录首期批准的快速模型名称，不硬编码未经验证的模型 ID。
-- [ ] 固定 Web Chat API、Agent 内部请求和错误码。
-- [ ] 将旧“每用户自带 LLM Key”标记为 superseded。
-- [ ] 决定现有 `/api/ai/command` 保留、迁移或临时关闭方式。
-- [ ] 确认 Vercel Preview 使用 Mock Agent 还是只读预览。
+- [x] 根据官方快速开始确认 Makers Agents 的目录、入口、会话头和部署配置 contract。
+- [ ] 在目标 EdgeOne 项目人工确认 Agents 可用，并完成 `edgeone makers link`。
+- [x] 确认 `AI_GATEWAY_API_KEY`、`AI_GATEWAY_BASE_URL` 通过服务端项目环境注入，Agent 从 `context.env` 读取。
+- [ ] 查询并记录当前项目首期批准的快速模型名称，不硬编码官方示例或未经验证的模型 ID。
+- [x] 固定 Web Chat API、Agent 内部请求和错误码。
+- [x] 将旧“每用户自带 LLM Key”标记为 superseded。
+- [x] 保留 `/api/ai/command` 作为旧兼容入口，迁移完成前新部署默认关闭。
+- [x] Vercel Preview 使用只读 mock，不调用 Agent 或真实设备。
 
 ### 验收
 
-- [ ] 文档与源码注释不再要求用户提供模型 Key。
-- [ ] Gateway Key 不出现在客户端 contract。
-- [ ] 未验证的模型名不进入生产默认配置。
+- [x] 目标文档不再要求用户提供模型 Key，并明确旧实现仅为待迁移兼容路径。
+- [x] Gateway Key 不出现在客户端 contract。
+- [x] 未验证的模型名不进入生产默认配置。
 
 ## 4. Phase 1：Gateway Provider
 
@@ -304,6 +307,7 @@ AI_EXTERNAL_API_ENABLED=false
 AI_GATEWAY_API_KEY=<platform-injected>
 AI_GATEWAY_BASE_URL=https://ai-gateway.edgeone.link/v1
 AI_GATEWAY_MODEL=<verified-model-id>
+AI_AGENT_INTERNAL_SECRET=<environment-specific-secret>
 AI_PRINCIPAL_SECRET=<environment-specific-secret>
 AI_QUOTA_ENABLED=true
 AI_QUOTA_DEFAULT_REQUESTS_PER_MINUTE=10
