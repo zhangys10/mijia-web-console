@@ -25,6 +25,7 @@ export interface AgentConversationStore {
     conversationId: string,
     input: { metadata: Record<string, unknown> },
   ): Promise<void>;
+  deleteConversation(conversationId: string): Promise<boolean>;
 }
 
 export class InMemoryAgentConversationStore implements AgentConversationStore {
@@ -59,5 +60,11 @@ export class InMemoryAgentConversationStore implements AgentConversationStore {
     const conversation = this.conversations.get(conversationId) ?? {};
     conversation.metadata = { ...(conversation.metadata ?? {}), ...input.metadata };
     this.conversations.set(conversationId, conversation);
+  }
+
+  async deleteConversation(conversationId: string) {
+    const deletedMessages = this.messages.delete(conversationId);
+    const deletedConversation = this.conversations.delete(conversationId);
+    return deletedMessages || deletedConversation;
   }
 }

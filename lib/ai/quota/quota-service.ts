@@ -40,6 +40,7 @@ function validateActualUsage(usage: QuotaActualUsage) {
     || !Number.isSafeInteger(usage.completionTokens)
     || usage.promptTokens < 0
     || usage.completionTokens < 0
+    || (usage.estimated !== undefined && typeof usage.estimated !== "boolean")
   ) {
     throw new QuotaServiceError("AI_QUOTA_USAGE_INVALID", "实际模型 usage 必须是非负安全整数");
   }

@@ -136,8 +136,12 @@ export class InMemoryQuotaStore implements QuotaStore {
     for (const key of [stored.keys.minute, stored.keys.day, stored.keys.month]) {
       const current = this.usage(key, now);
       current.estimatedTokens = Math.max(0, current.estimatedTokens - stored.estimatedTokens);
-      current.promptTokens += usage.promptTokens;
-      current.completionTokens += usage.completionTokens;
+      if (usage.estimated) {
+        current.estimatedTokens += usage.promptTokens + usage.completionTokens;
+      } else {
+        current.promptTokens += usage.promptTokens;
+        current.completionTokens += usage.completionTokens;
+      }
       current.updatedAt = updatedAt;
     }
     this.leases.delete(lease.id);

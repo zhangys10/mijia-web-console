@@ -37,6 +37,7 @@ export type QuotaLease = {
 export type QuotaActualUsage = {
   promptTokens: number;
   completionTokens: number;
+  estimated?: boolean;
 };
 
 export type QuotaSnapshot = {

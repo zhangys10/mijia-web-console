@@ -2,8 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { onRequest as agentOnRequest } from "../agents/ai-home/index.ts";
+import { onRequest as deleteAgentConversation } from "../agents/ai-home/delete.ts";
 import { onRequest as stopAgent } from "../agents/ai-home/stop.ts";
-import { AiAgentError, AiAgentService } from "../lib/ai/agent/ai-agent-service.ts";
+import {
+  AiAgentError,
+  AiAgentService,
+  scopedAgentConversationId,
+} from "../lib/ai/agent/ai-agent-service.ts";
 import { InMemoryAgentConversationStore } from "../lib/ai/agent/agent-store.ts";
 import {
   AgentIdempotencyStore,
@@ -390,6 +395,7 @@ function agentContext(overrides = {}) {
       ...overrides.env,
     },
     conversation_id: overrides.conversation_id ?? conversationId,
+    store: overrides.store,
     utils: overrides.utils,
   };
 }
@@ -489,4 +495,54 @@ test("stop endpoint follows the official header and body contract and aborts the
     utils: {},
   }));
   assert.equal(unavailableResponse.status, 503);
+});
+
+test("delete endpoint verifies the binding and clears only the scoped conversation", async () => {
+  const store = new InMemoryAgentConversationStore();
+  const scopedId = await scopedAgentConversationId(conversationId, principalId, homeId);
+  const otherScopedId = await scopedAgentConversationId(conversationId, otherPrincipalId, homeId);
+  await store.appendMessage({ conversationId: scopedId, role: "user", content: "需要删除" });
+  await store.appendMessage({ conversationId: otherScopedId, role: "user", content: "必须保留" });
+  const sessionBinding = await createAgentBinding({
+    principalId,
+    homeId,
+    scopes: ["ai:chat"],
+    session,
+    issuedAt: now - 60_000,
+    expiresAt: now + 300_000,
+  }, sessionSecret);
+  const response = await deleteAgentConversation(agentContext({
+    request: {
+      body: {
+        requestId,
+        principalId,
+        homeId,
+        scopes: ["ai:chat"],
+        sessionBinding,
+      },
+      headers: { Authorization: `Bearer ${internalSecret}` },
+    },
+    store,
+  }));
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, deleted: true, requestId });
+  assert.deepEqual(await store.getMessages({ conversationId: scopedId, limit: 10 }), []);
+  assert.equal((await store.getMessages({ conversationId: otherScopedId, limit: 10 })).length, 1);
+
+  const mismatch = await deleteAgentConversation(agentContext({
+    request: {
+      body: {
+        requestId,
+        principalId: otherPrincipalId,
+        homeId,
+        scopes: ["ai:chat"],
+        sessionBinding,
+      },
+      headers: { Authorization: `Bearer ${internalSecret}` },
+    },
+    store,
+  }));
+  assert.equal(mismatch.status, 403);
+  assert.equal((await mismatch.json()).code, "AI_AGENT_BINDING_MISMATCH");
 });

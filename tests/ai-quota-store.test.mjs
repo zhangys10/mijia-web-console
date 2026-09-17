@@ -62,6 +62,19 @@ test("InMemoryQuotaStore reserves, commits actual usage, and releases cleanly", 
   assert.equal(snapshot.estimatedTokensThisMonth, 0);
   assert.equal(snapshot.totalTokensThisMonth, 16);
 
+  const estimatedLease = await store.reserve({
+    principalId: "usr_estimated_user",
+    estimatedTokens: 20,
+    limits,
+    unlimited: false,
+  });
+  await store.commit(estimatedLease, { promptTokens: 12, completionTokens: 4, estimated: true });
+  const estimated = await store.getSnapshot("usr_estimated_user");
+  assert.equal(estimated.promptTokensThisMonth, 0);
+  assert.equal(estimated.completionTokensThisMonth, 0);
+  assert.equal(estimated.estimatedTokensThisMonth, 16);
+  assert.equal(estimated.totalTokensThisMonth, 16);
+
   const releaseLease = await store.reserve({
     principalId: "usr_release_user",
     estimatedTokens: 10,

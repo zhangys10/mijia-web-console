@@ -130,6 +130,47 @@ Phase 3 提供 `GET /api/ai/quota`（EdgeOne Edge Function），只返回当前 
 
 EdgeOne KV 没有原子自增/CAS，且跨节点传播最长约 60 秒。日/月额度是软限额，并发或传播窗口内可能少量超额；不要将其作为精确硬限额或商业计费依据。
 
+### AI Web Chat API
+
+Phase 5 提供 Cookie 鉴权的非流式 Web Chat API，浏览器不提交 principal、米家凭据、Gateway Key、Agent 内部 Secret 或原始 Makers conversation ID。
+
+- `POST /api/ai/conversations`：body 为 `{ "homeId": "..." }`，签发绑定当前登录用户和家庭的不透明 `conversationId`。
+- `POST /api/ai/chat`：body 为 `{ "conversationId"?, "homeId", "message", "idempotencyKey"? }`，统一执行 principal 派生、家庭校验、配额 reserve、Agent 调用和 usage commit/release。
+- `DELETE /api/ai/conversations/:conversationId`：只清除当前用户、当前家庭对应的 Agent 对话记忆，不修改米家设备、场景或配额账本。
+- 未提供 `idempotencyKey` 时，请求只拥有 `ai:chat` scope，不能执行 `activate_scene`；需要设备副作用的请求必须提供 16–128 字符的幂等键。
+- 所有响应均为 JSON 并设置 `Cache-Control: no-store`；首期不提供 SSE。
+
+Web API 通过同项目 `/ai-home` 和 `/ai-home/delete` Agent 路由通信，内部请求使用 `Makers-Conversation-Id` 与 `Authorization: Bearer <AI_AGENT_INTERNAL_SECRET>`。客户端响应不会返回 Agent usage 明细、真实场景 ID、DID、原始 Xiaomi userId 或任何 Secret。
+
+EdgeOne KV 审批完成前，本地自动化测试使用 `InMemoryQuotaStore`。如果只做本地 Agent/Web API 联调，可以在本地临时设置 `AI_QUOTA_FAIL_MODE=open`；生产环境仍应保持默认 `closed`，不得在 KV 未绑定时继续产生共享模型费用。
+
+本地人工验证建议使用 `edgeone makers dev` 启动同项目 Edge Functions 与 Agent，并准备已登录浏览器中的 `xiaomi_session` Cookie。以下命令中的 Secret 和 Cookie 只应保存在当前终端，不要写入仓库或 shell history：
+
+```bash
+export BASE=http://localhost:8088
+export COOKIE='xiaomi_session=<local-cookie>'
+
+CONV="$(curl -fsS -X POST "$BASE/api/ai/conversations" \
+  -H 'Content-Type: application/json' \
+  -H "Cookie: $COOKIE" \
+  --data '{"homeId":"<your-home-id>"}' | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).conversationId')"
+
+curl -i -X POST "$BASE/api/ai/chat" \
+  -H 'Content-Type: application/json' \
+  -H "Cookie: $COOKIE" \
+  --data "{\"conversationId\":\"$CONV\",\"homeId\":\"<your-home-id>\",\"message\":\"查看可用场景\"}"
+
+curl -i -X POST "$BASE/api/ai/chat" \
+  -H 'Content-Type: application/json' \
+  -H "Cookie: $COOKIE" \
+  --data "{\"conversationId\":\"$CONV\",\"homeId\":\"<your-home-id>\",\"message\":\"执行回家模式\",\"idempotencyKey\":\"manual-phase5-$(date +%s)\"}"
+
+curl -i -X DELETE "$BASE/api/ai/conversations/$CONV" \
+  -H "Cookie: $COOKIE"
+```
+
+预期结果：创建会话返回 201；聊天返回 200、相同 `conversationId` 和脱敏 quota；副作用请求只执行审核名单中的低风险场景；删除返回 200，随后使用同一句柄会建立空的 Agent 对话历史。KV 未绑定且 `AI_QUOTA_FAIL_MODE=closed` 时，聊天应返回 503 `AI_QUOTA_STORE_UNAVAILABLE`。
+
 ## 常用命令
 
 ```bash

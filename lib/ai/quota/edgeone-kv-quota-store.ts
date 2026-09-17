@@ -190,8 +190,12 @@ export class EdgeOneKvQuotaStore implements QuotaStore {
     for (const key of [lease.keys.minute, lease.keys.day, lease.keys.month]) {
       const current = await this.readUsage(key, now);
       current.estimatedTokens = Math.max(0, current.estimatedTokens - lease.estimatedTokens);
-      current.promptTokens += usage.promptTokens;
-      current.completionTokens += usage.completionTokens;
+      if (usage.estimated) {
+        current.estimatedTokens += usage.promptTokens + usage.completionTokens;
+      } else {
+        current.promptTokens += usage.promptTokens;
+        current.completionTokens += usage.completionTokens;
+      }
       current.updatedAt = updatedAt;
       await this.writeUsage(key, current);
     }

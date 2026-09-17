@@ -231,22 +231,33 @@ Phase 4 只实现 Agent Runtime、可信内部请求和受控工具。Web API、
 建议文件：
 
 ```text
-app/api/ai/chat/route.ts
-app/api/ai/quota/route.ts
-app/api/ai/conversations/route.ts
+edge-functions/api/ai/chat.ts
+edge-functions/api/ai/quota.ts
+edge-functions/api/ai/conversations.ts
+edge-functions/api/ai/conversations/[conversationId].ts
 ```
+
+Phase 5 最终使用 Edge Functions 作为 Web API 边界，因为 EdgeOne KV 绑定只能由 Edge Functions 读取。请求编排、会话句柄和 Agent HTTP 适配器仍位于 `lib/ai/web-chat/`，路由文件只处理 Cookie、请求大小、环境绑定和响应映射。
 
 ### TODO
 
-- [ ] 只接受有效 `xiaomi_session` Cookie。
-- [ ] 校验 message、homeId、conversationId 和请求大小。
-- [ ] 校验 homeId 属于当前登录用户。
-- [ ] 统一执行 principal → quota reserve → agent → usage commit/release 流程。
-- [ ] 配额不足返回 429 `AI_QUOTA_EXCEEDED` 和恢复时间。
-- [ ] 响应返回 requestId、conversationId、message、tool result 和 quota summary。
-- [ ] 明确错误码：未登录、额度不足、Agent 失败、Gateway 失败、场景失败。
-- [ ] 响应设置 `Cache-Control: no-store`。
-- [ ] 首期可使用非流式响应；SSE 必须作为独立增量任务。
+- [x] 只接受有效 `xiaomi_session` Cookie。
+- [x] 校验 message、homeId、conversationId 和请求大小。
+- [x] 校验 homeId 属于当前登录用户。
+- [x] 统一执行 principal → quota reserve → agent → usage commit/release 流程。
+- [x] 配额不足返回 429 `AI_QUOTA_EXCEEDED` 和恢复时间。
+- [x] 响应返回 requestId、conversationId、message、tool result 和 quota summary。
+- [x] 明确错误码：未登录、额度不足、Agent 失败、Gateway 失败、场景失败。
+- [x] 响应设置 `Cache-Control: no-store`。
+- [x] 首期可使用非流式响应；SSE 必须作为独立增量任务。
+
+实现补充：
+
+- `POST /api/ai/conversations` 签发符合 Makers 格式、并通过 HMAC 绑定当前 principal/home 的不透明句柄；客户端不能自报平台会话 ID。
+- `DELETE /api/ai/conversations/:conversationId` 重新校验当前登录用户及家庭，并通过内部 `agents/ai-home/delete.ts` 删除对应的 scoped Agent conversation。
+- 未提供 `idempotencyKey` 的聊天请求只签发 `ai:chat` scope；即使模型尝试调用 `activate_scene` 也会被 Agent 拒绝。
+- Agent usage 缺失或标记为估算时，配额账本只记录估算 Token，不伪装为精确 prompt/completion usage。
+- 2026-09-17 EdgeOne KV 审批仍在进行；内存 Store 的自动化测试已覆盖 reserve/commit/release，真实 KV 绑定和 Web API 正向人工验证继续保留为门禁。
 
 ## 9. Phase 6：页面 AI 助手
 

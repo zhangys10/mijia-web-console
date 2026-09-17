@@ -97,7 +97,7 @@ function validateRunInput(input: AgentRunInput) {
   return { ...input, message };
 }
 
-async function scopedConversationId(
+export async function scopedAgentConversationId(
   conversationId: string,
   principalId: string,
   homeId: string,
@@ -147,7 +147,7 @@ export class AiAgentService {
       throw new AiAgentError("AI_AGENT_BINDING_MISMATCH", "可信上下文不匹配", 403);
     }
 
-    const scopedId = await scopedConversationId(
+    const scopedId = await scopedAgentConversationId(
       input.conversationId,
       binding.principalId,
       binding.homeId,
