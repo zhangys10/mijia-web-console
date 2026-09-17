@@ -96,7 +96,7 @@ flowchart TD
 | AI Gateway | 统一模型鉴权、模型路由 | 本项目的用户级额度与设备权限 |
 | Agent Store | 会话消息、摘要和 Checkpoint | 用户业务档案、精确计费账本 |
 | Scene Service | 场景发现、审核映射和安全执行 | 理解任意自然语言 |
-| Quota Store | 保存跨实例用量计数 | 保存模型 Key 或米家会话 |
+| EdgeOne KV Quota Store | 保存跨实例日/月用量计数 | 保存模型 Key、米家会话或提供强一致硬限额 |
 
 ## 4. 身份模型
 
@@ -202,7 +202,7 @@ AI_QUOTA_FAIL_MODE=closed
 
 ### 5.3 用量状态
 
-`env` 只保存策略，不能保存已使用次数。生产配额需要一个跨实例共享的 `QuotaStore`：
+`env` 只保存策略，不能保存已使用次数。PoC 确认使用 **EdgeOne KV** 保存跨实例用量，并通过 `QuotaStore` 接口隔离平台实现：
 
 ```ts
 interface QuotaStore {
@@ -213,14 +213,45 @@ interface QuotaStore {
 }
 ```
 
-推荐实现顺序：
+EdgeOne Makers KV 是全球分布式持久 KV，免费版文档标明每账号 1 GB、单值不超过 25 MB、最多 10 个 namespace，并在全球节点间最长约 60 秒完成同步。它仅能在 **Edge Functions** 中通过绑定的全局变量访问，不位于 `context.env`，也不能直接在 Node Functions 或 Makers Agent Runtime 中调用。
 
-1. PoC：EdgeOne 可用的共享 KV/平台存储适配器；
-2. 本地与测试：`InMemoryQuotaStore`；
-3. Vercel Preview：仅供功能预览，不宣称严格限额；
-4. 后续商业化：替换成具备原子计数、TTL 和审计能力的大陆区持久化服务。
+官方公开 API 只有 `get/put/delete/list`，没有原子自增、CAS 或事务。因此本项目接受以下 PoC 边界：
 
-不能使用浏览器 Local Storage、签名 Token 自带计数或单实例内存实现生产硬限额，因为这些方式可重放或无法跨实例同步。若目标存储不能提供原子增量/CAS，PoC 必须标注为软限额，并在并发测试中量化最大超用窗口。
+- EdgeOne KV 用于日/月累计用量和最近更新时间；
+- WebApp 的 Edge Function 配额门面在调用 Agent 前后读写 KV；
+- 分钟级突发限制同时由 EdgeOne/WAF 和单实例快速限流承担；
+- 日/月限制属于**软配额**，并发请求和 60 秒传播窗口内可能少量超用；
+- 配额配置采用保守阈值，为同步窗口预留余量；
+- 如果未来需要商业计费或严格硬限额，`QuotaStore` 必须替换为支持原子条件更新的大陆区存储，而不改变上层 API。
+
+参考：[EdgeOne Makers KV 官方开发说明](https://github.com/TencentEdgeOne/edgeone-makers-tools/blob/main/skills/edgeone-makers-tools/references/makers-storage/references/kv.md)
+
+不能使用浏览器 Local Storage、签名 Token 自带计数或单实例内存作为日/月额度账本，因为这些方式可重放或无法跨实例同步。
+
+### 5.3.1 KV Namespace 与 Key
+
+控制台创建独立 namespace `ai-quota`，绑定到项目的全局变量名建议为 `ai_quota_kv`：
+
+```text
+q_v1_<env>_<principalKey>_d_<yyyyMMdd>
+q_v1_<env>_<principalKey>_m_<yyyyMM>
+```
+
+其中 `principalKey` 使用 `SHA-256(principalId)` 的十六进制截断结果，确保 key 仅包含字母、数字和下划线，不把原始账号 ID 写入 KV key。
+
+Value 使用小型 JSON：
+
+```json
+{
+  "requests": 23,
+  "promptTokens": 14201,
+  "completionTokens": 1902,
+  "estimatedTokens": 0,
+  "updatedAt": "2026-09-17T08:00:00Z"
+}
+```
+
+每日和每月使用新 key 自然换窗；旧 key 由低频清理任务删除。由于官方 KV API 未公开 TTL 参数，设计不依赖自动过期。
 
 ### 5.4 Reserve/Commit 流程
 
@@ -240,7 +271,7 @@ sequenceDiagram
     API->>Q: commit(lease, actualUsage)
 ```
 
-若 Agent 或 Gateway 失败，调用 `release` 或按最小实际消耗结算。必须设置 lease TTL，避免进程中断后永久占用额度。
+若 Agent 或 Gateway 失败，调用 `release` 或按最小实际消耗结算。`QuotaLease` 是请求生命周期内的应用对象；EdgeOne KV 不承担精确租约锁。因最终一致性产生的竞态由软配额边界和保守额度吸收。
 
 ### 5.5 对外额度响应
 
@@ -304,7 +335,7 @@ flowchart LR
 |---|---|
 | 对话消息、摘要、Checkpoint | Makers `context.store` |
 | 当前会话选定的家庭/场景 | 会话 state |
-| 配额计数 | 独立 `QuotaStore` |
+| 配额计数 | EdgeOne KV `QuotaStore`（软配额） |
 | 长期偏好和习惯证据 | 后续业务存储或 HA Recorder |
 | 小米会话 | 现有服务端密封 Cookie/Automation Token |
 
@@ -485,6 +516,7 @@ AI_QUOTA_DEFAULT_TOKENS_PER_MONTH=100000
 AI_QUOTA_UNLIMITED_IDS=
 AI_QUOTA_OVERRIDES_JSON={}
 AI_QUOTA_FAIL_MODE=closed
+AI_QUOTA_KV_BINDING=ai_quota_kv
 
 AI_AGENT_MAX_TURNS=10
 AI_AGENT_MEMORY_TTL_DAYS=30
@@ -512,7 +544,7 @@ PoC 到 P4 即形成可用闭环；P5 不阻塞网页测试。
 1. 登录用户可以从页面 AI 图标开始连续对话。
 2. 未登录用户不能调用 Agent 或查询额度。
 3. 模型请求全部通过 Makers AI Gateway；源码不存在用户模型 Key 配置流程。
-4. 默认用户达到额度后，在调用 Agent 前收到稳定 `AI_QUOTA_EXCEEDED`。
+4. 默认用户在 KV 计数传播后达到额度时，在调用 Agent 前收到稳定 `AI_QUOTA_EXCEEDED`；文档和 UI 不宣称精确硬限额。
 5. `AI_QUOTA_UNLIMITED_IDS` 中的 principal 不被应用额度阻止，但仍产生 usage 指标。
 6. 客户端伪造 principal、homeId 或 conversationId 不能越权。
 7. 用户 A 的会话、配额、家庭和 Agent Store 不能被用户 B 访问。
@@ -534,12 +566,13 @@ PoC 到 P4 即形成可用闭环；P5 不阻塞网页测试。
 | ADR-023 | Siri/API 复用同一 Agent Service 和配额 | 已确认 |
 | ADR-024 | Agent Store 仅保存会话状态，不承担配额账本 | 已确认 |
 | ADR-025 | 长期习惯默认只产生建议，不自动执行 | 已确认 |
+| ADR-026 | PoC 配额账本使用 EdgeOne KV | 已确认 |
+| ADR-027 | 接受 KV 最终一致性带来的软配额窗口 | 已确认 |
 
 ## 16. 尚待实现时验证
 
 1. Makers 项目中可用模型的准确 `model` 名称和中国大陆可用性。
-2. EdgeOne 目标存储是否提供配额所需的原子增量、条件写入和 TTL；不满足时只能声明软限额。
+2. 在真实 EdgeOne 多节点部署中测量 KV 传播时间和并发超用窗口，据此下调默认额度安全余量。
 3. Agent 定时任务的创建、取消、重试和通知触发 API 细节。
 4. Web 对话是否首期启用流式返回；建议先非流式打通执行，再增加 SSE。
 5. 用户级月 Token 用量能否从 Gateway 响应稳定获得；缺失时使用服务端 tokenizer 估算并保守结算。
-
