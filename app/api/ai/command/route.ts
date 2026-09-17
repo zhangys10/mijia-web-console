@@ -3,7 +3,15 @@ import { listHomes, readXiaomiSession, type XiaomiSession } from "../../../../li
 import { listManualScenes, type ManualScene } from "../../../../lib/xiaomi-scenes.ts";
 import { loadAiCommandConfig, type AiCommandConfig } from "../../../../lib/ai/config.ts";
 import { IntentOrchestrator } from "../../../../lib/ai/intent-orchestrator.ts";
-import { QwenOpenAiCompatibleProvider } from "../../../../lib/ai/providers/qwen-openai-provider.ts";
+import {
+  QwenOpenAiCompatibleProvider,
+  type ResolvedProviderCredential,
+} from "../../../../lib/ai/providers/qwen-openai-provider.ts";
+import { resolveProvider } from "../../../../lib/ai/providers/provider-catalog.ts";
+import {
+  openAutomationToken,
+  AutomationTokenError,
+} from "../../../../lib/ai/security/automation-token.ts";
 import { IdempotencyStore, isValidIdempotencyKey, requestHash } from "../../../../lib/ai/security/idempotency.ts";
 import { extractBearerToken, verifyShortcutAuth } from "../../../../lib/ai/security/auth.ts";
 import { verifyAndExtractBinding } from "../../../../lib/ai/security/binding.ts";
@@ -58,45 +66,42 @@ async function loadUserSceneContext(
     if (matched) {
       homeId = matched.id;
       console.log("[ai-command] Matched explicit home:", { input: explicitHome, resolvedId: homeId, name: matched.name });
-    } else {
-      console.warn("[ai-command] Explicit home not found in user homes:", explicitHome);
     }
   }
 
-  // 2. 其次使用 Token 绑定或上下文推断或环境变量
+  // 2. 其次使用 Siri Binding 绑定的默认 homeId
+  if (!homeId && boundHomeId) {
+    const matchedBound = homes.find(h => h.id === boundHomeId);
+    if (matchedBound) {
+      homeId = matchedBound.id;
+      console.log("[ai-command] Using bound session home:", { homeId, name: matchedBound.name });
+    }
+  }
+
+  // 3. 再次使用服务端配置的全局备选 homeId
+  if (!homeId && config.homeId) {
+    const matchedConfig = homes.find(h => h.id === config.homeId);
+    if (matchedConfig) {
+      homeId = matchedConfig.id;
+      console.log("[ai-command] Using configured default home:", { homeId, name: matchedConfig.name });
+    }
+  }
+
+  // 4. 最后兜底为用户拥有的第一个家庭
   if (!homeId) {
-    homeId = boundHomeId || config.homeId;
+    homeId = homes[0].id;
+    console.log("[ai-command] Falling back to user first home:", { homeId, name: homes[0].name });
   }
 
+  // 异步获取该家庭下的所有手动场景，构建动态意图匹配列表
   let scenes: ManualScene[] = [];
-  if (homeId) {
-    try {
-      scenes = await listManualScenes(session, homeId);
-    } catch (error) {
-      console.warn("[ai-command] listManualScenes failed for homeId:", homeId, error instanceof Error ? error.message : error);
-      scenes = [];
-    }
+  try {
+    scenes = await listManualScenes(session, homeId);
+    console.log(`[ai-command] Loaded ${scenes.length} manual scenes for home:`, homeId);
+  } catch (err) {
+    console.warn(`[ai-command] Failed to load manual scenes for home ${homeId}:`, err);
   }
 
-  // 3. 若指定家庭无场景且未显式强制指定，扫描其他家庭以防选错空家庭
-  if (scenes.length === 0 && !explicitHome) {
-    for (const home of homes) {
-      if (home.id === homeId) continue;
-      try {
-        const candidate = await listManualScenes(session, home.id);
-        if (candidate.length > 0) {
-          console.log("[ai-command] Found active scenes in alternative home:", home.id, home.name, "count:", candidate.length);
-          homeId = home.id;
-          scenes = candidate;
-          break;
-        }
-      } catch {
-        // continue search
-      }
-    }
-  }
-
-  if (!homeId) homeId = homes[0].id;
   return { session, homeId, scenes };
 }
 
@@ -130,22 +135,48 @@ export async function POST(request: NextRequest) {
   const bearerToken = extractBearerToken(authHeader);
   let boundSession: XiaomiSession | undefined;
   let boundHomeId: string | undefined;
+  let requestCredential: ResolvedProviderCredential | undefined;
 
   if (bearerToken) {
-    const binding = await verifyAndExtractBinding(bearerToken);
-    if (binding) {
-      boundSession = binding.session;
-      boundHomeId = binding.homeId;
+    if (bearerToken.startsWith("v1.") && bearerToken.split(".").length === 5) {
+      try {
+        const payload = await openAutomationToken(bearerToken);
+        boundSession = payload.xiaomiSession;
+        boundHomeId = payload.homeId;
+        const resolved = resolveProvider(payload.provider, payload.model);
+        requestCredential = {
+          provider: resolved.provider.id,
+          apiToken: payload.apiKey,
+          baseUrl: resolved.baseUrl,
+          model: resolved.model,
+        };
+      } catch (err) {
+        if (err instanceof AutomationTokenError) {
+          if (err.code === "AUTOMATION_TOKEN_EXPIRED") {
+            return errorResponse("AUTOMATION_TOKEN_EXPIRED", 401, "自动化凭据已过期，请重新生成", requestId);
+          }
+          return errorResponse("AUTOMATION_TOKEN_INVALID", 401, "自动化凭据无效，请重新生成", requestId);
+        }
+        return errorResponse("AUTOMATION_TOKEN_INVALID", 401, "自动化凭据无效，请重新生成", requestId);
+      }
+    } else {
+      const binding = await verifyAndExtractBinding(bearerToken);
+      if (binding) {
+        boundSession = binding.session;
+        boundHomeId = binding.homeId;
+      }
     }
   }
 
-  if (!boundSession && !(await verifyShortcutAuth(authHeader, config.authHash))) {
+  const isStaticAuthorized = !boundSession && (await verifyShortcutAuth(authHeader, config.authHash));
+
+  if (!boundSession && !isStaticAuthorized) {
     return errorResponse("UNAUTHORIZED", 401, "快捷指令认证失败", requestId);
   }
 
   let body: Record<string, unknown>;
   try {
-    body = await request.json() as Record<string, unknown>;
+    body = (await request.json()) as Record<string, unknown>;
   } catch {
     return errorResponse("INVALID_REQUEST", 400, "请求格式有误", requestId);
   }
@@ -196,6 +227,16 @@ export async function POST(request: NextRequest) {
     return errorResponse("INVALID_REQUEST", 400, "历史对话格式有误", requestId);
   }
 
+  // 必须拥有有效的用户模型凭据；未配置时返回 422 LLM_CREDENTIAL_NOT_CONFIGURED
+  if (!requestCredential) {
+    return errorResponse(
+      "LLM_CREDENTIAL_NOT_CONFIGURED",
+      422,
+      "当前用户未配置模型 Token，请先在网页控制台生成包含个人 API Key 的自动化凭据",
+      requestId,
+    );
+  }
+
   let rawPriorTurns: ConversationTurn[] = [];
   let resolvedConversationId = conversationIdParam;
   let contextHomeId: string | undefined;
@@ -240,7 +281,6 @@ export async function POST(request: NextRequest) {
     hasBoundSession: !!boundSession,
   });
 
-
   try {
     const userContext = await loadUserSceneContext(config, boundSession, boundHomeId, effectiveHome);
     const candidateScenes = userContext.scenes.length > 0
@@ -252,11 +292,38 @@ export async function POST(request: NextRequest) {
     const chatHistory = toChatMessages(effectivePriorTurns);
     let decision: IntentDecision;
     try {
-      decision = await orchestrator.decide(text, candidateScenes, locale, timezone, chatHistory);
+      decision = await orchestrator.decide(text, candidateScenes, locale, timezone, chatHistory, requestCredential);
     } catch (error) {
       const message = error instanceof Error ? error.message : "LLM_PROVIDER_ERROR";
-      const status = message.includes("LLM_TIMEOUT") ? 504 : 502;
-      const code = message.includes("LLM_TIMEOUT")
+      if (message === "LLM_CREDENTIAL_INVALID") {
+        if (idempotencyKey) {
+          idempotency.fail(idempotencyKey, { code: "LLM_CREDENTIAL_INVALID", message: "模型 API Token 已失效，请重新生成", requestId }, 422);
+        }
+        aiCommandLog("ai_command_failed", {
+          requestId,
+          conversationId: resolvedConversationId,
+          client: "siri_shortcut",
+          code: "LLM_CREDENTIAL_INVALID",
+          executorError: message,
+        });
+        return errorResponse("LLM_CREDENTIAL_INVALID", 422, "模型 API Token 已失效，请重新生成", requestId);
+      }
+      if (message === "LLM_CREDENTIAL_NOT_CONFIGURED") {
+        if (idempotencyKey) {
+          idempotency.fail(idempotencyKey, { code: "LLM_CREDENTIAL_NOT_CONFIGURED", message: "当前用户未配置模型 Token", requestId }, 422);
+        }
+        aiCommandLog("ai_command_failed", {
+          requestId,
+          conversationId: resolvedConversationId,
+          client: "siri_shortcut",
+          code: "LLM_CREDENTIAL_NOT_CONFIGURED",
+          executorError: message,
+        });
+        return errorResponse("LLM_CREDENTIAL_NOT_CONFIGURED", 422, "当前用户未配置模型 Token", requestId);
+      }
+      const isTimeout = message.includes("LLM_TIMEOUT") || message.includes("TIMEOUT");
+      const status = isTimeout ? 504 : 502;
+      const code = isTimeout
         ? "LLM_TIMEOUT"
         : message.includes("UNSUPPORTED_INTENT")
           ? "UNSUPPORTED_INTENT"
@@ -315,27 +382,27 @@ export async function POST(request: NextRequest) {
         sessionContext: nextSessionContext,
         conversationReset,
         turnIndex: currentTurnIndex,
-        status: "completed",
+        status: "not_understood",
         intent: "none",
         message: finalReplyMessage,
         decisionSource: decision.model === "deterministic_fallback" ? "deterministic_fallback" : "llm",
         llmOutput: sanitizeLlmOutput(decision.llmOutput, candidateScenes),
       };
-      if (idempotencyKey) idempotency.complete(idempotencyKey, response);
       aiCommandLog("ai_command_completed", {
         requestId,
         conversationId: resolvedConversationId,
         client: "siri_shortcut",
         decisionSource: response.decisionSource,
-        provider: config.provider,
+        provider: requestCredential.provider,
         model: decision.model,
         intent: "none",
-        result: "success",
         turnIndex: currentTurnIndex,
         conversationReset,
         turnCount: updatedTurns.length,
         llmLatencyMs: decision.latencyMs,
+        executionLatencyMs: 0,
         llmOutput: response.llmOutput,
+        result: "not_understood",
       });
       return NextResponse.json(response, { status: 200 });
     }
@@ -406,7 +473,7 @@ export async function POST(request: NextRequest) {
       conversationId: resolvedConversationId,
       client: "siri_shortcut",
       decisionSource: response.decisionSource,
-      provider: config.provider,
+      provider: requestCredential.provider,
       model: decision.model,
       intent: response.intent,
       sceneId: response.sceneId,
