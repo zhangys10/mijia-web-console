@@ -49,7 +49,7 @@ export function loadAiCommandConfig(env: NodeJS.ProcessEnv = process.env): AiCom
     enableThinking: bool(env.LLM_ENABLE_THINKING, false),
     maxOutputTokens: Number.parseInt(env.LLM_MAX_OUTPUT_TOKENS ?? "128", 10),
     conversationMaxTurns: positiveInt(env.AI_CONVERSATION_MAX_TURNS, DEFAULT_CONVERSATION_MAX_TURNS, MAX_CONVERSATION_TURNS_LIMIT),
-    automationTokenSecret: env.AI_AUTOMATION_TOKEN_SECRET ?? env.XIAOMI_SESSION_SECRET ?? "",
+    automationTokenSecret: env.AI_AUTOMATION_TOKEN_SECRET ?? "",
     automationTokenKeyId: env.AI_AUTOMATION_TOKEN_KEY_ID ?? "key-2026-01",
   };
 }

@@ -116,8 +116,12 @@ export async function POST(request: NextRequest) {
             { status: 400, headers: { "Cache-Control": "no-store" } },
           );
         }
-      } catch {
-        // 如果拉取家庭列表发生异常，则放行或拦截，但若是明确找不到家庭应拒绝
+      } catch (error) {
+        console.error("[automation-token] Failed to verify home ownership:", error instanceof Error ? error.message : error);
+        return NextResponse.json(
+          { error: "XIAOMI_CLOUD_ERROR", message: "无法验证家庭归属，请稍后重试" },
+          { status: 502, headers: { "Cache-Control": "no-store" } },
+        );
       }
     }
 
@@ -134,30 +138,38 @@ export async function POST(request: NextRequest) {
       expiresInDays = parsed;
     }
 
-    // 发起最小验证请求，确认用户的 API Key 是否有效
-    // 仅在非测试或未跳过验证时调用；可支持 test 模式传入 mock 验证
-    const skipValidation = body._skipValidation === true && (process.env.NODE_ENV !== "production" || process.env.ALLOW_TEST_SKIP_VALIDATION === "true" || request.headers.get("x-test-skip-validation") === "true");
-    if (!skipValidation) {
-      try {
-        await validateProviderKey(resolved.provider.id, apiKey, resolved.model);
-      } catch (err) {
-        if (err instanceof ProviderCatalogError) {
-          const status =
-            err.code === "LLM_CREDENTIAL_INVALID"
-              ? 422
-              : err.code === "LLM_TIMEOUT"
-                ? 504
-                : 502;
-          return NextResponse.json(
-            { error: err.code, message: err.message },
-            { status, headers: { "Cache-Control": "no-store" } },
-          );
-        }
+    // 发起最小验证请求，确认用户的 API Key 是否有效，不允许跳过
+    try {
+      await validateProviderKey(resolved.provider.id, apiKey, resolved.model);
+    } catch (err) {
+      const cause = err instanceof Error ? err : new Error(String(err));
+      const providerFetchCause = cause.cause;
+      console.error("[automation-token] Provider validation failed:", {
+        provider: resolved.provider.id,
+        model: resolved.model,
+        error: cause instanceof ProviderCatalogError ? cause.code : "LLM_PROVIDER_ERROR",
+        message: cause.message,
+        ...(providerFetchCause instanceof Error && {
+          fetchError: providerFetchCause.message,
+          fetchErrorName: providerFetchCause.name,
+        }),
+      });
+      if (err instanceof ProviderCatalogError) {
+        const status =
+          err.code === "LLM_CREDENTIAL_INVALID"
+            ? 422
+            : err.code === "LLM_TIMEOUT"
+              ? 504
+              : 502;
         return NextResponse.json(
-          { error: "LLM_PROVIDER_ERROR", message: "验证模型凭据失败" },
-          { status: 502, headers: { "Cache-Control": "no-store" } },
+          { error: err.code, message: err.message },
+          { status, headers: { "Cache-Control": "no-store" } },
         );
       }
+      return NextResponse.json(
+        { error: "LLM_PROVIDER_ERROR", message: "验证模型凭据失败" },
+        { status: 502, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     const now = Date.now();

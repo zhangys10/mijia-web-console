@@ -94,6 +94,13 @@ test("loadAiCommandConfig no longer exposes shared LLM_API_KEY", async () => {
   assert.equal(Object.hasOwn(config, "apiKey"), false);
 });
 
+test("loadAiCommandConfig requires an independent AI_AUTOMATION_TOKEN_SECRET", () => {
+  const config = loadAiCommandConfig({
+    XIAOMI_SESSION_SECRET: "shared-xiaomi-session-secret-at-least-32-chars",
+  });
+  assert.equal(config.automationTokenSecret, "");
+});
+
 test("Command API rejects expired automation token with 401 AUTOMATION_TOKEN_EXPIRED", async () => {
   const { worker, env, context } = await getWorker();
   const now = Date.now();
