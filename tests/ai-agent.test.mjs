@@ -458,12 +458,12 @@ test("agent endpoint requires a matching sealed binding", async () => {
   assert.equal((await homeMismatch.json()).code, "AI_AGENT_BINDING_MISMATCH");
 });
 
-test("stop endpoint follows the official body contract and aborts the active run", async () => {
+test("stop endpoint follows the official header and body contract and aborts the active run", async () => {
   const stoppedIds = [];
   const context = agentContext({
     request: {
       body: { conversation_id: conversationId },
-      headers: { "Makers-Conversation-Id": "must-not-be-used", Authorization: `Bearer ${internalSecret}` },
+      headers: { "Makers-Conversation-Id": conversationId, Authorization: `Bearer ${internalSecret}` },
     },
     utils: { abortActiveRun: async (conversationIdToStop) => {
       stoppedIds.push(conversationIdToStop);

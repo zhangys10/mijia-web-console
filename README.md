@@ -104,7 +104,7 @@ Phase 4 已实现 EdgeOne Makers Agent 入口、密封内部身份上下文、�
 - `AI_SCENE_APPROVED_IDS`：逗号分隔的低风险手动场景 ID 审核名单；默认为空，任何场景都不会被执行。
 - 连续对话由 Makers Agent 的 `Makers-Conversation-Id` 和服务端 principal/home 派生的存储键隔离。
 - 副作用必须携带 Idempotency-Key；相同请求只执行一次，不同请求复用同一 key 会返回冲突。
-- stop 请求按官方 contract 使用 body 中的 `conversation_id`，不读取同名 Header，并调用运行时 `abortActiveRun`。
+- stop 请求按官方 contract 携带 `Makers-Conversation-Id`，body 使用 `conversation_id`，并调用运行时 `abortActiveRun`。
 
 ### `AI_PRINCIPAL_SECRET`
 

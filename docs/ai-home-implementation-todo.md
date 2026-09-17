@@ -205,7 +205,7 @@ lib/ai/tools/activate-scene.ts
 - [x] Tool 侧重新校验 principal、homeId、场景审核状态和风险级别。
 - [x] 模型上下文不包含 Gateway Key、Mi Cloud Token、DID 或未审核 ID；场景使用 principal/home/scene 派生别名。
 - [x] side effect 前要求 Idempotency-Key，并用 `context.store.state` 支持跨实例重放保护。
-- [x] 支持 Agent stop/cancel，stop 请求按官方 contract 使用 body `conversation_id` 并调用 `abortActiveRun`。
+- [x] 支持 Agent stop/cancel，stop 请求按官方 contract 携带 `Makers-Conversation-Id`，body 使用 `conversation_id`，并调用 `abortActiveRun`。
 
 Phase 4 只实现 Agent Runtime、可信内部请求和受控工具。Web API、配额 reserve/commit/release 和页面 UI 留在 Phase 5/6；因此 EdgeOne KV 审批未完成不阻塞本阶段代码与单元验证。
 
