@@ -32,6 +32,7 @@ test("renders the Xiaomi smart home dashboard", async () => {
   assert.match(html, /<meta name="theme-color" content="#fafbfc"/, "mobile browsers should inherit the dashboard theme");
   assert.match(html, /aria-label="打开菜单"/, "mobile users must be able to open the full navigation drawer");
   assert.match(html, /aria-label="主菜单"/);
+  assert.match(html, /设置/, "the main navigation must include the top-level settings item");
   assert.match(html, /账号与连接/, "the navigation drawer must retain Xiaomi account settings");
   assert.match(html, /扫码连接米家/);
   assert.match(html, /aria-label="选择家庭"/);
@@ -48,6 +49,10 @@ test("renders the Xiaomi smart home dashboard", async () => {
   assert.match(html, /空气净化器/);
   assert.doesNotMatch(html, /室内温度/);
   assert.doesNotMatch(html, /设备管理/, "the full device inventory should only render on the device tab");
+  assert.match(html, /<footer class="site-footer">/, "Mainland China pages must display footer for regulatory compliance");
+  assert.match(html, /href="https:\/\/beian\.miit\.gov\.cn\/"/, "ICP filing link must point to the MIIT website");
+  assert.match(html, /target="_blank"/, "ICP filing link must open in a new tab");
+  assert.match(html, /沪ICP备2026045701号/, "ICP filing number must be displayed");
 });
 
 test("reading or changing device settings requires an authenticated Xiaomi session", async () => {

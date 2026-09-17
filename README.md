@@ -11,6 +11,7 @@
 - 真实自动化同步、IF/THEN 详情、定时创建及安全修改
 - 实体开关、中控、智能灯具和普通回路的统一管理
 - 按家庭隔离的开关/照明拓扑
+- Siri 快捷指令驱动的“回家模式”AI 场景控制 PoC
 - 桌面端和移动端响应式界面
 
 ## 自动化支持范围
@@ -29,6 +30,7 @@
 自动化 API 为 `GET/POST /api/xiaomi/automations`、`GET/PUT /api/xiaomi/automations/:automationId` 和只返回脱敏能力目录的 `GET /api/xiaomi/automations/catalog`。当前版本不提供删除操作。
 
 设备建模与交互规则见 [设备管理设计](docs/device-management-design.md)。
+AI 语音与 LLM 场景控制的范围、安全边界和验收标准见 [AI Home PoC 设计](docs/ai-home-poc-design.md)。
 
 ## 技术栈
 
@@ -72,6 +74,28 @@ npm run dev
 - 轮换该值会使现有登录会话失效，用户需要重新扫码。
 
 本地可以通过未跟踪的 `.env.local` 提供该变量；仓库的 `.gitignore` 会排除所有 `.env*` 文件。生产环境应使用部署平台的加密 Secret 配置。
+
+### AI Home PoC
+
+PoC 提供 `POST /api/ai/command`，用于 iPhone 快捷指令触发已审核的米家“回家模式”场景。请求必须在 `Authorization: Bearer <token>` 中携带加密自包含的 Automation Token，并在触发有副作用操作时提供 `Idempotency-Key`。服务端只向 LLM 暴露 `activate_scene` 工具，并在执行前做工具名、参数、场景白名单、用户凭据隔离与幂等校验。
+
+扫码登录后，可在侧边栏点击「设置」进入 AI 自动化配置页（或直接访问 `/ai/settings`）输入个人 DashScope / 通义千问 API Key，生成专属的加密 Automation Token。该令牌使用 AES-256-GCM 封装个人模型 Key 和米家会话，服务端不持久化用户 Key，确保多用户间的额度与凭据物理隔离。将该令牌粘贴到 iPhone 快捷指令的 `Authorization` 标头即可完成配置。
+
+推荐配置：
+
+```text
+AI_COMMAND_ENABLED=true
+AI_AUTOMATION_TOKEN_SECRET=<32-byte-or-longer-random-secret>
+AI_AUTOMATION_TOKEN_KEY_ID=key-2026-01
+AI_SCENE_HOME_ID=<home id>
+AI_SCENE_HOME_SCENE_ID=<audited Mi Home scene id>
+LLM_TIMEOUT_MS=3000
+LLM_ENABLE_THINKING=false
+AI_CONVERSATION_MAX_TURNS=5
+AI_DETERMINISTIC_FALLBACK=true
+```
+
+详细设计、Siri 快捷指令步骤、测试集和架构决策见 [AI Home PoC 设计](docs/ai-home-poc-design.md)。
 
 ## 常用命令
 

@@ -48,7 +48,8 @@ body textarea {
 .activity small,
 .home-status small,
 .modal > small,
-.labels {
+.labels,
+.site-footer a {
   font-size: var(--font-meta) !important;
 }
 
