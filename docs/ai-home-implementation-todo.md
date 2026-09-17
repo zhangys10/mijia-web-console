@@ -109,19 +109,19 @@ tests/ai-principal.test.mjs
 
 ### TODO
 
-- [ ] 从服务端解密的 Xiaomi Session 读取 `userId`。
-- [ ] 使用 HMAC-SHA256 和 `AI_PRINCIPAL_SECRET` 派生稳定 `principalId`。
-- [ ] 输出使用 `usr_` 前缀的 Base64URL ID。
-- [ ] 禁止请求体/Header 覆盖 principal。
-- [ ] 提供登录后查看本人 principalId 的安全 UI/API。
-- [ ] 记录 Secret 轮换影响和环境隔离规则。
+- [x] 从服务端解密的 Xiaomi Session 读取 `userId`。
+- [x] 使用 HMAC-SHA256 和 `AI_PRINCIPAL_SECRET` 派生稳定 `principalId`。
+- [x] 输出使用 `usr_` 前缀的 Base64URL ID。
+- [x] 禁止请求体/Header 覆盖 principal。
+- [x] 提供登录后查看本人 principalId 的安全 UI/API。
+- [x] 记录 Secret 轮换影响和环境隔离规则。
 
 ### 测试
 
-- [ ] 同一环境同一 userId 产生相同 principalId。
-- [ ] 不同用户、不同 Secret 产生不同 ID。
-- [ ] 输出不包含原始 userId。
-- [ ] 非法/缺失 Xiaomi Session 返回 401。
+- [x] 同一环境同一 userId 产生相同 principalId。
+- [x] 不同用户、不同 Secret 产生不同 ID。
+- [x] 输出不包含原始 userId。
+- [x] 非法/缺失 Xiaomi Session 返回 401。
 
 ## 6. Phase 3：配额策略与 QuotaStore
 
