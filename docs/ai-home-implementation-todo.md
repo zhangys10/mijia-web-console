@@ -120,7 +120,8 @@ tests/ai-principal.test.mjs
 lib/ai/quota/policy.ts
 lib/ai/quota/quota-store.ts
 lib/ai/quota/in-memory-quota-store.ts
-lib/ai/quota/edgeone-quota-store.ts
+edge-functions/api/ai-quota.ts
+lib/ai/quota/edgeone-kv-quota-store.ts
 lib/ai/quota/quota-service.ts
 tests/ai-quota-*.test.mjs
 ```
@@ -137,12 +138,17 @@ tests/ai-quota-*.test.mjs
 ### 3.2 Store TODO
 
 - [ ] 定义 `reserve/commit/release/getSnapshot` 接口。
-- [ ] lease 包含 TTL，处理进程中断。
 - [ ] 本地和单元测试实现 InMemory adapter。
-- [ ] 调查 EdgeOne 目标存储的原子增量/CAS/TTL 能力。
-- [ ] 能保证原子性时实现硬限额 adapter。
-- [ ] 不能保证时明确标记软限额，并记录并发超用窗口。
-- [ ] key 结构包含环境、principal、周期，不包含原始 userId。
+- [ ] 在 EdgeOne 控制台启用 KV、创建 `ai-quota` namespace，并绑定全局变量 `ai_quota_kv`。
+- [ ] 在 Edge Function 中直接使用绑定的全局变量，禁止错误地读取 `context.env.ai_quota_kv`。
+- [ ] 实现 EdgeOne KV adapter；Agent/Node Function 不直接访问 KV。
+- [ ] 明确实现为软限额：KV 最终一致性最长约 60 秒，且没有原子自增/CAS。
+- [ ] key 使用 `q_v1_<env>_<principalKey>_<period>_<date>`，只包含字母、数字和下划线。
+- [ ] `principalKey` 使用 principalId 的 SHA-256 十六进制截断值，不包含原始 userId。
+- [ ] Value 记录 requests、prompt/completion/estimated tokens 和 updatedAt。
+- [ ] 不依赖未公开的 KV TTL；按日/月 key 自然换窗并增加旧 key 清理任务。
+- [ ] 以真实多节点并发测试量化 60 秒传播窗口内的最大超用量。
+- [ ] 根据测试结果为默认额度设置安全余量。
 - [ ] 周期按 `Asia/Shanghai` 计算并测试月末、闰日和 DST 无关性。
 
 ### 3.3 API TODO
@@ -158,7 +164,7 @@ tests/ai-quota-*.test.mjs
 
 - [ ] 默认、覆盖和 unlimited 三种策略。
 - [ ] 客户端伪造 ID 不影响配额主体。
-- [ ] 并发 reserve 不超过硬限额，或软限额测试明确偏差。
+- [ ] 并发测试明确记录软限额偏差，不能断言 EdgeOne KV 提供硬限额。
 - [ ] Token 估算和实际 usage 差额正确结算。
 - [ ] 用户 A 无法读取用户 B 的 quota snapshot。
 - [ ] Store 故障不会无意放开生产额度。
@@ -306,6 +312,7 @@ AI_QUOTA_DEFAULT_TOKENS_PER_MONTH=100000
 AI_QUOTA_UNLIMITED_IDS=
 AI_QUOTA_OVERRIDES_JSON={}
 AI_QUOTA_FAIL_MODE=closed
+AI_QUOTA_KV_BINDING=ai_quota_kv
 ```
 
 清理项：
@@ -347,8 +354,9 @@ AI_QUOTA_FAIL_MODE=closed
 - [ ] principal 完全由服务端登录态派生。
 - [ ] 默认、覆盖和 unlimited 配额策略均有测试。
 - [ ] 生产配额存储的一致性级别被验证并记录。
+- [ ] EdgeOne KV namespace 已绑定，生产代码未将其误当成 `context.env` 变量。
+- [ ] UI 与文档明确当前是软配额，不承诺并发下精确不超额。
 - [ ] Agent 会话、配额、家庭和工具调用均按用户隔离。
 - [ ] 只有审核场景能执行，并有幂等保护。
 - [ ] Vercel Preview 不控制生产设备。
 - [ ] Siri/API 演进不需要复制 Agent 或配额逻辑。
-
