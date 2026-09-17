@@ -257,7 +257,7 @@ tests/ai-command-api.test.mjs
 - [x] 保持 Tool allowlist 和 Scene Service 边界不变。
 - [x] 删除正常路径和 fallback 中对共享 `LLM_API_KEY` 的读取。
 - [x] 缺失 `AI_AUTOMATION_TOKEN_SECRET` 时启动/请求明确失败，不降级到共享 Key。
-- [x] Provider 返回 401/403 时映射 `LLM_CREDENTIAL_INVALID`。
+- [x] Provider 返回 401/403 或 400 `invalid_api_key` 时映射 `LLM_CREDENTIAL_INVALID`；Key 含空格、换行或不可见字符时直接拒绝，不再误判为网络故障。
 - [x] 清理异常对象，避免 HTTP client 把 Authorization Header带入日志。
 - [x] 对 Automation Token Header 设置合理长度上限。
 - [x] 评估旧 Shortcut Token 的兼容窗口；默认新 AI Command 不接受旧 Token。

@@ -76,7 +76,7 @@ export type OpenTokenOptions = {
 };
 
 function resolveSecret(customSecret?: string): string {
-  const secret = customSecret || process.env.AI_AUTOMATION_TOKEN_SECRET || process.env.XIAOMI_SESSION_SECRET;
+  const secret = customSecret || process.env.AI_AUTOMATION_TOKEN_SECRET;
   if (!secret) {
     throw new AutomationTokenError(
       "AI_AUTOMATION_TOKEN_SECRET_NOT_CONFIGURED",

@@ -228,3 +228,37 @@ test("raw API key is never exposed in error messages", async () => {
     assert.equal(String(err).includes(secretKeyPattern), false);
   }
 });
+
+test("automation token sealing never falls back to XIAOMI_SESSION_SECRET", async () => {
+  const previousAutomationSecret = process.env.AI_AUTOMATION_TOKEN_SECRET;
+  const previousSessionSecret = process.env.XIAOMI_SESSION_SECRET;
+  delete process.env.AI_AUTOMATION_TOKEN_SECRET;
+  process.env.XIAOMI_SESSION_SECRET = "shared-xiaomi-session-secret-at-least-32-chars";
+
+  try {
+    const now = Date.now();
+    const principalId = await computePrincipalId("cn", fakeSession.userId);
+    const payload = {
+      version: 1,
+      purpose: "ai-home-automation",
+      principalId,
+      xiaomiSession: fakeSession,
+      region: "cn",
+      provider: "qwen-cn",
+      model: "qwen3.7-flash-2026-07-15",
+      apiKey: "sk-mock-key-for-test-isolation",
+      issuedAt: now,
+      expiresAt: now + 86400000,
+    };
+
+    await assert.rejects(
+      () => sealAutomationToken(payload, { env: "test" }),
+      (err) => err instanceof AutomationTokenError && err.code === "AI_AUTOMATION_TOKEN_SECRET_NOT_CONFIGURED",
+    );
+  } finally {
+    if (previousAutomationSecret === undefined) delete process.env.AI_AUTOMATION_TOKEN_SECRET;
+    else process.env.AI_AUTOMATION_TOKEN_SECRET = previousAutomationSecret;
+    if (previousSessionSecret === undefined) delete process.env.XIAOMI_SESSION_SECRET;
+    else process.env.XIAOMI_SESSION_SECRET = previousSessionSecret;
+  }
+});

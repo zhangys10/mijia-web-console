@@ -40,6 +40,49 @@ export const PROVIDER_CATALOG: Record<string, ProviderCatalogEntry> = {
 
 export const DEFAULT_PROVIDER_ID = "qwen-cn";
 
+const API_KEY_MIN_LENGTH = 5;
+const API_KEY_ALLOWED_PATTERN = /^[\x21-\x7e]+$/;
+
+/**
+ * 复制/粘贴的 Key 常混入空格、换行或全角字符，这些会直接让 HTTP Authorization 头非法，
+ * 表现为 fetch 抛异常而不是服务商返回 401。必须在发请求前识别为凭据问题。
+ */
+function normalizeApiKey(apiKey: unknown): string {
+  if (typeof apiKey !== "string") {
+    throw new ProviderCatalogError(
+      "LLM_CREDENTIAL_INVALID",
+      "模型 API Key 格式不正确，请重新复制",
+    );
+  }
+  const trimmed = apiKey.trim();
+  if (trimmed.length < API_KEY_MIN_LENGTH) {
+    throw new ProviderCatalogError(
+      "LLM_CREDENTIAL_INVALID",
+      "模型 API Key 长度不足，请确认已完整复制",
+    );
+  }
+  if (/[\s\u3000]/.test(trimmed) || !API_KEY_ALLOWED_PATTERN.test(trimmed)) {
+    throw new ProviderCatalogError(
+      "LLM_CREDENTIAL_INVALID",
+      "模型 API Key 含空格、换行或不可见字符，请确认已完整复制正确的 Key",
+    );
+  }
+  return trimmed;
+}
+
+function looksLikeInvalidKeyResponse(status: number, bodyText: string): boolean {
+  if (status !== 400 && status !== 401 && status !== 403) return false;
+  const normalized = bodyText.toLowerCase();
+  return (
+    normalized.includes("invalid_api_key") ||
+    normalized.includes("invalid apikey") ||
+    normalized.includes("invalid api key") ||
+    normalized.includes("incorrect api key") ||
+    normalized.includes("authentication") ||
+    normalized.includes("unauthorized")
+  );
+}
+
 export function listSupportedProviders() {
   return Object.values(PROVIDER_CATALOG).map((p) => ({
     id: p.id,
@@ -82,12 +125,7 @@ export async function validateProviderKey(
   modelId?: string,
   options?: { timeoutMs?: number; customFetch?: typeof fetch },
 ): Promise<{ valid: true }> {
-  if (!apiKey || typeof apiKey !== "string" || apiKey.trim().length < 5) {
-    throw new ProviderCatalogError(
-      "LLM_CREDENTIAL_INVALID",
-      "模型 API Key 格式不正确",
-    );
-  }
+  const normalizedKey = normalizeApiKey(apiKey);
 
   const resolved = resolveProvider(providerId, modelId);
   const timeoutMs = options?.timeoutMs ?? 6000;
@@ -102,7 +140,7 @@ export async function validateProviderKey(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey.trim()}`,
+        Authorization: `Bearer ${normalizedKey}`,
       },
       body: JSON.stringify({
         model: resolved.model,
@@ -116,16 +154,28 @@ export async function validateProviderKey(
       return { valid: true };
     }
 
+    const bodyText = await response.text().catch(() => "");
+
     if (response.status === 401 || response.status === 403) {
       throw new ProviderCatalogError(
         "LLM_CREDENTIAL_INVALID",
-        "模型 API Key 验证失败，服务商拒绝鉴权",
+        "模型 API Key 无效或已失效，请确认已复制正确、有效的 Key",
       );
     }
 
+    if (looksLikeInvalidKeyResponse(response.status, bodyText)) {
+      throw new ProviderCatalogError(
+        "LLM_CREDENTIAL_INVALID",
+        "模型 API Key 无效或已失效，请确认已复制正确、有效的 Key",
+      );
+    }
+
+    const detail = bodyText.trim().slice(0, 200);
     throw new ProviderCatalogError(
       "LLM_PROVIDER_ERROR",
-      `模型服务商验证响应异常 (${response.status})`,
+      detail
+        ? `模型服务商返回异常 (${response.status})：${detail}`
+        : `模型服务商返回异常 (${response.status})`,
     );
   } catch (error) {
     if (error instanceof ProviderCatalogError) {
@@ -140,9 +190,10 @@ export async function validateProviderKey(
         "验证模型 API Key 超时，请检查网络或稍后重试",
       );
     }
+    // 走到这里只剩网络/DNS/TLS 等传输层失败；凭据格式问题已在 normalizeApiKey 拦截。
     throw new ProviderCatalogError(
       "LLM_PROVIDER_ERROR",
-      "连接模型服务商失败，请检查网络",
+      "无法连接模型服务商，请检查网络后重试",
     );
   } finally {
     clearTimeout(timer);

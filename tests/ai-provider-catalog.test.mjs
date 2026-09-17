@@ -61,7 +61,53 @@ test("validateProviderKey maps 401/403 to LLM_CREDENTIAL_INVALID", async () => {
 
   await assert.rejects(
     () => validateProviderKey("qwen-cn", "sk-bad-key", undefined, { customFetch: mockFetch }),
+    (err) =>
+      err instanceof ProviderCatalogError &&
+      err.code === "LLM_CREDENTIAL_INVALID" &&
+      err.message.includes("无效或已失效")
+  );
+});
+
+test("validateProviderKey rejects copied keys containing whitespace or invisible characters", async () => {
+  const cases = ["sk bad key", "sk\nkey", "sk\tkey", "sk\u00a0key"];
+
+  for (const key of cases) {
+    await assert.rejects(
+      () => validateProviderKey("qwen-cn", key),
+      (err) =>
+        err instanceof ProviderCatalogError &&
+        err.code === "LLM_CREDENTIAL_INVALID" &&
+        err.message.includes("空格、换行或不可见字符")
+    );
+  }
+});
+
+test("validateProviderKey maps 400 invalid_api_key responses to LLM_CREDENTIAL_INVALID", async () => {
+  const mockFetch = async () =>
+    new Response(
+      JSON.stringify({
+        error: { code: "invalid_api_key", message: "Invalid API key supplied" },
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+
+  await assert.rejects(
+    () => validateProviderKey("qwen-cn", "sk-copied-wrong", undefined, { customFetch: mockFetch }),
     (err) => err instanceof ProviderCatalogError && err.code === "LLM_CREDENTIAL_INVALID"
+  );
+});
+
+test("validateProviderKey maps network failures to LLM_PROVIDER_ERROR without blaming the key", async () => {
+  const mockFetch = async () => {
+    throw new TypeError("fetch failed");
+  };
+
+  await assert.rejects(
+    () => validateProviderKey("qwen-cn", "sk-valid-network-key", undefined, { customFetch: mockFetch }),
+    (err) =>
+      err instanceof ProviderCatalogError &&
+      err.code === "LLM_PROVIDER_ERROR" &&
+      err.message.includes("无法连接模型服务商")
   );
 });
 
