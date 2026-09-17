@@ -12,6 +12,7 @@ import {
   sceneRevision,
   submitSceneEdit,
   validateSceneDraftCapabilities,
+  sceneDraftActionMatchesWrite,
 } from "../lib/xiaomi-scene-editor.ts";
 import { isScenePropertyValueSupported, isSceneWritableProperty, mapScenePropertySemantics, mapScenePropertySemanticsResult, scenePropertySemantics } from "../lib/xiaomi-scene-properties.ts";
 
@@ -204,6 +205,22 @@ test("rejects missing and ambiguous enum labels instead of copying raw values", 
   assert.deepEqual(mapScenePropertySemanticsResult(semantics, ambiguous, undefined, "other"), { ok: false, reason: "choice-label-ambiguous", semantic: semantics[0] });
 });
 
+test("detects unchanged actions so updates can skip needless revalidation", () => {
+  const original = {
+    clientId: "source-0",
+    sourceIndex: 0,
+    kind: "set-properties",
+    did: "light-1",
+    deviceName: "床头灯",
+    model: "vendor.light.v1",
+    label: "开灯",
+    properties: [{ siid: 2, piid: 1, value: true }],
+  };
+  assert.equal(sceneDraftActionMatchesWrite(original, original), true);
+  assert.equal(sceneDraftActionMatchesWrite({ ...original, label: "只改名称" }, original), true);
+  assert.equal(sceneDraftActionMatchesWrite({ ...original, properties: [{ siid: 2, piid: 1, value: false }] }, original), false);
+});
+
 test("submits the exact AppSceneService Edit endpoint and recognizes returned ids", async () => {
   let call;
   const session = { userId: "u", ssecurity: "s", serviceToken: "t", region: "cn", createdAt: 0 };
@@ -211,4 +228,25 @@ test("submits the exact AppSceneService Edit endpoint and recognizes returned id
   assert.deepEqual(call, { path: "/app/appgateway/miot/appsceneservice/AppSceneService/Edit", data: { name: "测试" } });
   assert.equal(sceneIdFromEditResponse(response), "created-1");
   await assert.rejects(submitSceneEdit(session, {}, async () => ({ result: false })), /XIAOMI_SCENE_NOT_ACCEPTED/);
+});
+
+test("assertBasicSceneDraft validates action kind and applies fallbacks for missing name/model/label", () => {
+  // Throws when kind is missing
+  assert.throws(() => assertBasicSceneDraft({
+    homeId: "home-1",
+    name: "测试",
+    actions: [{ did: "dev-1", properties: [{ siid: 2, piid: 1, value: true }] }],
+  }, false), /INVALID_SCENE_ACTION/);
+
+  // Successfully validates and applies fallbacks when kind is provided
+  const validated = assertBasicSceneDraft({
+    homeId: "home-1",
+    name: "测试",
+    actions: [{ kind: "set-properties", did: "dev-1", properties: [{ siid: 2, piid: 1, value: true }] }],
+  }, false);
+  assert.equal(validated.actions?.[0].kind, "set-properties");
+  assert.equal(validated.actions?.[0].did, "dev-1");
+  assert.equal(validated.actions?.[0].deviceName, "智能设备");
+  assert.equal(validated.actions?.[0].model, "device");
+  assert.equal(validated.actions?.[0].label, "智能设备");
 });
