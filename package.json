@@ -14,7 +14,7 @@
     "test": "npm run build && npm run test:unit",
     "test:unit": "node --experimental-strip-types --test tests/*.test.mjs",
     "typecheck": "tsc --noEmit --project tsconfig.app-check.json",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .claude"
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .claude --ignore-pattern .edgeone"
   },
   "dependencies": {
     "next": "16.2.6",

@@ -2,6 +2,8 @@ import { getMiotCapabilities } from "./miot-spec.ts";
 import type { SceneMappableGroup } from "./xiaomi-scene-properties.ts";
 import { xiaomiRequest, type XiaomiSession } from "./xiaomi-cloud.ts";
 
+export { xiaomiRequest };
+
 export type ManualScene = {
   id: string;
   homeId: string;

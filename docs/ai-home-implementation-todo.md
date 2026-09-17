@@ -171,7 +171,7 @@ tests/ai-quota-*.test.mjs
 - [x] Store 故障按 `AI_QUOTA_FAIL_MODE` 处理，生产默认 closed。
 - [x] 增加 `GET /api/ai/quota`，只返回当前用户摘要。
 
-Agent 调用生命周期中的 `reserve/commit/release` 与 429 映射在 Phase 4 接入 `AiAgentService` 时完成。EdgeOne KV namespace 创建、全局绑定和真实多节点传播窗口测试需要目标项目环境人工执行。
+Agent 调用生命周期中的 `reserve/commit/release` 与 429 映射在 Phase 5 Web Chat API 完成。EdgeOne Agents Runtime 不直接读取 EdgeOne KV，避免绕过 Web API 的鉴权和结算边界。EdgeOne KV namespace 创建、全局绑定和真实多节点传播窗口测试需要目标项目环境人工执行；审批完成前可以继续实现不依赖真实 KV 的 Agent 阶段。
 
 ### 测试
 
@@ -195,24 +195,36 @@ lib/ai/tools/activate-scene.ts
 
 ### TODO
 
-- [ ] 建立 Agent endpoint，并使用固定 `onRequest(context)` 入口。
-- [ ] 使用可信服务端生成的 `conversation_id`。
-- [ ] 将 current principal/home 作为受信上下文传入，不来自模型。
-- [ ] 接入 Gateway Provider、`context.store`、`context.tools` 和 tracing。
-- [ ] 保持“已有场景高置信度匹配优先”。
-- [ ] 注册 `list_scenes` 和 `activate_scene` 两个首期工具。
-- [ ] Tool 侧重新校验 principal、homeId、场景审核状态和风险级别。
-- [ ] 模型上下文不包含 Gateway Key、Mi Cloud Token、DID 或未审核 ID。
-- [ ] side effect 前要求 Idempotency-Key。
-- [ ] 支持 Agent stop/cancel。
+- [x] 建立 Agent endpoint，并使用固定 `onRequest(context)` 入口。
+- [x] 使用平台注入的可信 `conversation_id`，不信任请求体中的会话 ID。
+- [x] 将 current principal/home 作为受信密封上下文传入，不来自模型。
+- [x] 接入 Gateway Provider、`context.store` 和 tracing。
+- [x] `context.tools` 不透传给模型；由 `AiAgentService` 显式执行受控工具，避免通用工具转发绕过 principal、home、审核和风险校验。
+- [x] 保持“已有场景高置信度匹配优先”的 Provider 语义。
+- [x] 注册 `list_scenes` 和 `activate_scene` 两个首期工具。
+- [x] Tool 侧重新校验 principal、homeId、场景审核状态和风险级别。
+- [x] 模型上下文不包含 Gateway Key、Mi Cloud Token、DID 或未审核 ID；场景使用 principal/home/scene 派生别名。
+- [x] side effect 前要求 Idempotency-Key，并用 `context.store.state` 支持跨实例重放保护。
+- [x] 支持 Agent stop/cancel，stop 请求按官方 contract 携带 `Makers-Conversation-Id`，body 使用 `conversation_id`，并调用 `abortActiveRun`。
+
+Phase 4 只实现 Agent Runtime、可信内部请求和受控工具。Web API、配额 reserve/commit/release 和页面 UI 留在 Phase 5/6；因此 EdgeOne KV 审批未完成不阻塞本阶段代码与单元验证。
 
 ### 测试
 
-- [ ] 同一用户同一会话可连续对话。
-- [ ] 不同 principal 即使提交相同 conversationId 也被隔离。
-- [ ] 模型编造工具名、homeId、sceneId 均不能执行。
-- [ ] 否定、条件、疑问和转述不误执行场景。
-- [ ] 相同幂等键只执行一次。
+- [x] 同一用户同一会话可连续对话。
+- [x] 不同 principal 即使提交相同 conversationId 也被隔离。
+- [x] 模型编造工具名、homeId、sceneId 均不能执行。
+- [x] 否定、条件、疑问和转述不误执行场景。
+- [x] 相同幂等键只执行一次。
+- [x] Agent 内部鉴权拒绝缺失、过短或错误 Secret。
+- [x] stop endpoint 遵循官方 body contract 并调用运行时取消能力。
+
+### 人工验证
+
+- [ ] `edgeone makers dev` 验证真实 Agent 路由和 `Makers-Conversation-Id`。
+- [ ] 使用内部请求完成一次 `list_scenes` 与一次低风险审核场景执行。
+- [ ] 验证 stop endpoint 能取消活跃请求且返回 499 语义。
+- [ ] KV 审批通过后再验证 Web API 与配额生命周期。
 
 ## 8. Phase 5：Web Chat API
 
@@ -229,7 +241,8 @@ app/api/ai/conversations/route.ts
 - [ ] 只接受有效 `xiaomi_session` Cookie。
 - [ ] 校验 message、homeId、conversationId 和请求大小。
 - [ ] 校验 homeId 属于当前登录用户。
-- [ ] 统一执行 principal → quota → agent → usage commit 流程。
+- [ ] 统一执行 principal → quota reserve → agent → usage commit/release 流程。
+- [ ] 配额不足返回 429 `AI_QUOTA_EXCEEDED` 和恢复时间。
 - [ ] 响应返回 requestId、conversationId、message、tool result 和 quota summary。
 - [ ] 明确错误码：未登录、额度不足、Agent 失败、Gateway 失败、场景失败。
 - [ ] 响应设置 `Cache-Control: no-store`。
@@ -318,6 +331,7 @@ AI_GATEWAY_API_KEY=<platform-injected>
 AI_GATEWAY_BASE_URL=https://ai-gateway.edgeone.link/v1
 AI_GATEWAY_MODEL=<verified-model-id>
 AI_AGENT_INTERNAL_SECRET=<environment-specific-secret>
+AI_SCENE_APPROVED_IDS=<approved-low-risk-scene-ids>
 AI_PRINCIPAL_SECRET=<environment-specific-secret>
 AI_QUOTA_ENABLED=true
 AI_QUOTA_DEFAULT_REQUESTS_PER_MINUTE=10

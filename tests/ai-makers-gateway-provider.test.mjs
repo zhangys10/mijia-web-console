@@ -154,7 +154,8 @@ test("Gateway request targets the configured URL with capped non-thinking settin
       const payload = JSON.parse(body.messages.at(-1).content);
       assert.equal(payload.text, "开一下吧");
       assert.deepEqual(payload.availableScenes.map((scene) => scene.id), ["scene-home", "scene-movie"]);
-      assert.deepEqual(body.tools[0].function.parameters.properties.sceneId.enum, ["scene-home", "scene-movie"]);
+      assert.deepEqual(body.tools.map((tool) => tool.function.name), ["list_scenes", "activate_scene"]);
+      assert.deepEqual(body.tools[1].function.parameters.properties.sceneId.enum, ["scene-home", "scene-movie"]);
       assert.equal(decision.type, "tool_call");
       assert.equal(decision.tool, "activate_scene");
     },
@@ -284,6 +285,27 @@ test("Gateway maps timeouts and network failures without leaking the key", async
           assert.equal(String(error).includes(gatewayKey), false);
           return true;
         },
+      );
+    },
+  );
+});
+
+test("Gateway maps external cancellation without treating it as a timeout", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await runWithFetch(
+    () => new Promise((_resolve, reject) => reject(new DOMException("cancelled", "AbortError"))),
+    async () => {
+      await assert.rejects(
+        () => new MakersGatewayProvider(createConfig()).decide(
+          "我回家了",
+          scenes,
+          "zh-CN",
+          "Asia/Shanghai",
+          undefined,
+          controller.signal,
+        ),
+        (error) => error instanceof MakersGatewayError && error.code === "AI_GATEWAY_CANCELLED",
       );
     },
   );
