@@ -27,6 +27,17 @@ test("automation center provides list, detail, editing and a separate review sur
   assert.match(source, /revision:draft\.revision/);
   assert.match(source, /只有名称、条件与动作回读一致才会报告成功/);
   assert.match(source, /新建规则默认关闭/);
+  // Configurable sunrise/sunset triggers
+  assert.match(source, /日出或日落条件配置/);
+  assert.match(source, /automation-sun-builder/);
+  assert.match(source, /parseSunFromLabel/);
+  assert.match(source, /formatSunLabel/);
+  // Configurable temperature and environmental conditions
+  assert.match(source, /parseTemperatureFromLabel/);
+  assert.match(source, /formatTemperatureLabel/);
+  assert.match(source, /automation-temp-builder/);
+  assert.match(source, /设定目标气温/);
+  assert.match(source, /室外气温/);
 });
 
 test("real condition templates are selectable without exposing raw cloud nodes", async () => {
@@ -82,4 +93,45 @@ test("automation pages retain mobile controls and safe-area spacing", async () =
   assert.match(styles, /\.automation-discovered-capabilities/);
   assert.match(styles, /\.automation-review-page/);
   assert.match(styles, /\.automation-value-readonly/);
+});
+
+test("automation detail and editor incorporate triggers AND/OR, conditions AND/OR, true/false action branches and effective time", async () => {
+  const source = await readFile(componentUrl, "utf8");
+  // Logic: triggers AND/OR and conditions AND/OR
+  assert.match(source, /满足所有触发点 \(AND\)/);
+  assert.match(source, /满足任一触发点 \(OR\)/);
+  assert.match(source, /满足所有条件 \(AND\)/);
+  assert.match(source, /满足任一条件 \(OR\)/);
+  assert.match(source, /conditionMode/);
+
+  // Logic: True actions and False actions (Else branch)
+  assert.match(source, /满足条件时执行 \(True\)/);
+  assert.match(source, /不满足条件时执行 \(False\)/);
+  assert.match(source, /automation-else-section/);
+  assert.match(source, /falseActions/);
+  assert.match(source, /false-action-row/);
+  assert.match(source, /resolvedFalseActions/);
+
+  // Logic: Other conditions (Effective time period and repetition)
+  assert.match(source, /生效时段与其他条件/);
+  assert.match(source, /全天生效/);
+  assert.match(source, /自定义生效时段/);
+  assert.match(source, /effectiveTime/);
+
+  // Categories per section (reference Mi Home App)
+  assert.match(source, /智能设备状态/);
+  assert.match(source, /时间条件 \(生效时段\)/);
+  assert.match(source, /环境气象状态/);
+  assert.match(source, /智能设备控制/);
+  assert.match(source, /延时执行/);
+  assert.match(source, /发送通知/);
+
+  // Calling IoT interface for all selectable smart devices
+  assert.match(source, /调用 IoT 接口/);
+  assert.match(source, /onFetchCatalog/);
+  assert.match(source, /catalogLoading/);
+  assert.match(source, /resolveActionModel/);
+  assert.match(source, /catalog\.actions/);
+  assert.doesNotMatch(source, /actionCatalog is not defined/);
+  assert.doesNotMatch(source, /matchedDev\?\.kind \|\| \"device\"/);
 });

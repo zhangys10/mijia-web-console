@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     const devices = await listDevices(session);
     const validated = await validateSceneDraftCapabilities(draft, devices.devices);
     const templates = resolveAutomationTriggerSelections(before, draft.triggerSelections);
-    const expected = { ...validated, schedule: draft.schedule, triggerSelections: draft.triggerSelections, triggerMode: draft.triggerMode };
+    const expected = { ...validated, schedule: draft.schedule, triggerSelections: draft.triggerSelections, triggerMode: draft.triggerMode, conditionMode: draft.conditionMode, conditions: draft.conditions, falseActions: draft.falseActions, effectiveTime: draft.effectiveTime };
     const response = await submitSceneEdit(session, buildAutomationCreatePayload(expected, session.userId, templates));
     const responseId = sceneIdFromEditResponse(response);
     const previousIds = new Set(before.map(sceneRecordId));

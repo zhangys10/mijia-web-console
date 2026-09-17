@@ -59,11 +59,12 @@ export type SceneWriteDraft = {
   enabled?: boolean;
   revision?: string;
   actions?: SceneDraftAction[];
+  falseActions?: SceneDraftAction[];
 };
 
 type ActionContainer = {
   style: "modern" | "legacy";
-  key: "scene_action" | "action" | "actions" | "setting";
+  key: "scene_action" | "action" | "actions" | "setting" | "scene_else_action" | "else_action";
   encoded: boolean;
   container?: XiaomiSceneRecord;
   entries: XiaomiSceneRecord[];
@@ -122,19 +123,42 @@ function actionContainer(scene: XiaomiSceneRecord): ActionContainer {
   return { style: "modern", key: "scene_action", encoded: false, container: {}, entries: [] };
 }
 
+function elseActionContainer(scene: XiaomiSceneRecord): ActionContainer {
+  for (const key of ["scene_else_action", "else_action"] as const) {
+    if (scene[key] === undefined) continue;
+    const container = parsedSceneRecord(scene[key]);
+    if (Array.isArray(container?.actions)) {
+      return {
+        style: "modern",
+        key,
+        encoded: typeof scene[key] === "string",
+        container,
+        entries: container.actions.map(item => record(item) ?? {}),
+      };
+    }
+    if (Array.isArray(scene[key])) {
+      return { style: "modern", key, encoded: false, entries: scene[key].map(item => record(item) ?? {}) };
+    }
+  }
+  return { style: "modern", key: "scene_else_action", encoded: false, container: { mode: 1 }, entries: [] };
+}
+
 function actionPayload(action: XiaomiSceneRecord) {
   return parsedSceneRecord(action.payload_json ?? action.payload);
 }
 
-function parsedAction(action: XiaomiSceneRecord, sourceIndex: number): SceneDraftAction | SceneDraftUnsupportedAction {
+export function parsedAction(action: XiaomiSceneRecord, sourceIndex: number): SceneDraftAction | SceneDraftUnsupportedAction {
   const payload = actionPayload(action);
   const label = text(action.name ?? action.action_name) || "未命名动作";
   const deviceName = text(payload?.device_name ?? action.device_name);
-  const did = text(payload?.did ?? action.did);
+  const rawDid = text(payload?.did ?? action.did)
+    || (Array.isArray(payload?.value) ? text(record(payload.value[0])?.did ?? record(payload.value[0])?.device_id) : undefined);
   const model = text(action.model ?? payload?.model);
   const command = text(payload?.command).toLowerCase();
-  const base = { clientId: `source-${sourceIndex}`, sourceIndex, did, deviceName, model, label };
-  if (command === "set_properties" && did && Array.isArray(payload?.value)) {
+  const isSetProperties = command === "set_properties" || command === "set_property" || (Array.isArray(payload?.value) && payload.value.some(item => record(item)?.siid !== undefined && record(item)?.piid !== undefined));
+  if (isSetProperties && rawDid && Array.isArray(payload?.value)) {
+    const did = rawDid;
+    const base = { clientId: `source-${sourceIndex}`, sourceIndex, did, deviceName, model, label };
     const properties: SceneDraftProperty[] = [];
     for (const item of payload.value) {
       const value = record(item);
@@ -152,11 +176,15 @@ function parsedAction(action: XiaomiSceneRecord, sourceIndex: number): SceneDraf
     const siid = integer(value?.siid);
     const aiid = integer(value?.aiid);
     const inputs = value?.in;
-    if (did && siid && aiid && Array.isArray(inputs) && inputs.length === 0) return { ...base, kind: "invoke-action", siid, aiid };
-    return { clientId: base.clientId, kind: "unsupported", sourceIndex, label, ...(deviceName ? { deviceName } : {}), reason: "设备动作包含必填或未知输入参数" };
+    if (rawDid && siid && aiid && Array.isArray(inputs) && inputs.length === 0) {
+      const did = rawDid;
+      const base = { clientId: `source-${sourceIndex}`, sourceIndex, did, deviceName, model, label };
+      return { ...base, kind: "invoke-action", siid, aiid };
+    }
+    return { clientId: `source-${sourceIndex}`, kind: "unsupported", sourceIndex, label, ...(deviceName ? { deviceName } : {}), reason: "设备动作包含必填或未知输入参数" };
   }
   return {
-    clientId: base.clientId,
+    clientId: `source-${sourceIndex}`,
     kind: "unsupported",
     sourceIndex,
     label,
@@ -260,6 +288,7 @@ function replaceActions(scene: XiaomiSceneRecord, actions: SceneDraftAction[], u
   const current = actionContainer(scene);
   const entries = actions.map((action, index) => {
     const source = action.sourceIndex === undefined ? undefined : current.entries[action.sourceIndex];
+    if (source && sceneDraftActionMatchesWrite(action, parsedAction(source, action.sourceIndex!))) return deepClone(source);
     return current.style === "legacy" ? legacyAction(action, index + 1, source) : modernAction(action, index + 1, source, userId);
   });
   if (current.key === "actions") scene.actions = entries;
@@ -272,6 +301,19 @@ function replaceActions(scene: XiaomiSceneRecord, actions: SceneDraftAction[], u
     container.actions = entries;
     scene[current.key] = current.encoded ? JSON.stringify(container) : container;
   }
+}
+
+export function replaceElseActions(scene: XiaomiSceneRecord, actions: SceneDraftAction[], userId = text(scene.uid)) {
+  const current = elseActionContainer(scene);
+  const entries = actions.map((action, index) => {
+    const source = action.sourceIndex === undefined ? undefined : current.entries[action.sourceIndex];
+    if (source && sceneDraftActionMatchesWrite(action, parsedAction(source, action.sourceIndex!))) return deepClone(source);
+    return current.style === "legacy" ? legacyAction(action, index + 1, source) : modernAction(action, index + 1, source, userId);
+  });
+  const container = deepClone(current.container ?? { mode: 1 });
+  container.mode = typeof container.mode === "number" ? container.mode : 1;
+  container.actions = entries;
+  scene[current.key] = current.encoded ? JSON.stringify(container) : container;
 }
 
 function writeMetadata(scene: XiaomiSceneRecord, draft: SceneWriteDraft) {
@@ -288,6 +330,7 @@ export function buildUpdatePayload(scene: XiaomiSceneRecord, draft: SceneWriteDr
   const output = deepClone(scene);
   writeMetadata(output, draft);
   if (draft.actions) replaceActions(output, draft.actions);
+  if (draft.falseActions) replaceElseActions(output, draft.falseActions);
   output.edit_from = 0;
   output.value_format = 1;
   return output;
@@ -308,6 +351,7 @@ export function buildCreatePayload(draft: SceneWriteDraft, userId: string) {
     scene_action: { mode: 1, actions: [] },
   };
   replaceActions(output, draft.actions ?? [], userId);
+  if (draft.falseActions?.length) replaceElseActions(output, draft.falseActions, userId);
   output.edit_from = 0;
   output.value_format = 1;
   return output;
@@ -345,9 +389,9 @@ export function assertBasicSceneDraft(value: unknown, editing: boolean): SceneWr
       const action = record(item);
       if (!action || !["set-properties", "invoke-action"].includes(text(action.kind))) throw new Error("INVALID_SCENE_ACTION");
       const did = text(action.did);
-      const deviceName = typeof action.deviceName === "string" ? action.deviceName.trim() : "";
-      const model = text(action.model);
-      const label = typeof action.label === "string" ? action.label.trim() : "";
+      const deviceName = (typeof action.deviceName === "string" ? action.deviceName.trim() : "") || "智能设备";
+      const model = text(action.model) || "device";
+      const label = (typeof action.label === "string" ? action.label.trim() : "") || deviceName || "执行动作";
       if (!did || did.length > 128 || !deviceName || deviceName.length > 100 || !model || model.length > 120 || !label || label.length > 100) throw new Error("INVALID_SCENE_ACTION");
       const templateKey = typeof action.templateKey === "string" && /^action-\d+$/.test(action.templateKey) ? action.templateKey : undefined;
       const base = { clientId: text(action.clientId) || `action-${index}`, did, deviceName, model, label, ...(templateKey ? { templateKey } : {}), ...(Number.isInteger(action.sourceIndex) && Number(action.sourceIndex) >= 0 ? { sourceIndex: Number(action.sourceIndex) } : {}) };
@@ -446,6 +490,16 @@ export function assertSceneActionSources(actions: SceneDraftAction[], original: 
     if (used.has(action.sourceIndex) || !source || source.kind === "unsupported" || source.kind !== action.kind || source.did !== action.did) throw new Error("INVALID_SCENE_ACTION_SOURCE");
     used.add(action.sourceIndex);
   }
+}
+
+export function sceneDraftActionMatchesWrite(action: SceneDraftAction, candidate?: SceneEditorDraft["actions"][number]) {
+  if (!candidate || candidate.kind === "unsupported" || candidate.kind !== action.kind || candidate.did !== action.did || candidate.templateKey !== action.templateKey) return false;
+  if (action.kind === "invoke-action") return candidate.kind === "invoke-action" && candidate.siid === action.siid && candidate.aiid === action.aiid;
+  if (candidate.kind !== "set-properties" || candidate.properties?.length !== action.properties?.length) return false;
+  return (action.properties ?? []).every((property, propertyIndex) => {
+    const found = candidate.properties?.[propertyIndex];
+    return Boolean(found && found.siid === property.siid && found.piid === property.piid && sameValue(found.value, property.value));
+  });
 }
 
 function sameValue(left: SceneValue, right: SceneValue) {

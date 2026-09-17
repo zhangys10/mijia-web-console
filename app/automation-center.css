@@ -31,3 +31,161 @@
 .automation-review-row{display:grid;grid-template-columns:28px 1fr;align-items:center;gap:10px;border-top:1px solid #f0f2f4;padding:11px 2px}.automation-review-row>i{width:25px;height:25px;display:grid;place-items:center;border-radius:8px;background:#f4f6f8;font-style:normal;font-size:8px}.automation-review-row strong,.automation-review-row small{display:block;font-size:9px}.automation-review-row small{margin-top:3px;color:var(--muted);font-size:8px}
 .automation-value-readonly{display:block;margin-top:7px;color:#7d8792;font-size:8px}
 @media(max-width:760px){.automation-trigger-kinds,.automation-device-picker{grid-template-columns:1fr}.automation-selected-heading>button,.automation-selected-trigger>button{min-height:44px}.automation-selected-trigger>button{min-width:44px}.automation-date-empty{align-items:flex-start;flex-direction:column;gap:3px}.automation-review-page .automation-editor-body{margin-top:16px}.automation-review-heading h3{font-size:17px}}
+
+/* Redesigned Automation Flow & Detail Enhancements */
+.automation-flow-block{border:1px solid var(--line);border-radius:16px;padding:16px;background:#fff}
+.automation-flow-block>header{display:flex;gap:10px;align-items:center;margin-bottom:12px}
+.automation-flow-block>header>span{width:42px;height:26px;display:grid;place-items:center;border-radius:9px;font-size:9px;font-weight:800}
+.automation-flow-block>header>span.condition-span{background:#eef3fc;color:#2b6cb0}
+.automation-flow-block>header>span.true-span{background:#e8f8f0;color:#238636}
+.automation-flow-block>header>span.false-span{background:#fff0ed;color:#d9534f}
+.automation-flow-block>header>span.time-span{background:#f5f0fb;color:#7030a0}
+.automation-mode-badge{display:inline-block;margin-top:3px;padding:2px 7px;border-radius:6px;background:#f0f4f8;color:#506070;font-size:8px;font-weight:600}
+.automation-sub-device{display:block;margin-top:2px;color:#88929e;font-size:8px}
+.automation-flow-empty-cond{padding:12px 10px;border-radius:10px;background:#f9fafb;color:#8a94a0;font-size:9px;text-align:center}
+.automation-branches-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.automation-flow-block.branch-true{border-color:#d0eedb;background:#fbfffd}
+.automation-flow-block.branch-false{border-color:#ffe4dd;background:#fffdfc}
+.automation-flow-block.time-block{border-color:#ebdff5;background:#fdfaff}
+.automation-effective-preview{display:flex;flex-direction:column;gap:8px;font-size:9px;color:#6d7782}
+
+/* Basic Info Grid */
+.automation-basic-grid{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center}
+.automation-field-toggle{display:grid;gap:8px}
+.automation-field-toggle>span{color:#66717d;font-size:10px;font-weight:700}
+.automation-status-btn{min-height:40px;padding:8px 16px;border-radius:10px;border:1px solid #dfe4e9;font-size:11px;font-weight:700;cursor:pointer}
+.automation-status-btn.on{border-color:#34a853;background:#e6f4ea;color:#137333}
+.automation-status-btn.off{border-color:#dadce0;background:#f1f3f4;color:#5f6368}
+
+/* Builder Head */
+.automation-builder-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #f0f2f4}
+.automation-builder-head strong{font-size:10px;color:#495057}
+.automation-builder-head button{border:0;background:transparent;color:#7a869a;font-size:9px;cursor:pointer}
+.automation-selected-empty{padding:14px;border-radius:10px;background:#f9fafb;color:#94a0ab;font-size:9px;text-align:center}
+
+/* Categories & Chips */
+.automation-category-box{margin-top:14px;border:1px solid #e7eaee;border-radius:12px;padding:12px;background:#fcfdfe}
+.automation-category-title{margin-bottom:9px;font-size:9px;color:#5c6874}
+.automation-category-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.automation-category-chips button{padding:7px 12px;border:1px solid #dcdfe4;border-radius:20px;background:#fff;color:#55616d;font-size:9px;font-weight:600;cursor:pointer}
+.automation-category-chips button.selected{border-color:#ff9f72;background:#fff3ed;color:#e65f27}
+.automation-cat-content{margin-top:10px;border-top:1px dashed #e4e7eb;padding-top:12px}
+.automation-device-cond-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:8px}
+.automation-device-cond-list button{padding:8px 10px;border:1px solid #e2e6ea;border-radius:8px;background:#fff;text-align:left;font-size:9px;cursor:pointer}
+.automation-device-cond-list button:hover{border-color:#ffcaa6;background:#fffaf6}
+.automation-weather-options{display:flex;flex-wrap:wrap;gap:8px}
+.automation-weather-options button{padding:8px 12px;border:1px solid #e0e4e8;border-radius:10px;background:#fff;font-size:9px;cursor:pointer}
+.automation-weather-options button:hover{border-color:#ff9f72;color:#e65f27}
+
+/* Time Picker Row */
+.automation-time-picker-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.automation-time-picker-row label{display:grid;gap:4px}
+.automation-time-picker-row label>span{font-size:8px;color:#788492}
+.automation-time-picker-row input[type=time]{padding:6px 8px;border:1px solid #dcdfe4;border-radius:8px;font-size:11px}
+.primary-pill{padding:8px 14px;border:0;border-radius:9px;background:var(--orange);color:#fff;font-size:9px;font-weight:700;cursor:pointer}
+
+/* Action Tools & Reordering */
+.automation-action-tools{display:flex;gap:4px;align-items:center}
+.automation-action-tools button{min-width:26px;height:26px;border:1px solid #e5e9ed;border-radius:6px;background:#fff;color:#687480;font-size:9px;cursor:pointer}
+.automation-action-tools button:last-child{color:#c65342}
+.automation-action-tools button:disabled{opacity:.35;cursor:not-allowed}
+
+/* Else Section & False Actions */
+.automation-else-section{border-left:3px solid #ff9f72;background:#fffcfb}
+.false-action-row{border-color:#ffe8e0}
+.false-badge{background:#fff0ed!important;color:#d9534f!important}
+.automation-else-empty{padding:14px;border-radius:10px;background:#fff8f6;color:#a87d72;font-size:9px;text-align:center}
+
+/* Effective Time Controls */
+.automation-effective-controls{display:grid;gap:12px}
+.automation-schedule-sync-note{margin-top:10px;border-radius:10px;background:#eef6fc;padding:10px;color:#205081;font-size:9px}
+.automation-schedule-sync-note strong{display:block}
+.automation-schedule-sync-note small{display:block;margin-top:3px;color:#4f7a9d}
+.automation-review-empty{padding:10px;color:#9aa5b1;font-size:9px}
+
+@media(max-width:760px){
+  .automation-branches-grid{grid-template-columns:1fr}
+  .automation-basic-grid{grid-template-columns:1fr}
+  .automation-device-cond-list{grid-template-columns:1fr}
+}
+
+
+/* Enhanced trigger/condition cards and inline editing */
+.automation-selected-trigger.editing{display:block;padding:12px;border-color:#ff9f72;background:#fffdfa}
+.automation-selected-info{display:grid;gap:3px;min-width:0}
+.automation-selected-meta{display:flex;align-items:center;flex-wrap:wrap;gap:4px}
+.automation-selected-actions{display:flex;align-items:center;gap:6px}
+.automation-selected-actions>button{min-height:32px;border:1px solid #ffe0d1;border-radius:8px;background:#fff;padding:0 8px;color:#b86441;font-size:8px;cursor:pointer}
+.automation-selected-actions>button.automation-btn-edit{border-color:#d4e2f4;color:#2b6cb0;background:#f5f9ff}
+.automation-selected-actions>button:hover{filter:brightness(0.96)}
+.automation-btn-edit{min-height:30px;border:1px solid #c7d9ec;border-radius:8px;background:#f4f8fd;color:#28639e;font-size:8px;font-weight:600;padding:4px 8px;cursor:pointer}
+.automation-btn-edit:hover{background:#e7f0fa}
+.automation-room-tag{display:inline-block;padding:2px 6px;border-radius:5px;background:#eef2f6;color:#4a5568;font-size:7px;font-weight:700;margin-right:4px}
+.automation-tag{display:inline-block;padding:2px 6px;border-radius:5px;font-size:7px;font-weight:700;margin-right:4px}
+.automation-tag.tag-device{background:#ebf5ff;color:#2b6cb0}
+.automation-tag.tag-schedule{background:#faf0ff;color:#6b46c1}
+.automation-tag.tag-weather{background:#fffaf0;color:#c05621}
+.automation-tag.tag-time{background:#f0fff4;color:#276749}
+.automation-dev-name{color:#1a202c;font-weight:700}
+.automation-item-label{color:#2d3748;font-weight:600}
+.automation-sep{margin:0 4px;color:#a0aec0}
+.automation-selected-sub{margin-top:3px;color:var(--muted);font-size:7px;display:block}
+.automation-inline-editor{display:grid;gap:10px;margin-top:10px;padding-top:10px;border-top:1px dashed #ffd9c7}
+.automation-inline-field{display:grid;gap:4px}
+.automation-inline-field>span{font-size:8px;color:#718096;font-weight:600}
+.automation-inline-field input[type=text]{padding:7px 10px;border:1px solid #cbd5e0;border-radius:8px;font-size:10px;background:#fff}
+.automation-inline-dev{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px;border-radius:8px;background:#f7fafc;font-size:8px}
+.automation-switch-btn{padding:4px 8px;border:1px solid #cbd5e0;border-radius:6px;background:#fff;color:#2b6cb0;font-size:8px;cursor:pointer}
+.automation-inline-actions{display:flex;gap:8px;margin-top:8px}
+.automation-btn-save{padding:6px 14px;border:0;border-radius:8px;background:var(--orange);color:#fff;font-size:9px;font-weight:700;cursor:pointer}
+.automation-btn-cancel{padding:6px 12px;border:1px solid #cbd5e0;border-radius:8px;background:#fff;color:#718096;font-size:9px;cursor:pointer}
+.automation-quick-presets{display:flex;gap:5px;flex-wrap:wrap;margin-top:4px}
+.automation-quick-presets button{padding:3px 8px;border:1px solid #e2e8f0;border-radius:6px;background:#edf2f7;color:#4a5568;font-size:7px;cursor:pointer}
+.automation-quick-presets button:hover{background:#e2e8f0}
+.automation-flow-content{display:grid;gap:2px}
+.automation-flow-meta{display:flex;align-items:center;flex-wrap:wrap;gap:4px}
+.automation-flow-tag{display:inline-block;padding:2px 6px;border-radius:5px;font-size:7px;font-weight:700;margin-right:4px;background:#f0f4f8;color:#4a5568}
+.automation-flow-sub{font-size:8px;color:var(--muted);display:block}
+
+/* Sunrise & Sunset Configurator Styles */
+.automation-sun-builder{display:grid;gap:12px;margin-top:10px;border:1px solid #e7eaee;border-radius:12px;background:#fff;padding:14px}
+.automation-sun-builder-inline{display:grid;gap:10px;padding:10px;border-radius:10px;background:#fbfcfe;border:1px solid #e9eef5}
+.automation-sun-field{display:grid;gap:6px}
+.automation-sun-label{font-size:8px;font-weight:700;color:#4a5568}
+.automation-sun-type-pills,.automation-sun-offset-pills,.automation-sun-repeat-pills{display:flex;flex-wrap:wrap;gap:7px}
+.automation-sun-type-pills button,.automation-sun-offset-pills button,.automation-sun-repeat-pills button{padding:7px 14px;border:1px solid var(--line);border-radius:9px;background:#fff;color:#4a5568;font-size:9px;font-weight:600;cursor:pointer;transition:all .15s}
+.automation-sun-type-pills button.selected,.automation-sun-offset-pills button.selected,.automation-sun-repeat-pills button.selected{border-color:#ff9f72;background:#fff3ed;color:#e65f27;font-weight:700}
+.automation-sun-minutes-quick{display:flex;flex-wrap:wrap;gap:6px}
+.automation-sun-minutes-quick button{padding:5px 10px;border:1px solid #dce2e8;border-radius:8px;background:#fff;color:#5a6674;font-size:8px;cursor:pointer}
+.automation-sun-minutes-quick button.selected{border-color:#ff9f72;background:#fff3ed;color:#e65f27;font-weight:700}
+.automation-sun-custom-minutes{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:8px;color:#718096}
+.automation-sun-custom-minutes input[type=number]{width:70px;padding:5px 8px;border:1px solid #cbd5e0;border-radius:7px;font-size:9px;text-align:center}
+.automation-sun-weekdays{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+.automation-sun-weekdays button{padding:5px 8px;border:1px solid #e2e8f0;border-radius:7px;background:#fff;color:#64748b;font-size:8px;cursor:pointer}
+.automation-sun-weekdays button.selected{border-color:#ff9f72;background:#fff3ed;color:#e65f27;font-weight:700}
+.automation-sun-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;padding-top:10px;border-top:1px dashed #e2e8f0}
+.automation-sun-preview{font-size:8px;color:#4a5568}
+.automation-sun-preview strong{margin-left:4px;color:var(--orange);font-size:9px}
+.automation-sun-preview-box{padding:7px 10px;border-radius:8px;background:#fff8f5;border:1px solid #ffe6dc;color:#c05621;font-size:9px}
+.automation-sun-apply-btn{padding:8px 16px;border:0;border-radius:9px;background:var(--orange);color:#fff;font-size:9px;font-weight:700;cursor:pointer}
+.automation-sun-apply-btn:hover{filter:brightness(.95)}
+
+/* Temperature & Environmental Conditions Configurator */
+.automation-temp-inline-editor{display:grid;gap:10px;padding:10px;border-radius:10px;background:#fbfcfe;border:1px solid #e9eef5}
+.automation-temp-builder{display:grid;gap:10px;padding:12px;border:1px solid #e7eaee;border-radius:12px;background:#fff}
+.automation-temp-stepper{display:flex;align-items:center;gap:8px}
+.automation-stepper-btn{padding:6px 12px;border:1px solid #cbd5e0;border-radius:8px;background:#fff;font-size:9px;font-weight:700;cursor:pointer;color:#4a5568;transition:all .15s}
+.automation-stepper-btn:hover{border-color:#ff9f72;color:#e65f27;background:#fff7f3}
+.automation-temp-input-wrap{display:flex;align-items:center;gap:4px}
+.automation-temp-input-wrap input[type=number]{width:64px;padding:6px 8px;border:1px solid #cbd5e0;border-radius:8px;font-size:11px;text-align:center;font-weight:700;color:#2d3748;background:#fff}
+.automation-temp-input-wrap span{font-size:10px;font-weight:700;color:#718096}
+.automation-temp-presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.automation-temp-presets button{padding:5px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;font-size:8px;cursor:pointer;color:#64748b;transition:all .15s}
+.automation-temp-presets button:hover{border-color:#ff9f72;color:#e65f27}
+.automation-temp-presets button.selected{border-color:#ff9f72;background:#fff3ed;color:#e65f27;font-weight:700}
+.automation-weather-subtabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.automation-weather-subtabs button{padding:6px 12px;border:1px solid #e2e8f0;border-radius:20px;background:#f8fafc;font-size:9px;cursor:pointer;color:#475569;transition:all .15s}
+.automation-weather-subtabs button:hover{background:#f1f5f9;color:#0f172a}
+.automation-weather-subtabs button.selected{border-color:#ff9f72;background:#fff3ed;color:#e65f27;font-weight:700}
+.automation-temp-apply-btn{padding:8px 16px;border:0;border-radius:9px;background:var(--orange);color:#fff;font-size:9px;font-weight:700;cursor:pointer;transition:all .15s}
+.automation-temp-apply-btn:hover{filter:brightness(.95)}

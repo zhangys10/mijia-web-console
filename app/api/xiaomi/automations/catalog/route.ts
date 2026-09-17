@@ -28,8 +28,9 @@ export async function GET(request: NextRequest) {
     catch { return NextResponse.json({ error: "XIAOMI_HOME_NOT_FOUND" }, { status: 404 }); }
     const home = homes.find(item => item.id === homeId)!;
     const [response, automations] = await Promise.all([listDevices(session), listRawAutomations(session, homeId!)]);
-    const devices = response.devices
-      .filter(device => text(device.homeId ?? device.home_id) === homeId && text(device.did) && text(device.model))
+    const scoped = response.devices.filter(device => text(device.homeId ?? device.home_id) === homeId && text(device.did) && text(device.model));
+    const targetDevices = scoped.length > 0 ? scoped : response.devices.filter(device => text(device.did) && text(device.model));
+    const devices = targetDevices
       .filter((device, deviceIndex, candidates) => candidates.findIndex(candidate => text(candidate.did) === text(device.did)) === deviceIndex);
     const automationCatalogRequest = discoverDeviceAutomationCatalog(session, homeId!, home.ownerUid, devices.map((device, deviceIndex) => ({
       key: `device-${deviceIndex + 1}`,
@@ -37,7 +38,7 @@ export async function GET(request: NextRequest) {
       did: text(device.did),
       model: text(device.model),
       deviceName: text(device.name) || text(device.model) || "未命名设备",
-      room: text(device.roomName ?? device.room_name) || "未分配",
+      room: text(device.room ?? device.roomName ?? device.room_name) || "未分配",
     }))).catch(() => []);
     const specifications = new Map<string, Awaited<ReturnType<typeof getMiotCapabilities>>>();
     const catalog = [];
@@ -55,7 +56,7 @@ export async function GET(request: NextRequest) {
           if (!parseDerivedDeviceId(text(device.did))) specificationTriggerDevices.push({
             key: `device-${deviceIndex + 1}`,
             deviceName: text(device.name) || model,
-            room: text(device.roomName ?? device.room_name) || "未分配",
+            room: text(device.room ?? device.roomName ?? device.room_name) || "未分配",
             capabilities: [],
             actions: [],
             discovery: "unavailable",
@@ -64,7 +65,7 @@ export async function GET(request: NextRequest) {
         }
       }
       const deviceName = text(device.name) || model;
-      const room = text(device.roomName ?? device.room_name) || "未分配";
+      const room = text(device.room ?? device.roomName ?? device.room_name) || "未分配";
       if (!parseDerivedDeviceId(text(device.did))) specificationTriggerDevices.push({
         key: `device-${deviceIndex + 1}`,
         deviceName,
@@ -104,16 +105,36 @@ export async function GET(request: NextRequest) {
       }
     }
     const discoveredDevices = await automationCatalogRequest;
+    const devicesByKey = new Map(devices.map((device, index) => [`device-${index + 1}`, {
+      did: text(device.did),
+      model: text(device.model),
+      room: text(device.room ?? device.roomName ?? device.room_name) || "未分配",
+      deviceName: text(device.name) || text(device.model) || "未命名设备",
+    }]));
     const specificationDevicesByKey = new Map(specificationTriggerDevices.map(device => [device.key, device]));
     const discoveredKeys = new Set(discoveredDevices.map(device => device.key));
     const triggerDevices = [
       ...discoveredDevices.map(device => {
         const specificationDevice = specificationDevicesByKey.get(device.key);
-        return device.discovery === "unavailable" && specificationDevice?.capabilities.length
-          ? { ...device, capabilities: specificationDevice.capabilities, discovery: "miot-spec" as const }
-          : device;
+        const meta = devicesByKey.get(device.key);
+        return {
+          ...device,
+          ...(meta?.did ? { did: meta.did } : {}),
+          ...(meta?.model ? { model: meta.model } : {}),
+          room: device.room && device.room !== "未分配" ? device.room : (meta?.room || "未分配"),
+          ...(device.discovery === "unavailable" && specificationDevice?.capabilities.length
+            ? { capabilities: specificationDevice.capabilities, discovery: "miot-spec" as const }
+            : {}),
+        };
       }),
-      ...specificationTriggerDevices.filter(device => !discoveredKeys.has(device.key)),
+      ...specificationTriggerDevices.filter(device => !discoveredKeys.has(device.key)).map(device => {
+        const meta = devicesByKey.get(device.key);
+        return {
+          ...device,
+          ...(meta?.did ? { did: meta.did } : {}),
+          ...(meta?.model ? { model: meta.model } : {}),
+        };
+      }),
     ];
     const triggerTemplates = buildAutomationTriggerCatalog(automations, devices, homeId!);
     return NextResponse.json({
