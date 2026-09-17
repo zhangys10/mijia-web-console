@@ -47,9 +47,9 @@ flowchart TD
 ### TODO
 
 - [x] 根据官方快速开始确认 Makers Agents 的目录、入口、会话头和部署配置 contract。
-- [ ] 在目标 EdgeOne 项目人工确认 Agents 可用，并完成 `edgeone makers link`。
+- [x] 在目标 EdgeOne 项目人工确认 Agents 可用，并完成 `edgeone makers link`。
 - [x] 确认 `AI_GATEWAY_API_KEY`、`AI_GATEWAY_BASE_URL` 通过服务端项目环境注入，Agent 从 `context.env` 读取。
-- [ ] 查询并记录当前项目首期批准的快速模型名称，不硬编码官方示例或未经验证的模型 ID。
+- [x] 记录 2026-09-17 首期批准模型 `@makers/deepseek-v4-flash`，仅作为部署配置，不设源码默认值。
 - [x] 固定 Web Chat API、Agent 内部请求和错误码。
 - [x] 将旧“每用户自带 LLM Key”标记为 superseded。
 - [x] 保留 `/api/ai/command` 作为旧兼容入口，迁移完成前新部署默认关闭。

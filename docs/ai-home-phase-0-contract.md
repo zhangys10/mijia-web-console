@@ -1,6 +1,6 @@
 # AI Home Phase 0 Contract
 
-> 状态：Frozen，等待 EdgeOne 项目人工验证
+> 状态：Verified
 > 冻结日期：2026-09-17
 > 依据：[EdgeOne Makers Agents 快速开始](https://cloud.tencent.com/document/product/1552/132786)、[AI Home Agent PoC 详细设计](./ai-home-poc-design.md)
 
@@ -11,7 +11,7 @@
 - 所有 Agent 请求必须携带 `Makers-Conversation-Id`。平台要求长度为 6–36 个字符，只允许字母、数字、`-`、`_` 和 `.`。
 - `AI_GATEWAY_API_KEY`、`AI_GATEWAY_BASE_URL` 和 `AI_GATEWAY_MODEL` 只通过 EdgeOne 项目环境变量或本地关联项目注入，由 Agent 服务端从 `context.env` 读取。
 - 仓库不提供生产默认模型。`AI_GATEWAY_MODEL` 必须填写当前项目中人工验证可用的模型 ID；官方文档中的示例模型不等于本项目批准模型。
-- 当前仓库尚未证明目标 EdgeOne 项目已经启用 Agents，也尚未确认批准模型；这两项是 Phase 1 开始前的人工门禁。
+- 目标 EdgeOne 项目已完成人工关联并确认 Agents 可用；首期批准模型为 `@makers/deepseek-v4-flash`。模型 ID 只记录为验证结果，不成为源码默认值。
 
 ## 2. Web Chat Contract
 
@@ -135,11 +135,15 @@ Authorization: Bearer <AI_AGENT_INTERNAL_SECRET>
 - Vercel Preview 采用只读预览：允许展示助手入口和 mock 文本，不调用 Makers Agent、不消耗 Gateway 配额、不执行真实米家场景。
 - Production、Preview、Development 使用不同的 `AI_AGENT_INTERNAL_SECRET`、`AI_PRINCIPAL_SECRET` 和会话加密 Secret。
 
-## 6. Merge 后人工验证
+## 6. 人工验证记录
 
-1. 在目标 EdgeOne 项目控制台确认存在 Agents 能力，并记录项目名称与生产分支。
-2. 按官方快速开始执行 `edgeone makers link`，确认本地可以同步项目环境变量。
-3. 在项目环境变量中配置测试用 `AI_GATEWAY_API_KEY`、`AI_GATEWAY_BASE_URL`，不把值写入仓库或终端日志。
-4. 在项目可用模型列表中选择一个中国大陆可用的快速模型，把准确 ID 配置为 `AI_GATEWAY_MODEL`，并记录验证日期。
-5. Phase 1 的最小 Agent 路由合入后，执行 `edgeone makers dev`，验证同一端口的 Agent 路由和 `/agent-metrics`。
-6. 上述第 1–4 项未完成前，不开始 Gateway Provider 的生产实现或填写默认模型。
+| 项目 | 结果 |
+|---|---|
+| 验证日期 | 2026-09-17 |
+| EdgeOne CLI | `1.6.40` |
+| `edgeone makers link` | 通过 |
+| 目标项目 Agents 能力 | 通过 |
+| Gateway 环境变量注入 | 通过，未记录或提交 Secret 值 |
+| 首期批准模型 | `@makers/deepseek-v4-flash` |
+
+`edgeone makers dev`、Agent 实际路由、`Makers-Conversation-Id` 和 `/agent-metrics` 在 Phase 4 创建 `agents/ai-home/index.ts` 后验证，不阻塞 Phase 1 Gateway Provider。

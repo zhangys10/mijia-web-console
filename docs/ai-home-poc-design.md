@@ -40,7 +40,7 @@ EdgeOne Makers Agents 官方文档确认：
 
 快速入门进一步确认：已有项目需使用 `agents/<name>/index.ts` 文件即路由结构并导出 `onRequest(context)`；连续对话必须携带格式受限的 `Makers-Conversation-Id`；Agent 运行参数由根目录 `edgeone.json` 的 `agents` 字段声明。详见 [Phase 0 Contract](./ai-home-phase-0-contract.md) 和 [EdgeOne Makers Agents 快速开始](https://cloud.tencent.com/document/product/1552/132786)。
 
-当前只确认平台公开能力，目标 EdgeOne 项目是否已启用 Agents、项目实际可用模型 ID 仍需在 Phase 0 merge 后人工验证。未经验证的模型名不得成为源码默认值。
+2026-09-17 已完成人工验证：目标 EdgeOne 项目支持 Agents，CLI 项目关联和 Gateway 环境变量注入正常，首期批准模型为 `@makers/deepseek-v4-flash`。该 ID 作为部署配置记录，不成为源码默认值。
 
 ## 2. 目标与非目标
 
