@@ -77,22 +77,18 @@ npm run dev
 
 ### AI Home PoC
 
-PoC 提供 `POST /api/ai/command`，用于 iPhone 快捷指令触发已审核的米家“回家模式”场景。请求必须携带独立的 Shortcut Bearer Token 和 `Idempotency-Key`；服务端只向 LLM 暴露 `activate_scene(home)` 工具，并在执行前做工具名、参数、场景白名单和幂等校验。
+PoC 提供 `POST /api/ai/command`，用于 iPhone 快捷指令触发已审核的米家“回家模式”场景。请求必须在 `Authorization: Bearer <token>` 中携带加密自包含的 Automation Token，并在触发有副作用操作时提供 `Idempotency-Key`。服务端只向 LLM 暴露 `activate_scene` 工具，并在执行前做工具名、参数、场景白名单、用户凭据隔离与幂等校验。
 
-扫码登录后，可在“账号与连接”弹窗中点击“生成 Token”，获取当前账号专属的 Siri 绑定令牌。该令牌会封装当前米家会话及默认回家场景，直接粘贴到 iPhone 快捷指令的 `Authorization` 标头中使用，无需再手动复制 `XIAOMI_AI_SESSION`。
+扫码登录后，可在侧边栏点击「设置」进入 AI 自动化配置页（或直接访问 `/ai/settings`）输入个人 DashScope / 通义千问 API Key，生成专属的加密 Automation Token。该令牌使用 AES-256-GCM 封装个人模型 Key 和米家会话，服务端不持久化用户 Key，确保多用户间的额度与凭据物理隔离。将该令牌粘贴到 iPhone 快捷指令的 `Authorization` 标头即可完成配置。
 
 推荐配置：
 
 ```text
 AI_COMMAND_ENABLED=true
-AI_COMMAND_AUTH_TOKEN_HASH=<sha-256 hash of shortcut token>
-XIAOMI_AI_SESSION=<sealed encrypted Xiaomi session>
+AI_AUTOMATION_TOKEN_SECRET=<32-byte-or-longer-random-secret>
+AI_AUTOMATION_TOKEN_KEY_ID=key-2026-01
 AI_SCENE_HOME_ID=<home id>
 AI_SCENE_HOME_SCENE_ID=<audited Mi Home scene id>
-LLM_PROVIDER=qwen
-LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-LLM_API_KEY=<server-side Qwen API key>
-LLM_MODEL=qwen3.7-flash-2026-07-15
 LLM_TIMEOUT_MS=3000
 LLM_ENABLE_THINKING=false
 AI_CONVERSATION_MAX_TURNS=5

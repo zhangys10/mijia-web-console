@@ -375,29 +375,28 @@ type AutomationTokenPayload = {
 
 ## 7. LLM 层设计
 
-### 7.1 当前实现审计（2026-09-16）
+### 7.1 实现状态审计
 
-本节描述仓库当前代码，不代表目标状态：
+当前仓库已完整实现“每个登录用户使用自己的 API Token”与自包含 Automation Token 隔离架构：
 
-| 检查点 | 当前实现 | 与目标的差距 |
+| 检查点 | 实现状态 | 说明 |
 |---|---|---|
-| Provider 类型 | `QwenOpenAiCompatibleProvider` | 目前只有 Qwen 实现，尚无通用 Provider 注册表 |
-| Provider 配置来源 | `lib/ai/config.ts` 从 `process.env` 读取 | 配置为部署级全局配置，不是按用户加载 |
-| API Token | 单一 `LLM_API_KEY` | 所有登录用户会共用同一 Token，不符合用户隔离目标 |
-| 命令路由 | `/api/ai/command` 直接构造 `new QwenOpenAiCompatibleProvider(config)` | 未根据当前登录用户解析 Provider 凭据 |
-| Siri 绑定 Token | 密封米家 `session`、`userId` 和可选 `homeId` | 未携带模型凭据引用，也没有服务端用户凭据查询 |
-| Provider endpoint | 默认 `https://dashscope.aliyuncs.com/compatible-mode/v1` | 符合中国大陆区优先，但仍需服务端 allowlist 防止任意 URL |
-| 模型 | 默认固定 `qwen3.7-flash-2026-07-15` | 可作为系统默认值，后续允许用户从审核列表选择 |
+| Provider 类型 | `ProviderCatalog` + `QwenOpenAiCompatibleProvider` | 服务端 Catalog 维护大陆 endpoint 与模型白名单 |
+| Provider 配置来源 | `lib/ai/security/automation-token.ts` 请求级载荷 | 从加密 Token 中解密出请求级凭据，无共享 Key fallback |
+| API Token | 用户私有 API Key | 每个登录用户配置并密封进自己的 Automation Token，完全隔离 |
+| 命令路由 | `/api/ai/command` | 解密 Token 并构造请求级 `ResolvedProviderCredential` 传给 Provider |
+| Siri 绑定 Token | `v1.<keyId>.<iv>.<ciphertext>.<tag>` | 封装米家 session、homeId、provider、model、apiKey，有效期 1-90 天 |
+| Provider endpoint | `PROVIDER_CATALOG` 决定 | 固定中国大陆百炼 endpoint，拒绝请求体自定义 baseUrl |
+| 模型 | 服务端允许列表 | 支持 `qwen3.7-flash-2026-07-15`, `qwen3.8-flash` 等审核模型 |
 
 ```mermaid
 flowchart TD
-    A["任意登录用户"] --> B["/api/ai/command"]
-    B --> C["loadAiCommandConfig"]
-    C --> D["共享 LLM_API_KEY"]
-    D --> E["Qwen Provider"]
+    A["登录用户 A (Key A)"] --> B["POST /api/ai/automation-token"]
+    B --> C["加密密封 Token A"]
+    C --> D["Siri 发送 Token A"]
+    D --> E["/api/ai/command 解密"]
+    E --> F["Qwen Provider (仅使用 Key A)"]
 ```
-
-因此，当前代码尚未实现“每个登录用户使用自己的 API Token”。本次只更新设计文档，不修改实现、测试或部署配置；在后续代码完成前，生产环境仍应视为共享 Token 模式。
 
 ### 7.2 Provider 与请求级凭据抽象
 
@@ -1042,16 +1041,17 @@ flowchart TD
 
 ### 13.1 当前代码所需配置
 
-由于本次不修改代码，当前部署仍依赖以下全局 Provider 环境变量：
+当前实现不再依赖共享 `LLM_API_KEY`；部署侧只保留 Provider 策略与 Automation Token 密封相关配置：
 
 ```env
 LLM_PROVIDER=qwen
 LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-LLM_API_KEY=<temporary shared deployment key>
 LLM_MODEL=qwen3.7-flash-2026-07-15
+AI_AUTOMATION_TOKEN_SECRET=<32-byte-or-longer-random-secret>
+AI_AUTOMATION_TOKEN_KEY_ID=key-2026-01
 ```
 
-这是已识别的迁移前状态，不是最终多用户方案。不得将此共享 Key 描述为“每个用户自己的 Token”。
+不得再以部署级共享 Key 作为正常路径或 fallback；每个登录用户都应通过 Automation Token 携带自己的模型凭据。
 
 ### 13.2 目标配置
 

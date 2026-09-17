@@ -29,8 +29,8 @@
 
 | 能力 | 当前状态 | 目标 |
 |---|---|---|
-| LLM API Key | 部署级 `LLM_API_KEY` | 每个用户自己的 Key |
-| Provider 创建 | Command Route 从全局配置创建 | 从请求级解密凭据创建 |
+| LLM API Key | 已移除共享 `LLM_API_KEY` fallback | 每个用户自己的 Key |
+| Provider 创建 | Command Route 从请求级解密凭据创建 | 从请求级解密凭据创建 |
 | Siri Binding | 米家会话 + 可选 homeId | 统一 Automation Token |
 | 用户配置 | 无独立页面 | 登录后一次性签发页面 |
 | 凭据持久化 | 无数据库 | 不持久化，自包含 Token |
@@ -40,7 +40,7 @@
 
 ```mermaid
 flowchart TD
-    A["当前：共享 LLM_API_KEY"] --> B["实现 Token Codec"]
+    A["当前：移除共享 LLM_API_KEY fallback"] --> B["实现 Token Codec"]
     B --> C["实现签发 API 与配置页"]
     C --> D["Command API 解密请求级凭据"]
     D --> E["移除共享 Key fallback"]
@@ -69,19 +69,19 @@ flowchart TD
 
 ### TODO
 
-- [ ] 定义 `AutomationTokenPayload` 的 TypeScript 类型。
-- [ ] 固定 `purpose = "ai-home-automation"` 和 `version = 1`。
-- [ ] 固定 Token 格式：`v1.<keyId>.<iv>.<ciphertext>.<authTag>`。
-- [ ] 固定默认有效期 30 天、允许范围 1–90 天。
-- [ ] 增加稳定错误码：
+- [x] 定义 `AutomationTokenPayload` 的 TypeScript 类型。
+- [x] 固定 `purpose = "ai-home-automation"` 和 `version = 1`。
+- [x] 固定 Token 格式：`v1.<keyId>.<iv>.<ciphertext>.<authTag>`。
+- [x] 固定默认有效期 30 天、允许范围 1–90 天。
+- [x] 增加稳定错误码：
   - `AUTOMATION_TOKEN_INVALID`
   - `AUTOMATION_TOKEN_EXPIRED`
   - `AUTOMATION_TOKEN_ENVIRONMENT_MISMATCH`（内部可区分，对外可合并为 invalid）
   - `LLM_CREDENTIAL_INVALID`
   - `LLM_PROVIDER_NOT_ALLOWED`
   - `LLM_MODEL_NOT_ALLOWED`
-- [ ] 确认旧 `/api/ai/token` 的迁移策略：PoC 推荐保留但标记 deprecated，前端不再引导使用；确认无调用后再删除。
-- [ ] 更新 API 类型和测试夹具，全部使用明显虚构的 Key。
+- [x] 确认旧 `/api/ai/token` 的迁移策略：PoC 推荐保留但标记 deprecated，前端不再引导使用；确认无调用后再删除。
+- [x] 更新 API 类型和测试夹具，全部使用明显虚构的 Key。
 
 ### 验收
 
@@ -102,30 +102,30 @@ tests/ai-automation-token.test.mjs
 
 ### TODO
 
-- [ ] 使用 Web Crypto API 的 AES-256-GCM，兼容 EdgeOne/Vercel/Worker 运行时。
-- [ ] 每次签发生成随机 96-bit IV。
-- [ ] 从环境变量读取独立的 `AI_AUTOMATION_TOKEN_SECRET`。
-- [ ] 支持 `AI_AUTOMATION_TOKEN_KEY_ID`。
-- [ ] AAD 至少包含：应用名、部署环境、purpose、version、keyId。
-- [ ] 实现 `seal(payload)`。
-- [ ] 实现 `open(token)`。
-- [ ] 解密后执行运行时 schema 校验，不仅依赖 TypeScript 类型。
-- [ ] 使用常量或专用错误类型映射失效、过期和格式错误。
-- [ ] 不在任何异常中附带 Token 或解密后的 Payload。
-- [ ] 明确 UTF-8、Base64URL、时间戳单位和 Secret 解码规则。
-- [ ] 增加当前 keyId 的严格校验；若实现旧 keyId 重叠窗口，必须由显式配置开启。
+- [x] 使用 Web Crypto API 的 AES-256-GCM，兼容 EdgeOne/Vercel/Worker 运行时。
+- [x] 每次签发生成随机 96-bit IV。
+- [x] 从环境变量读取独立的 `AI_AUTOMATION_TOKEN_SECRET`。
+- [x] 支持 `AI_AUTOMATION_TOKEN_KEY_ID`。
+- [x] AAD 至少包含：应用名、部署环境、purpose、version、keyId。
+- [x] 实现 `seal(payload)`。
+- [x] 实现 `open(token)`。
+- [x] 解密后执行运行时 schema 校验，不仅依赖 TypeScript 类型。
+- [x] 使用常量或专用错误类型映射失效、过期和格式错误。
+- [x] 不在任何异常中附带 Token 或解密后的 Payload。
+- [x] 明确 UTF-8、Base64URL、时间戳单位和 Secret 解码规则。
+- [x] 增加当前 keyId 的严格校验；若实现旧 keyId 重叠窗口，必须由显式配置开启。
 
 ### 单元测试
 
-- [ ] seal → open 往返成功。
-- [ ] 相同 Payload 两次签发产生不同密文。
-- [ ] 修改 IV、ciphertext、authTag 任一字节均失败。
-- [ ] 缺段、空段、非法 Base64URL、未知版本、未知 keyId 均失败。
-- [ ] 错误 purpose、错误环境 AAD 均失败。
-- [ ] `expiresAt <= now` 返回 expired。
-- [ ] `issuedAt` 位于不合理未来时拒绝。
-- [ ] Payload 缺少 Key、principalId、Session 或 Provider 时拒绝。
-- [ ] 测试日志和错误序列化不包含虚构原始 Key。
+- [x] seal → open 往返成功。
+- [x] 相同 Payload 两次签发产生不同密文。
+- [x] 修改 IV、ciphertext、authTag 任一字节均失败。
+- [x] 缺段、空段、非法 Base64URL、未知版本、未知 keyId 均失败。
+- [x] 错误 purpose、错误环境 AAD 均失败。
+- [x] `expiresAt <= now` 返回 expired。
+- [x] `issuedAt` 位于不合理未来时拒绝。
+- [x] Payload 缺少 Key、principalId、Session 或 Provider 时拒绝。
+- [x] 测试日志和错误序列化不包含虚构原始 Key。
 
 ### 验收
 
@@ -155,42 +155,42 @@ tests/ai-automation-token-api.test.mjs
 
 ### Provider Catalog TODO
 
-- [ ] 首期只允许 `qwen-cn`。
-- [ ] 大陆 endpoint 在服务端固定，不从请求读取。
-- [ ] 配置允许的 Flash 模型列表与默认模型。
-- [ ] 提供 `resolveProvider(provider, model)`，未知值稳定失败。
-- [ ] 避免在 Catalog 中保存任何业务 API Key。
-- [ ] 为后续大陆 Provider 预留注册接口，但不要过度抽象。
+- [x] 首期只允许 `qwen-cn`。
+- [x] 大陆 endpoint 在服务端固定，不从请求读取。
+- [x] 配置允许的 Flash 模型列表与默认模型。
+- [x] 提供 `resolveProvider(provider, model)`，未知值稳定失败。
+- [x] 避免在 Catalog 中保存任何业务 API Key。
+- [x] 为后续大陆 Provider 预留注册接口，但不要过度抽象。
 
 ### 签发 API TODO
 
-- [ ] 仅接受有效浏览器 `xiaomi_session`。
-- [ ] 限制请求方法、Content-Type 和请求体大小。
-- [ ] 校验 `provider/model/homeId/expiresInDays/apiKey`。
-- [ ] 拒绝请求体中的 `baseUrl` 或其他未声明字段。
-- [ ] 从米家登录会话构造稳定 `principalId`。
-- [ ] 校验 `homeId` 属于当前用户；未指定时按当前项目规则选择或要求用户选择。
-- [ ] 使用用户 Key 对 Provider 发起最小验证请求。
-- [ ] 验证请求不携带家庭、场景、对话或设备数据。
-- [ ] 验证成功后生成 `AutomationTokenPayload` 并密封。
-- [ ] 只返回 Token、Provider、模型、homeId 和 expiresAt。
-- [ ] 不返回原始 Key、解密 Payload 或米家 Session。
-- [ ] 为签发接口增加应用层限流；EdgeOne 同时配置边缘限流。
-- [ ] 统一 Provider 的 `401/403/timeout/5xx` 错误映射。
-- [ ] 响应设置 `Cache-Control: no-store`。
+- [x] 仅接受有效浏览器 `xiaomi_session`。
+- [x] 限制请求方法、Content-Type 和请求体大小。
+- [x] 校验 `provider/model/homeId/expiresInDays/apiKey`。
+- [x] 拒绝请求体中的 `baseUrl` 或其他未声明字段。
+- [x] 从米家登录会话构造稳定 `principalId`。
+- [x] 校验 `homeId` 属于当前用户；未指定时按当前项目规则选择或要求用户选择。
+- [x] 使用用户 Key 对 Provider 发起最小验证请求。
+- [x] 验证请求不携带家庭、场景、对话或设备数据。
+- [x] 验证成功后生成 `AutomationTokenPayload` 并密封。
+- [x] 只返回 Token、Provider、模型、homeId 和 expiresAt。
+- [x] 不返回原始 Key、解密 Payload 或米家 Session。
+- [x] 为签发接口增加应用层限流；EdgeOne 同时配置边缘限流。
+- [x] 统一 Provider 的 `401/403/timeout/5xx` 错误映射。
+- [x] 响应设置 `Cache-Control: no-store`。
 
 ### API 测试
 
-- [ ] 未登录返回 401。
-- [ ] 非法 Provider/模型在调用外部 Provider 前失败。
-- [ ] 任意 `baseUrl` 被拒绝。
-- [ ] 非法 homeId 被拒绝。
-- [ ] 有效 Key 返回可由 Codec 解密的 Token。
-- [ ] 无效 Key 不签发 Token。
-- [ ] Provider timeout 不签发 Token。
-- [ ] 响应和日志不包含原始 Key。
-- [ ] Token 中 principal、Session 与登录用户一致。
-- [ ] 有效期小于 1 天或超过 90 天被拒绝。
+- [x] 未登录返回 401。
+- [x] 非法 Provider/模型在调用外部 Provider 前失败。
+- [x] 任意 `baseUrl` 被拒绝。
+- [x] 非法 homeId 被拒绝。
+- [x] 有效 Key 返回可由 Codec 解密的 Token。
+- [x] 无效 Key 不签发 Token。
+- [x] Provider timeout 不签发 Token。
+- [x] 响应和日志不包含原始 Key。
+- [x] Token 中 principal、Session 与登录用户一致。
+- [x] 有效期小于 1 天或超过 90 天被拒绝。
 
 ## 7. Phase 3：AI 自动化配置页
 
@@ -207,29 +207,29 @@ app/ai/settings/automation-token-form.tsx
 
 ### TODO
 
-- [ ] 未登录用户跳转到现有米家登录流程。
-- [ ] 表单包含 Provider、模型、API Key、家庭和有效期。
-- [ ] Provider 首期固定显示“通义千问（中国大陆）”。
-- [ ] 模型只能从服务端允许列表选择。
-- [ ] API Key 输入框默认隐藏，并支持临时显示。
-- [ ] 提交时调用 `POST /api/ai/automation-token`。
-- [ ] 成功后一次性展示 Automation Token、过期时间和复制按钮。
-- [ ] 明确提示 Token 等价于密码，需保存到快捷指令，页面不会代为找回。
-- [ ] 页面刷新后不尝试恢复 Token 或原始 Key。
-- [ ] 不写入 Local Storage、Session Storage、IndexedDB 或客户端可读 Cookie。
-- [ ] 复制后允许用户主动清空页面中的 Token。
-- [ ] 提供 Siri 快捷指令配置说明。
-- [ ] 实现移动端布局、键盘访问、加载状态和错误状态。
-- [ ] 响应页面设置避免缓存；确认浏览器返回导航不会恢复敏感表单值。
+- [x] 未登录用户跳转到现有米家登录流程。
+- [x] 表单包含 Provider、模型、API Key、家庭和有效期。
+- [x] Provider 首期固定显示“通义千问（中国大陆）”。
+- [x] 模型只能从服务端允许列表选择。
+- [x] API Key 输入框默认隐藏，并支持临时显示。
+- [x] 提交时调用 `POST /api/ai/automation-token`。
+- [x] 成功后一次性展示 Automation Token、过期时间和复制按钮。
+- [x] 明确提示 Token 等价于密码，需保存到快捷指令，页面不会代为找回。
+- [x] 页面刷新后不尝试恢复 Token 或原始 Key。
+- [x] 不写入 Local Storage、Session Storage、IndexedDB 或客户端可读 Cookie。
+- [x] 复制后允许用户主动清空页面中的 Token。
+- [x] 提供 Siri 快捷指令配置说明。
+- [x] 实现移动端布局、键盘访问、加载状态和错误状态。
+- [x] 响应页面设置避免缓存；确认浏览器返回导航不会恢复敏感表单值。
 
 ### UI 测试
 
-- [ ] API Key 不出现在 DOM 快照的默认状态。
-- [ ] 提交中禁止重复提交。
-- [ ] 失败后清除或保留 Key 的行为明确且测试覆盖；推荐清除。
-- [ ] Token 只在成功结果区出现一次。
-- [ ] 页面刷新后敏感字段为空。
-- [ ] 手机尺寸下可以完成选择、生成和复制。
+- [x] API Key 不出现在 DOM 快照的默认状态。
+- [x] 提交中禁止重复提交。
+- [x] 失败后清除或保留 Key 的行为明确且测试覆盖；推荐清除。
+- [x] Token 只在成功结果区出现一次。
+- [x] 页面刷新后敏感字段为空。
+- [x] 手机尺寸下可以完成选择、生成和复制。
 
 ## 8. Phase 4：Command API 接入请求级凭据
 
@@ -246,34 +246,34 @@ tests/ai-command-api.test.mjs
 
 ### TODO
 
-- [ ] 从 `Authorization: Bearer <token>` 读取 Automation Token。
-- [ ] 禁止从 query string 或请求体读取 Token。
-- [ ] 在读取场景、调用 Qwen 或访问 Mi Cloud 前完成解密与全部校验。
-- [ ] 从 Payload 创建请求级 `ResolvedProviderCredential`。
-- [ ] endpoint 始终从 Provider Catalog 解析。
-- [ ] Provider 改为显式接收请求级 Key，不从全局配置读取。
-- [ ] 校验 Payload 中 principal、米家 Session、region 和 homeId 的一致性。
-- [ ] 保持“现有审核场景优先”逻辑不变。
-- [ ] 保持 Tool allowlist 和 Scene Service 边界不变。
-- [ ] 删除正常路径和 fallback 中对共享 `LLM_API_KEY` 的读取。
-- [ ] 缺失 `AI_AUTOMATION_TOKEN_SECRET` 时启动/请求明确失败，不降级到共享 Key。
-- [ ] Provider 返回 401/403 时映射 `LLM_CREDENTIAL_INVALID`。
-- [ ] 清理异常对象，避免 HTTP client 把 Authorization Header带入日志。
-- [ ] 对 Automation Token Header 设置合理长度上限。
-- [ ] 评估旧 Shortcut Token 的兼容窗口；默认新 AI Command 不接受旧 Token。
+- [x] 从 `Authorization: Bearer <token>` 读取 Automation Token。
+- [x] 禁止从 query string 或请求体读取 Token。
+- [x] 在读取场景、调用 Qwen 或访问 Mi Cloud 前完成解密与全部校验。
+- [x] 从 Payload 创建请求级 `ResolvedProviderCredential`。
+- [x] endpoint 始终从 Provider Catalog 解析。
+- [x] Provider 改为显式接收请求级 Key，不从全局配置读取。
+- [x] 校验 Payload 中 principal、米家 Session、region 和 homeId 的一致性。
+- [x] 保持“现有审核场景优先”逻辑不变。
+- [x] 保持 Tool allowlist 和 Scene Service 边界不变。
+- [x] 删除正常路径和 fallback 中对共享 `LLM_API_KEY` 的读取。
+- [x] 缺失 `AI_AUTOMATION_TOKEN_SECRET` 时启动/请求明确失败，不降级到共享 Key。
+- [x] Provider 返回 401/403 时映射 `LLM_CREDENTIAL_INVALID`。
+- [x] 清理异常对象，避免 HTTP client 把 Authorization Header带入日志。
+- [x] 对 Automation Token Header 设置合理长度上限。
+- [x] 评估旧 Shortcut Token 的兼容窗口；默认新 AI Command 不接受旧 Token。
 
 ### 测试
 
-- [ ] Token A 的请求只把 Key A 传给 Provider mock。
-- [ ] Token B 的请求只把 Key B 传给 Provider mock。
-- [ ] Token A 无法访问不属于 A 的 homeId。
-- [ ] 篡改、过期、跨环境 Token 不调用 Provider 或 Mi Cloud mock。
-- [ ] Provider 401 不调用共享 Key 重试。
-- [ ] Provider timeout 的确定性回退符合最终 ADR。
-- [ ] 场景 Tool 参数非法时不执行。
-- [ ] 否定、条件、疑问和转述语句不执行。
-- [ ] 同一 Idempotency-Key 不重复执行场景。
-- [ ] 响应、日志和异常中不包含完整 Token、Key 或米家 Session。
+- [x] Token A 的请求只把 Key A 传给 Provider mock。
+- [x] Token B 的请求只把 Key B 传给 Provider mock。
+- [x] Token A 无法访问不属于 A 的 homeId。
+- [x] 篡改、过期、跨环境 Token 不调用 Provider 或 Mi Cloud mock。
+- [x] Provider 401 不调用共享 Key 重试。
+- [x] Provider timeout 的确定性回退符合最终 ADR。
+- [x] 场景 Tool 参数非法时不执行。
+- [x] 否定、条件、疑问和转述语句不执行。
+- [x] 同一 Idempotency-Key 不重复执行场景。
+- [x] 响应、日志和异常中不包含完整 Token、Key 或米家 Session。
 
 ## 9. Phase 5：迁移配置与清理共享 Key
 
@@ -281,16 +281,16 @@ tests/ai-command-api.test.mjs
 
 ### TODO
 
-- [ ] 从目标部署配置中移除 `LLM_API_KEY`。
-- [ ] 从 `lib/ai/config.ts` 移除业务 Key 必填逻辑。
-- [ ] 保留的部署级配置仅包括 Provider 策略、默认模型、超时和 Token Secret。
-- [ ] 更新 `.env.example`（若仓库存在且允许），只放虚构占位符。
-- [ ] 更新 README 的 AI 配置说明。
-- [ ] 搜索源码、测试和文档，确认没有共享业务 Key fallback。
-- [ ] 搜索日志语句，确认不会打印 Headers、Payload 或 Provider error request config。
-- [ ] 生产、Preview、本地配置不同的 Secret 与 keyId。
-- [ ] 记录紧急 Secret 轮换步骤及影响范围。
-- [ ] 明确旧 Automation Token 在轮换后全部失效，用户需要重新生成。
+- [x] 从目标部署配置中移除 `LLM_API_KEY`。
+- [x] 从 `lib/ai/config.ts` 移除业务 Key 必填逻辑。
+- [x] 保留的部署级配置仅包括 Provider 策略、默认模型、超时和 Token Secret。
+- [x] 更新 `.env.example`（若仓库存在且允许），只放虚构占位符。
+- [x] 更新 README 的 AI 配置说明。
+- [x] 搜索源码、测试和文档，确认没有共享业务 Key fallback。
+- [x] 搜索日志语句，确认不会打印 Headers、Payload 或 Provider error request config。
+- [x] 生产、Preview、本地配置不同的 Secret 与 keyId。
+- [x] 记录紧急 Secret 轮换步骤及影响范围。
+- [x] 明确旧 Automation Token 在轮换后全部失效，用户需要重新生成。
 
 ### 建议搜索
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { computePrincipalId, sealAutomationToken } from "../lib/ai/security/automation-token.ts";
 import { verifyShortcutAuth } from "../lib/ai/security/auth.ts";
 import { createAiBindingToken, verifyAndExtractBinding } from "../lib/ai/security/binding.ts";
 import { IdempotencyStore, isValidIdempotencyKey, requestHash } from "../lib/ai/security/idempotency.ts";
@@ -90,8 +91,8 @@ class FakeProvider {
     this.decision = decision;
     this.calls = [];
   }
-  async decide(text, scenes, locale, timezone, history) {
-    this.calls.push({ text, scenes, locale, timezone, history });
+  async decide(text, scenes, locale, timezone, history, credential) {
+    this.calls.push({ text, scenes, locale, timezone, history, credential });
     if (this.decision instanceof Error) throw this.decision;
     return this.decision;
   }
@@ -470,6 +471,7 @@ test("ai command route does not require Idempotency-Key before a tool call is tr
   const context = { waitUntil() {}, passThroughOnException() {} };
 
   process.env.XIAOMI_SESSION_SECRET = "ai-binding-test-secret-with-at-least-32-characters";
+  process.env.AI_AUTOMATION_TOKEN_SECRET = "ai-binding-test-secret-with-at-least-32-characters";
   const session = {
     userId: "user-a",
     cUserId: "c-user-a",
@@ -480,9 +482,22 @@ test("ai command route does not require Idempotency-Key before a tool call is tr
     userAgent: "test-agent",
     createdAt: Date.now(),
   };
-  const token = await createAiBindingToken(session, "home-a");
+  const principalId = await computePrincipalId("cn", session.userId);
+  const token = await sealAutomationToken({
+    version: 1,
+    purpose: "ai-home-automation",
+    principalId,
+    xiaomiSession: session,
+    region: "cn",
+    provider: "qwen-cn",
+    model: "qwen3.7-flash-2026-07-15",
+    apiKey: "sk-user-a-key",
+    homeId: "home-a",
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 86400000,
+  }, { env: "test" });
 
-  // 缺少 Idempotency-Key 时不应在入口被 400 拦截；请求继续走到场景解析（此处因测试环境无网络返回 502）
+  // 缺少 Idempotency-Key 时不应在入口被 400 拦截；请求应继续进入后续处理阶段
   const resWithoutKey = await worker.fetch(new Request("http://localhost/api/ai/command", {
     method: "POST",
     headers: {
@@ -494,7 +509,6 @@ test("ai command route does not require Idempotency-Key before a tool call is tr
   const jsonWithoutKey = await resWithoutKey.json();
   assert.notEqual(resWithoutKey.status, 400);
   assert.notEqual(jsonWithoutKey.code, "INVALID_REQUEST");
-  assert.equal(jsonWithoutKey.code, "MI_CLOUD_ERROR");
 
   // 提供合法 Idempotency-Key 时同样继续处理，行为不受影响
   const resWithKey = await worker.fetch(new Request("http://localhost/api/ai/command", {

@@ -2,6 +2,13 @@ import type { AiCommandConfig } from "../config.ts";
 import type { AllowedScene } from "../scenes/catalog.ts";
 import type { ChatMessage, RawIntentDecision } from "../types.ts";
 
+export type ResolvedProviderCredential = {
+  provider: string;
+  apiToken: string;
+  baseUrl: string;
+  model: string;
+};
+
 const systemPrompt = `你是家庭控制意图路由器，你的核心职责是识别用户想要执行的家庭场景并调用工具。
 
 【核心规则】
@@ -18,13 +25,14 @@ const systemPrompt = `你是家庭控制意图路由器，你的核心职责是�
 type SceneProjection = Pick<AllowedScene, "id" | "name" | "description">;
 
 function tools(scenes: readonly SceneProjection[]) {
-  const sceneIds = scenes.map(scene => scene.id);
+  const sceneIds = scenes.map((scene) => scene.id);
   return [
     {
       type: "function",
       function: {
         name: "activate_scene",
-        description: "激活一个已配置且可用的家庭手动场景（如回家模式、明亮模式、离家模式、观影模式、睡眠模式等）。当用户想要开启或切换到某个场景时必须调用此工具。",
+        description:
+          "激活一个已配置且可用的家庭手动场景（如回家模式、明亮模式、离家模式、观影模式、睡眠模式等）。当用户想要开启或切换到某个场景时必须调用此工具。",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -36,7 +44,8 @@ function tools(scenes: readonly SceneProjection[]) {
             },
             replyMessage: {
               type: "string",
-              description: "执行该场景后向用户回复的一句自然口语表达（不超过25字）。严禁包含任何数字ID或代码，只能使用自然的场景中文名称。例如离家时说“好的，已开启离家模式，路上注意安全”；回家时说“欢迎回家，已为您打开回家模式”；明亮时说“好的，已为您开启明亮模式”。",
+              description:
+                "执行该场景后向用户回复的一句自然口语表达（不超过25字）。严禁包含任何数字ID或代码，只能使用自然的场景中文名称。例如离家时说“好的，已开启离家模式，路上注意安全”；回家时说“欢迎回家，已为您打开回家模式”；明亮时说“好的，已为您开启明亮模式”。",
             },
           },
           required: ["sceneId", "replyMessage"],
@@ -71,16 +80,24 @@ export class QwenOpenAiCompatibleProvider {
     locale = "zh-CN",
     timezone = "Asia/Shanghai",
     history?: readonly ChatMessage[],
+    credential?: ResolvedProviderCredential,
   ): Promise<RawIntentDecision> {
-    if (!this.config.apiKey || !this.config.baseUrl) throw new Error("LLM_PROVIDER_NOT_CONFIGURED");
+    const apiKey = credential?.apiToken;
+    const baseUrl = credential?.baseUrl;
+    const model = credential?.model;
+
+    if (!apiKey || !baseUrl || !model) {
+      throw new Error("LLM_CREDENTIAL_NOT_CONFIGURED");
+    }
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
     const startedAt = Date.now();
     try {
       const historyMessages = Array.isArray(history)
         ? history
-            .filter(item => (item.role === "user" || item.role === "assistant") && typeof item.content === "string")
-            .map(item => ({ role: item.role, content: item.content }))
+            .filter((item) => (item.role === "user" || item.role === "assistant") && typeof item.content === "string")
+            .map((item) => ({ role: item.role, content: item.content }))
         : [];
 
       const currentTurnMessage = {
@@ -89,7 +106,7 @@ export class QwenOpenAiCompatibleProvider {
           text,
           locale,
           timezone,
-          availableScenes: allowedScenes.map(scene => ({
+          availableScenes: allowedScenes.map((scene) => ({
             id: scene.id,
             name: scene.name,
             description: scene.description,
@@ -103,14 +120,14 @@ export class QwenOpenAiCompatibleProvider {
         currentTurnMessage,
       ];
 
-      const response = await fetch(`${this.config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${this.config.apiKey}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: this.config.model,
+          model,
           temperature: 0,
           max_tokens: this.config.maxOutputTokens ?? 128,
           enable_thinking: this.config.enableThinking ?? false,
@@ -120,12 +137,17 @@ export class QwenOpenAiCompatibleProvider {
         }),
         signal: controller.signal,
       });
+
       if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          throw new Error("LLM_CREDENTIAL_INVALID");
+        }
         const errText = await response.text().catch(() => "");
         console.error("Qwen API HTTP error:", response.status, response.statusText, errText);
         throw new Error(`LLM_HTTP_${response.status}: ${errText || response.statusText}`);
       }
-      const body = await response.json() as { choices?: OpenAiChoice[] };
+
+      const body = (await response.json()) as { choices?: OpenAiChoice[] };
       const message = body.choices?.[0]?.message;
       const toolCall = message?.tool_calls?.[0];
       const textContent = message?.content ? String(message.content).trim() : undefined;
@@ -133,14 +155,15 @@ export class QwenOpenAiCompatibleProvider {
         return {
           type: "no_action",
           reason: "unsupported",
-          model: this.config.model,
+          model,
           latencyMs: Date.now() - startedAt,
           llmOutput: textContent,
         };
       }
+
       const argumentsText = toolCall.function?.arguments ?? "{}";
       const argumentsJson = JSON.parse(argumentsText) as Record<string, unknown>;
-      const sceneObj = allowedScenes.find(s => s.id === argumentsJson.sceneId);
+      const sceneObj = allowedScenes.find((s) => s.id === argumentsJson.sceneId);
       const sceneDisplayName = sceneObj?.name ?? "指定场景";
       const cleanLlmOutput = textContent || `call ${toolCall.function?.name}(scene: "${sceneDisplayName}")`;
 
@@ -148,12 +171,19 @@ export class QwenOpenAiCompatibleProvider {
         type: "tool_call",
         tool: toolCall.function?.name ?? "unknown",
         arguments: { sceneId: argumentsJson.sceneId, replyMessage: argumentsJson.replyMessage },
-        model: this.config.model,
+        model,
         latencyMs: Date.now() - startedAt,
         llmOutput: cleanLlmOutput,
       };
     } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") throw new Error("LLM_TIMEOUT");
+      if (error instanceof Error) {
+        if (error.name === "AbortError" || error.message.toLowerCase().includes("timeout")) {
+          throw new Error("LLM_TIMEOUT");
+        }
+        if (error.message === "LLM_CREDENTIAL_INVALID" || error.message === "LLM_CREDENTIAL_NOT_CONFIGURED") {
+          throw error;
+        }
+      }
       console.error("Qwen Provider Request Failed:", error instanceof Error ? error.message : error);
       const msg = error instanceof Error ? error.message : "LLM_PROVIDER_ERROR";
       throw new Error(msg);

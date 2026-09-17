@@ -1,6 +1,9 @@
 import type { AiCommandConfig } from "./config.ts";
 import { findFallbackScene, recoverIntentFromTextOrLlmOutput } from "./fallback.ts";
-import type { QwenOpenAiCompatibleProvider } from "./providers/qwen-openai-provider.ts";
+import type {
+  QwenOpenAiCompatibleProvider,
+  ResolvedProviderCredential,
+} from "./providers/qwen-openai-provider.ts";
 import type { AllowedScene } from "./scenes/catalog.ts";
 import { runtimeScenes } from "./scenes/catalog.ts";
 import type { ChatMessage, IntentDecision, RawIntentDecision } from "./types.ts";
@@ -21,12 +24,17 @@ export class IntentOrchestrator {
     locale: string,
     timezone: string,
     history?: readonly ChatMessage[],
+    credential?: ResolvedProviderCredential,
   ): Promise<IntentDecision> {
     let rawDecision: RawIntentDecision;
     try {
-      rawDecision = await this.provider.decide(text, scenes, locale, timezone, history);
+      rawDecision = await this.provider.decide(text, scenes, locale, timezone, history, credential);
     } catch (error) {
       const message = error instanceof Error ? error.message : "LLM_PROVIDER_ERROR";
+      // 凭据无效或未配置时严禁执行确定性回退！
+      if (message === "LLM_CREDENTIAL_INVALID" || message === "LLM_CREDENTIAL_NOT_CONFIGURED") {
+        throw new Error(message);
+      }
       if (this.config.deterministicFallback) {
         const fallbackScene = findFallbackScene(text, scenes);
         if (fallbackScene) {
