@@ -95,6 +95,17 @@ AI Gateway Provider 必需的三个服务端变量，由 EdgeOne 项目环境注
 
 详细设计见 [AI Home PoC 设计](docs/ai-home-poc-design.md)，冻结接口见 [AI Home Phase 0 Contract](docs/ai-home-phase-0-contract.md)，实施顺序见 [AI Home 实现 TODO](docs/ai-home-implementation-todo.md)。
 
+### `AI_PRINCIPAL_SECRET`
+
+必填于后续 AI Home 路径。服务端使用 HMAC-SHA256 从小米会话中的 `userId` 派生 `usr_` 前缀的 principalId。
+
+登录后可在 `/ai/settings` 查看 principalId；`GET /api/ai/principal` 仅返回当前会话派生后的 ID。
+
+- 每个环境使用独立的高熵 Secret，至少 32 个字符。
+- 客户端请求体、Header 或查询参数不能覆盖 principal。
+- Secret 轮换会改变同一用户派生出的 principalId，历史配额与会话需要迁移或重置。
+- PoC 默认不轮换，如确需轮换请提前同步配额迁移方案。
+
 ## 常用命令
 
 ```bash

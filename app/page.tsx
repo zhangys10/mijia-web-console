@@ -13,6 +13,7 @@ import { groupManualSceneActions, type ManualSceneActionItem } from "../lib/scen
 import SceneEditor from "./scene-editor";
 import AutomationCenter from "./automation-center";
 import AutomationTokenForm from "./ai/settings/automation-token-form";
+import PrincipalIdCard from "./ai/settings/principal-id-card";
 import { dashboardAccountLabel, dashboardGreeting, formatDashboardDate } from "../lib/dashboard-display";
 import { splitDeviceCapabilityGroup, type DeviceCapabilitySections, type ExecutableMiotAction } from "../lib/device-capabilities";
 import type { MiotCapabilityGroup, MiotCapabilityProperty } from "../lib/miot-spec";
@@ -560,6 +561,7 @@ function SettingsView({ onOpenLogin, homes, selectedHomeId, selectedHomeName }: 
         />
         <div className="ai-layout">
           <div className="ai-stack">
+            <PrincipalIdCard />
             <AutomationTokenForm onOpenLogin={onOpenLogin} initialHomes={homes} selectedHomeId={selectedHomeId} selectedHomeName={selectedHomeName} />
           </div>
           <aside className="ai-stack">
