@@ -1,4 +1,5 @@
 import { listHomes, type XiaomiSession } from "../../xiaomi-cloud.ts";
+import { isPreviewEnvironment } from "../config.ts";
 import { verifyAgentBinding, type AgentScope } from "../security/agent-binding.ts";
 import { derivePrincipalId } from "../security/principal.ts";
 import { loadAgentScenes, parseApprovedSceneIds, sceneSummaries, type AgentSceneRecord } from "./agent-scene-catalog.ts";
@@ -63,7 +64,7 @@ export async function runRemoteTool(body: unknown, env: Environment, dependencie
   ) {
     throw new RemoteToolError("AI_INVALID_REQUEST", 400);
   }
-  if (env.VERCEL_ENV === "preview" || env.AI_ENVIRONMENT === "preview") throw new RemoteToolError("AI_PREVIEW_READ_ONLY", 403);
+  if (isPreviewEnvironment(env)) throw new RemoteToolError("AI_PREVIEW_READ_ONLY", 403);
   // Extraction is read-only until the executor owns durable, cross-conversation claims.
   // Agent memory and eventually consistent quota KV cannot guarantee this boundary.
   throw new RemoteToolError("AI_SCENE_EXECUTION_DISABLED", 403);

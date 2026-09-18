@@ -206,6 +206,117 @@ test("web chat rejects unauthenticated, oversized, foreign-home, and client-forg
   assert.equal((await oversized.json()).code, "AI_INVALID_REQUEST");
 });
 
+test("preview chat returns a local mock without Agent or quota activity", async () => {
+  for (const previewEnv of [
+    { AI_ENVIRONMENT: "preview" },
+    { VERCEL_ENV: "preview" },
+  ]) {
+    const calls = [];
+    const quotaStore = new InMemoryQuotaStore({ env: "test", now: () => fixedTime });
+    const handler = createChatHandler(handlerOptions({
+      quotaStore,
+      fetchImpl: async (...args) => {
+        calls.push(args);
+        return new Response(null, { status: 500 });
+      },
+    }));
+    const response = await handler({
+      request: await chatRequest({ homeId: home.id, message: "打开回家模式" }),
+      env: env(previewEnv),
+    });
+
+    assert.equal(response.status, 200);
+    const data = await response.json();
+    assert.match(data.conversationId, /^cv1_[A-Za-z0-9_-]+$/);
+    assert.deepEqual(data, {
+      requestId: "req_00000000000040008000000000000001",
+      conversationId: data.conversationId,
+      message: "预览模式：不会调用模型或控制真实设备。",
+      intent: "none",
+      quota: {
+        mode: "disabled",
+        remainingRequestsToday: null,
+        remainingTokensThisMonth: null,
+        resetAt: null,
+        softLimit: true,
+      },
+    });
+    assert.equal(calls.length, 0);
+    const principalId = await derivePrincipalId(sessionA, { AI_PRINCIPAL_SECRET: principalSecret });
+    const snapshot = await quotaStore.getSnapshot(principalId);
+    assert.equal(snapshot.requestsToday, 0);
+    assert.equal(snapshot.totalTokensThisMonth, 0);
+  }
+});
+
+test("preview chat still enforces authentication, home, and conversation binding", async () => {
+  const handler = createChatHandler(handlerOptions({
+    quotaStore: new InMemoryQuotaStore({ env: "test", now: () => fixedTime }),
+    fetchImpl: async () => assert.fail("Agent must not be called"),
+  }));
+  const previewEnv = env({ AI_ENVIRONMENT: "preview" });
+  const unauthenticated = await handler({
+    request: new Request("http://localhost/api/ai/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ homeId: home.id, message: "你好" }),
+    }),
+    env: previewEnv,
+  });
+  assert.equal(unauthenticated.status, 401);
+
+  const foreignHome = await handler({
+    request: await chatRequest({ homeId: "home-foreign", message: "你好" }),
+    env: previewEnv,
+  });
+  assert.equal(foreignHome.status, 403);
+
+  const invalidConversation = await handler({
+    request: await chatRequest({
+      conversationId: "cv1_invalid",
+      homeId: home.id,
+      message: "你好",
+    }),
+    env: previewEnv,
+  });
+  assert.equal(invalidConversation.status, 400);
+});
+
+test("preview delete returns a local no-op without Agent calls", async () => {
+  const createHandler = createConversationHandler(handlerOptions());
+  const created = await createHandler({
+    request: new Request("http://localhost/api/ai/conversations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: await cookie(sessionA) },
+      body: JSON.stringify({ homeId: home.id }),
+    }),
+    env: env({ AI_ENVIRONMENT: "preview" }),
+  });
+  const { conversationId } = await created.json();
+  const calls = [];
+  const handler = createDeleteConversationHandler(handlerOptions({
+    fetchImpl: async (...args) => {
+      calls.push(args);
+      return new Response(null, { status: 500 });
+    },
+  }));
+  const response = await handler({
+    request: new Request(`http://localhost/api/ai/conversations/${conversationId}`, {
+      method: "DELETE",
+      headers: { Cookie: await cookie(sessionA) },
+    }),
+    env: env({ AI_ENVIRONMENT: "preview" }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    requestId: "req_00000000000040008000000000000001",
+    conversationId,
+    deleted: true,
+  });
+  assert.equal(calls.length, 0);
+});
+
 test("web chat releases a quota reservation when the Agent fails", async () => {
   const quotaStore = new InMemoryQuotaStore({ env: "test", now: () => fixedTime });
   const handler = createChatHandler(handlerOptions({
