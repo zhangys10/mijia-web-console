@@ -101,6 +101,7 @@ Phase 4 已实现 EdgeOne Makers Agent 入口、密封内部身份上下文、�
 
 - 模型只看到场景别名、名称和描述；Gateway Key、小米会话、真实场景 ID、DID 和原始用户 ID 不进入模型上下文。
 - `AI_AGENT_INTERNAL_SECRET`：Web API 调用 Agent 的内部 Bearer Secret，每个部署环境独立，至少 32 个字符。
+- `AI_AGENT_BASE_URL`：可选的远程 Makers Agent HTTPS origin。生产环境的 `mijia-agent` EdgeOne 部署地址为 `https://agent.fabloki.xyz`；设置后 Web Chat 和配额摘要路由到新 Agent 项目，未设置时保持同项目路由和本地配额模式。
 - `AI_SCENE_APPROVED_IDS`：逗号分隔的低风险手动场景 ID 审核名单；默认为空，任何场景都不会被执行。
 - 连续对话由 Makers Agent 的 `Makers-Conversation-Id` 和服务端 principal/home 派生的存储键隔离。
 - 副作用必须携带 Idempotency-Key；相同请求只执行一次，不同请求复用同一 key 会返回冲突。
@@ -119,7 +120,7 @@ Phase 4 已实现 EdgeOne Makers Agent 入口、密封内部身份上下文、�
 
 ### AI Quota
 
-Phase 3 提供 `GET /api/ai/quota`（EdgeOne Edge Function），只返回当前 Cookie 会话对应 principal 的额度摘要。
+Phase 3 提供 `GET /api/ai/quota`（EdgeOne Edge Function），只返回当前 Cookie 会话对应 principal 的额度摘要。未设置 `AI_AGENT_BASE_URL` 时，控制台使用本地 EdgeOne KV 账本；设置后由远程 Agent adapter 负责 reserve/commit 和摘要，控制台只做身份鉴权与代理，不运行第二套账本。
 
 - `AI_QUOTA_ENABLED`：默认 `true`。
 - `AI_QUOTA_DEFAULT_REQUESTS_PER_MINUTE` / `AI_QUOTA_DEFAULT_REQUESTS_PER_DAY` / `AI_QUOTA_DEFAULT_TOKENS_PER_MONTH`：默认 `10` / `50` / `100000`。
@@ -135,12 +136,12 @@ EdgeOne KV 没有原子自增/CAS，且跨节点传播最长约 60 秒。日/月
 Phase 5 提供 Cookie 鉴权的非流式 Web Chat API，浏览器不提交 principal、米家凭据、Gateway Key、Agent 内部 Secret 或原始 Makers conversation ID。
 
 - `POST /api/ai/conversations`：body 为 `{ "homeId": "..." }`，签发绑定当前登录用户和家庭的不透明 `conversationId`。
-- `POST /api/ai/chat`：body 为 `{ "conversationId"?, "homeId", "message", "idempotencyKey"? }`，统一执行 principal 派生、家庭校验、配额 reserve、Agent 调用和 usage commit/release。
+- `POST /api/ai/chat`：body 为 `{ "conversationId"?, "homeId", "message", "idempotencyKey"? }`，统一执行 principal 派生、家庭校验、Agent 调用和配额结算；远程 Agent 模式由 Agent adapter 返回配额摘要。
 - `DELETE /api/ai/conversations/:conversationId`：只清除当前用户、当前家庭对应的 Agent 对话记忆，不修改米家设备、场景或配额账本。
 - 未提供 `idempotencyKey` 时，请求只拥有 `ai:chat` scope，不能执行 `activate_scene`；需要设备副作用的请求必须提供 16–128 字符的幂等键。
 - 所有响应均为 JSON 并设置 `Cache-Control: no-store`；首期不提供 SSE。
 
-Web API 通过同项目 `/ai-home` 和 `/ai-home/delete` Agent 路由通信，内部请求使用 `Makers-Conversation-Id` 与 `Authorization: Bearer <AI_AGENT_INTERNAL_SECRET>`。客户端响应不会返回 Agent usage 明细、真实场景 ID、DID、原始 Xiaomi userId 或任何 Secret。
+Web API 默认通过同项目 `/ai-home` 和 `/ai-home/delete` Agent 路由通信；设置 `AI_AGENT_BASE_URL` 时改用远程 Agent origin。内部请求使用 `Makers-Conversation-Id` 与 `Authorization: Bearer <AI_AGENT_INTERNAL_SECRET>`。客户端响应不会返回 Agent usage 明细、真实场景 ID、DID、原始 Xiaomi userId 或任何 Secret。
 
 EdgeOne KV 审批完成前，本地自动化测试使用 `InMemoryQuotaStore`。如果只做本地 Agent/Web API 联调，可以在本地临时设置 `AI_QUOTA_FAIL_MODE=open`；生产环境仍应保持默认 `closed`，不得在 KV 未绑定时继续产生共享模型费用。
 

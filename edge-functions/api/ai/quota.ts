@@ -1,4 +1,6 @@
 import { readXiaomiSessionWithSecret } from "../../../lib/xiaomi-cloud.ts";
+import { MakersAgentClient } from "../../../lib/ai/web-chat/agent-client.ts";
+import { webApiErrorResponse } from "../../../lib/ai/web-chat/web-api-boundary.ts";
 import { derivePrincipalId } from "../../../lib/ai/security/principal.ts";
 import { loadQuotaPolicy } from "../../../lib/ai/quota/policy.ts";
 import { EdgeOneKvQuotaStore, type EdgeOneKvBinding } from "../../../lib/ai/quota/edgeone-kv-quota-store.ts";
@@ -75,6 +77,18 @@ export async function onRequest(context: EdgeOneQuotaContext) {
     principalId = await derivePrincipalId(session, context.env);
   } catch {
     return json({ code: "AI_PRINCIPAL_ERROR", message: "服务端身份派生尚未配置" }, 500);
+  }
+
+  if (context.env.AI_AGENT_BASE_URL) {
+    try {
+      const agent = new MakersAgentClient({
+        baseUrl: context.env.AI_AGENT_BASE_URL,
+        internalSecret: context.env.AI_AGENT_INTERNAL_SECRET,
+      });
+      return json({ quota: await agent.getQuota(principalId) }, 200);
+    } catch (error) {
+      return webApiErrorResponse(error);
+    }
   }
 
   let policy;

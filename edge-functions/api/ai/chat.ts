@@ -35,10 +35,12 @@ export function createChatHandler(dependencies: ChatHandlerDependencies = {}) {
         dependencies.readSession,
       );
       const body = await readJsonBody(context.request, MAX_CHAT_REQUEST_BYTES);
-      const quota = createQuotaService(context.env, {
-        store: dependencies.quotaStore,
-        now: dependencies.now,
-      });
+      const quota = context.env.AI_AGENT_BASE_URL
+        ? undefined
+        : createQuotaService(context.env, {
+          store: dependencies.quotaStore,
+          now: dependencies.now,
+        });
       const agent = new MakersAgentClient({
         baseUrl: context.env.AI_AGENT_BASE_URL || new URL("/", context.request.url).toString(),
         internalSecret: context.env.AI_AGENT_INTERNAL_SECRET,

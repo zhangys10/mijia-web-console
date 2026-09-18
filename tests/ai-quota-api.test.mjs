@@ -168,3 +168,65 @@ test("quota API reports unlimited and override modes without leaking the allowli
   assert.equal(overrideData.quota.mode, "override");
   assert.equal(overrideData.quota.limits.requestsPerDay, 99);
 });
+
+test("remote quota summary uses authenticated principal and ignores local policy/KV", async (testContext) => {
+  delete globalThis.ai_quota_kv;
+  const principalId = await derivePrincipalId(sessionA, { AI_PRINCIPAL_SECRET: principalSecret });
+  let calls = 0;
+  testContext.mock.method(globalThis, "fetch", async (url, init) => {
+    calls++;
+    assert.equal(url.toString(), "https://agent.example/api/internal/quota");
+    assert.deepEqual(JSON.parse(init.body), { operation: "summary", principalId });
+    assert.equal(init.redirect, "error");
+    return Response.json({
+      quota: {
+        principalId,
+        mode: "default",
+        limits: null,
+        usage: null,
+        remaining: {
+          requestsThisMinute: 10,
+          requestsToday: 30,
+          tokensThisMonth: 1000,
+        },
+        resetAt: "2026-09-18T00:00:00+08:00",
+        softLimit: true,
+        privateField: "must-not-leak",
+      },
+    });
+  });
+  const response = await onRequest({
+    request: new Request(
+      "https://console.example/api/ai/quota?principalId=usr_forged",
+      { headers: { Cookie: await createCookieHeader(sessionA) } },
+    ),
+    env: baseEnv({
+      AI_AGENT_BASE_URL: "https://agent.example",
+      AI_AGENT_INTERNAL_SECRET: "fake-agent-reader-secret-".repeat(3),
+      AI_QUOTA_FAIL_MODE: "invalid-unused",
+    }),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.quota.remaining.requestsToday, 30);
+  assert.equal(body.quota.privateField, undefined);
+  assert.equal(calls, 1);
+});
+
+test("remote quota failures never fall back to a separate ledger", async (testContext) => {
+  globalThis.ai_quota_kv = new MemoryKv();
+  testContext.mock.method(globalThis, "fetch", async () => (
+    Response.json({ code: "AI_QUOTA_STORE_UNAVAILABLE" }, { status: 503 })
+  ));
+  const response = await onRequest({
+    request: new Request("https://console.example/api/ai/quota", {
+      headers: { Cookie: await createCookieHeader(sessionA) },
+    }),
+    env: baseEnv({
+      AI_AGENT_BASE_URL: "https://agent.example",
+      AI_AGENT_INTERNAL_SECRET: "fake-agent-reader-secret-".repeat(3),
+    }),
+  });
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, "AI_QUOTA_STORE_UNAVAILABLE");
+});

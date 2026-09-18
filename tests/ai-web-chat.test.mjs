@@ -313,3 +313,89 @@ test("conversation APIs bind handles to principal/home and delete only scoped Ag
   assert.equal(wrongUser.status, 400);
   assert.equal(deleteCalls.length, 1);
 });
+
+test("remote agent owns quota: console never reads or mutates its local ledger", async () => {
+  const calls = [];
+  const quotaStore = {
+    reserve() {
+      throw new Error("local reserve forbidden");
+    },
+    commit() {
+      throw new Error("local commit forbidden");
+    },
+    release() {
+      throw new Error("local release forbidden");
+    },
+    getSnapshot() {
+      throw new Error("local read forbidden");
+    },
+  };
+  const handler = createChatHandler(handlerOptions({
+    quotaStore,
+    fetchImpl: async (url, init) => {
+      const input = JSON.parse(init.body);
+      return successFetch(calls, {
+        quota: {
+          principalId: input.principalId,
+          mode: "override",
+          limits: null,
+          usage: null,
+          remaining: {
+            requestsThisMinute: 2,
+            requestsToday: 7,
+            tokensThisMonth: 900,
+          },
+          resetAt: "2026-09-18T00:00:00+08:00",
+          softLimit: true,
+        },
+      })(url, init);
+    },
+  }));
+  const response = await handler({
+    request: await chatRequest({ homeId: home.id, message: "查看场景" }),
+    env: env({
+      AI_AGENT_BASE_URL: "https://agent.example",
+      AI_QUOTA_FAIL_MODE: "invalid-unused-local-config",
+    }),
+  });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.quota.remainingRequestsToday, 7);
+  assert.equal(result.quota.remainingTokensThisMonth, 900);
+  assert.equal(result.quota.mode, "override");
+  assert.equal(result.quota.principalId, undefined);
+  assert.equal(calls[0].url, "https://agent.example/ai-home");
+});
+
+test("remote quota exhaustion and outages preserve public errors without a local refund", async () => {
+  const failures = [
+    ["AI_QUOTA_EXCEEDED", 429],
+    ["AI_QUOTA_STORE_UNAVAILABLE", 503],
+    ["AI_QUOTA_CONFIG_INVALID", 500],
+  ];
+  for (const [code, status] of failures) {
+    const handler = createChatHandler(handlerOptions({
+      fetchImpl: async () => Response.json({
+        code,
+        quota: { period: "day", retryAfter: "2026-09-18T00:00:00+08:00" },
+      }, { status }),
+    }));
+    const response = await handler({
+      request: await chatRequest({ homeId: home.id, message: "hello" }),
+      env: env({ AI_AGENT_BASE_URL: "https://agent.example" }),
+    });
+    assert.equal(response.status, status);
+    const body = await response.json();
+    assert.equal(body.code, code);
+    if (status === 429) assert.equal(body.quota.period, "day");
+  }
+});
+
+test("remote mode refuses missing quota summaries and never silently falls back", async () => {
+  const handler = createChatHandler(handlerOptions({ fetchImpl: successFetch([]) }));
+  const response = await handler({
+    request: await chatRequest({ homeId: home.id, message: "hello" }),
+    env: env({ AI_AGENT_BASE_URL: "https://agent.example" }),
+  });
+  assert.equal(response.status, 502);
+});
