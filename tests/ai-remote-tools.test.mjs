@@ -34,6 +34,43 @@ test("home access is rechecked even with a valid binding", async () => {
   await assert.rejects(runRemoteTool(await input(), env, { ...dependencies, homes: async () => [] }), /AI_HOME_FORBIDDEN/);
 });
 test("new remote execution stays closed until durable executor claims exist", async () => {
-  const body = { ...await input(["ai:chat", "scene:activate"]), tool: "activate_scene", arguments: { sceneId: "scene_0123456789abcdef" } };
+  const body = {
+    ...await input(["ai:chat", "scene:activate"]),
+    idempotencyKey: "valid-idempotency-key-0001",
+    tool: "activate_scene",
+    arguments: { sceneId: "scene_0123456789abcdef" },
+  };
   await assert.rejects(runRemoteTool(body, env, dependencies), /AI_SCENE_EXECUTION_DISABLED/);
+});
+
+test("remote execution requires a valid idempotency key and strict scene argument", async () => {
+  const base = {
+    ...await input(["ai:chat", "scene:activate"]),
+    tool: "activate_scene",
+    arguments: { sceneId: "scene_0123456789abcdef" },
+  };
+  await assert.rejects(
+    runRemoteTool({ ...base, idempotencyKey: undefined }, env, dependencies),
+    /AI_INVALID_REQUEST/,
+  );
+  await assert.rejects(
+    runRemoteTool({ ...base, idempotencyKey: "short-key" }, env, dependencies),
+    /AI_INVALID_REQUEST/,
+  );
+  await assert.rejects(
+    runRemoteTool({
+      ...base,
+      idempotencyKey: "valid-idempotency-key-0001",
+      arguments: { sceneId: "not-a-scene" },
+    }, env, dependencies),
+    /AI_INVALID_REQUEST/,
+  );
+  await assert.rejects(
+    runRemoteTool({
+      ...base,
+      idempotencyKey: "valid-idempotency-key-0001",
+      arguments: { sceneId: "scene_0123456789abcdef", extra: 1 },
+    }, env, dependencies),
+    /AI_INVALID_REQUEST/,
+  );
 });

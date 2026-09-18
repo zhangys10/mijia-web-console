@@ -26,6 +26,17 @@ export async function runRemoteTool(body: unknown, env: Environment, dependencie
   const scopes = input.scopes as AgentScope[];
   const principalId = input.principalId as string;
   const homeId = input.homeId as string;
+  const idempotencyKey = input.idempotencyKey;
+  if (
+    idempotencyKey !== undefined
+    && (
+      typeof idempotencyKey !== "string"
+      || idempotencyKey.length < 16
+      || idempotencyKey.length > 128
+    )
+  ) {
+    throw new RemoteToolError("AI_INVALID_REQUEST", 400);
+  }
   let binding;
   try {
     binding = await verifyAgentBinding(input.sessionBinding as string, { principalId, homeId, scopes }, env.XIAOMI_SESSION_SECRET);
@@ -43,6 +54,15 @@ export async function runRemoteTool(body: unknown, env: Environment, dependencie
   }
   if (input.tool !== "activate_scene") throw new RemoteToolError("AI_INVALID_REQUEST", 400);
   if (!scopes.includes("scene:activate")) throw new RemoteToolError("AI_SCOPE_FORBIDDEN", 403);
+  if (!idempotencyKey) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
+  const sceneId = (args as Record<string, unknown>).sceneId;
+  if (
+    Object.keys(args).length !== 1
+    || typeof sceneId !== "string"
+    || !/^scene_[a-f0-9]{16}$/.test(sceneId)
+  ) {
+    throw new RemoteToolError("AI_INVALID_REQUEST", 400);
+  }
   if (env.VERCEL_ENV === "preview" || env.AI_ENVIRONMENT === "preview") throw new RemoteToolError("AI_PREVIEW_READ_ONLY", 403);
   // Extraction is read-only until the executor owns durable, cross-conversation claims.
   // Agent memory and eventually consistent quota KV cannot guarantee this boundary.
