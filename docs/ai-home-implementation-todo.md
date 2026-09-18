@@ -139,28 +139,28 @@ tests/ai-quota-*.test.mjs
 
 ### 3.1 策略 TODO
 
-- [ ] 读取并 schema 校验默认分钟请求数、日请求数、月 Token 数。
-- [ ] 解析 `AI_QUOTA_UNLIMITED_IDS`。
-- [ ] 解析 `AI_QUOTA_OVERRIDES_JSON`。
-- [ ] 实现固定优先级：unlimited > override > default。
-- [ ] 配置非法时 fail fast，不静默使用无限额度。
-- [ ] unlimited 用户仍写入 metrics。
+- [x] 读取并 schema 校验默认分钟请求数、日请求数、月 Token 数。
+- [x] 解析 `AI_QUOTA_UNLIMITED_IDS`。
+- [x] 解析 `AI_QUOTA_OVERRIDES_JSON`。
+- [x] 实现固定优先级：unlimited > override > default。
+- [x] 配置非法时 fail fast，不静默使用无限额度。
+- [x] unlimited 用户仍写入 metrics。
 
 ### 3.2 Store TODO
 
-- [ ] 定义 `reserve/commit/release/getSnapshot` 接口。
-- [ ] 本地和单元测试实现 InMemory adapter。
+- [x] 定义 `reserve/commit/release/getSnapshot` 接口。
+- [x] 本地和单元测试实现 InMemory adapter。
 - [ ] 在 EdgeOne 控制台启用 KV、创建 `ai-quota` namespace，并绑定全局变量 `ai_quota_kv`。
-- [ ] 在 Edge Function 中直接使用绑定的全局变量，禁止错误地读取 `context.env.ai_quota_kv`。
-- [ ] 实现 EdgeOne KV adapter；Agent/Node Function 不直接访问 KV。
-- [ ] 明确实现为软限额：KV 最终一致性最长约 60 秒，且没有原子自增/CAS。
-- [ ] key 使用 `q_v1_<env>_<principalKey>_<period>_<date>`，只包含字母、数字和下划线。
-- [ ] `principalKey` 使用 principalId 的 SHA-256 十六进制截断值，不包含原始 userId。
-- [ ] Value 记录 requests、prompt/completion/estimated tokens 和 updatedAt。
+- [x] 在 Edge Function 中直接使用绑定的全局变量，禁止错误地读取 `context.env.ai_quota_kv`。
+- [x] 实现 EdgeOne KV adapter；Agent/Node Function 不直接访问 KV。
+- [x] 明确实现为软限额：KV 最终一致性最长约 60 秒，且没有原子自增/CAS。
+- [x] key 使用 `q_v1_<env>_<principalKey>_<period>_<date>`，只包含字母、数字和下划线。
+- [x] `principalKey` 使用 principalId 的 SHA-256 十六进制截断值，不包含原始 userId。
+- [x] Value 记录 requests、prompt/completion/estimated tokens 和 updatedAt。
 - [ ] 不依赖未公开的 KV TTL；按日/月 key 自然换窗并增加旧 key 清理任务。
 - [ ] 以真实多节点并发测试量化 60 秒传播窗口内的最大超用量。
 - [ ] 根据测试结果为默认额度设置安全余量。
-- [ ] 周期按 `Asia/Shanghai` 计算并测试月末、闰日和 DST 无关性。
+- [x] 周期按 `Asia/Shanghai` 计算并测试月末、闰日和 DST 无关性。
 
 ### 3.3 API TODO
 
@@ -168,17 +168,19 @@ tests/ai-quota-*.test.mjs
 - [ ] 成功后按 actual usage commit。
 - [ ] 失败、取消或超时 release/部分结算。
 - [ ] 配额不足返回 429 `AI_QUOTA_EXCEEDED` 和恢复时间。
-- [ ] Store 故障按 `AI_QUOTA_FAIL_MODE` 处理，生产默认 closed。
-- [ ] 增加 `GET /api/ai/quota`，只返回当前用户摘要。
+- [x] Store 故障按 `AI_QUOTA_FAIL_MODE` 处理，生产默认 closed。
+- [x] 增加 `GET /api/ai/quota`，只返回当前用户摘要。
+
+Agent 调用生命周期中的 `reserve/commit/release` 与 429 映射在 Phase 5 Web Chat API 完成。EdgeOne Agents Runtime 不直接读取 EdgeOne KV，避免绕过 Web API 的鉴权和结算边界。设置 `AI_AGENT_BASE_URL` 后，配额归属迁移到新 Agent adapter；控制台只做身份鉴权、家庭校验和摘要代理。EdgeOne KV namespace 创建、全局绑定和真实多节点传播窗口测试需要目标项目环境人工执行；审批完成前可以继续实现不依赖真实 KV 的 Agent 阶段。
 
 ### 测试
 
-- [ ] 默认、覆盖和 unlimited 三种策略。
-- [ ] 客户端伪造 ID 不影响配额主体。
-- [ ] 并发测试明确记录软限额偏差，不能断言 EdgeOne KV 提供硬限额。
-- [ ] Token 估算和实际 usage 差额正确结算。
-- [ ] 用户 A 无法读取用户 B 的 quota snapshot。
-- [ ] Store 故障不会无意放开生产额度。
+- [x] 默认、覆盖和 unlimited 三种策略。
+- [x] 客户端伪造 ID 不影响配额主体。
+- [x] 并发测试明确记录软限额偏差，不能断言 EdgeOne KV 提供硬限额。
+- [x] Token 估算和实际 usage 差额正确结算。
+- [x] 用户 A 无法读取用户 B 的 quota snapshot。
+- [x] Store 故障不会无意放开生产额度。
 
 ## 7. Phase 4：Makers Agent
 
@@ -193,45 +195,69 @@ lib/ai/tools/activate-scene.ts
 
 ### TODO
 
-- [ ] 建立 Agent endpoint，并使用固定 `onRequest(context)` 入口。
-- [ ] 使用可信服务端生成的 `conversation_id`。
-- [ ] 将 current principal/home 作为受信上下文传入，不来自模型。
-- [ ] 接入 Gateway Provider、`context.store`、`context.tools` 和 tracing。
-- [ ] 保持“已有场景高置信度匹配优先”。
-- [ ] 注册 `list_scenes` 和 `activate_scene` 两个首期工具。
-- [ ] Tool 侧重新校验 principal、homeId、场景审核状态和风险级别。
-- [ ] 模型上下文不包含 Gateway Key、Mi Cloud Token、DID 或未审核 ID。
-- [ ] side effect 前要求 Idempotency-Key。
-- [ ] 支持 Agent stop/cancel。
+- [x] 建立 Agent endpoint，并使用固定 `onRequest(context)` 入口。
+- [x] 使用平台注入的可信 `conversation_id`，不信任请求体中的会话 ID。
+- [x] 将 current principal/home 作为受信密封上下文传入，不来自模型。
+- [x] 接入 Gateway Provider、`context.store` 和 tracing。
+- [x] `context.tools` 不透传给模型；由 `AiAgentService` 显式执行受控工具，避免通用工具转发绕过 principal、home、审核和风险校验。
+- [x] 保持“已有场景高置信度匹配优先”的 Provider 语义。
+- [x] 注册 `list_scenes` 和 `activate_scene` 两个首期工具。
+- [x] Tool 侧重新校验 principal、homeId、场景审核状态和风险级别。
+- [x] 模型上下文不包含 Gateway Key、Mi Cloud Token、DID 或未审核 ID；场景使用 principal/home/scene 派生别名。
+- [x] side effect 前要求 Idempotency-Key，并用 `context.store.state` 支持跨实例重放保护。
+- [x] 支持 Agent stop/cancel，stop 请求按官方 contract 携带 `Makers-Conversation-Id`，body 使用 `conversation_id`，并调用 `abortActiveRun`。
+
+Phase 4 只实现 Agent Runtime、可信内部请求和受控工具。Web API、配额 reserve/commit/release 和页面 UI 留在 Phase 5/6；因此 EdgeOne KV 审批未完成不阻塞本阶段代码与单元验证。
 
 ### 测试
 
-- [ ] 同一用户同一会话可连续对话。
-- [ ] 不同 principal 即使提交相同 conversationId 也被隔离。
-- [ ] 模型编造工具名、homeId、sceneId 均不能执行。
-- [ ] 否定、条件、疑问和转述不误执行场景。
-- [ ] 相同幂等键只执行一次。
+- [x] 同一用户同一会话可连续对话。
+- [x] 不同 principal 即使提交相同 conversationId 也被隔离。
+- [x] 模型编造工具名、homeId、sceneId 均不能执行。
+- [x] 否定、条件、疑问和转述不误执行场景。
+- [x] 相同幂等键只执行一次。
+- [x] Agent 内部鉴权拒绝缺失、过短或错误 Secret。
+- [x] stop endpoint 遵循官方 body contract 并调用运行时取消能力。
+
+### 人工验证
+
+- [ ] `edgeone makers dev` 验证真实 Agent 路由和 `Makers-Conversation-Id`。
+- [ ] 使用内部请求完成一次 `list_scenes` 与一次低风险审核场景执行。
+- [ ] 验证 stop endpoint 能取消活跃请求且返回 499 语义。
+- [ ] KV 审批通过后再验证 Web API 与配额生命周期。
 
 ## 8. Phase 5：Web Chat API
 
 建议文件：
 
 ```text
-app/api/ai/chat/route.ts
-app/api/ai/quota/route.ts
-app/api/ai/conversations/route.ts
+edge-functions/api/ai/chat.ts
+edge-functions/api/ai/quota.ts
+edge-functions/api/ai/conversations.ts
+edge-functions/api/ai/conversations/[conversationId].ts
 ```
+
+Phase 5 最终使用 Edge Functions 作为 Web API 边界，因为 EdgeOne KV 绑定只能由 Edge Functions 读取。请求编排、会话句柄和 Agent HTTP 适配器仍位于 `lib/ai/web-chat/`，路由文件只处理 Cookie、请求大小、环境绑定和响应映射。
 
 ### TODO
 
-- [ ] 只接受有效 `xiaomi_session` Cookie。
-- [ ] 校验 message、homeId、conversationId 和请求大小。
-- [ ] 校验 homeId 属于当前登录用户。
-- [ ] 统一执行 principal → quota → agent → usage commit 流程。
-- [ ] 响应返回 requestId、conversationId、message、tool result 和 quota summary。
-- [ ] 明确错误码：未登录、额度不足、Agent 失败、Gateway 失败、场景失败。
-- [ ] 响应设置 `Cache-Control: no-store`。
-- [ ] 首期可使用非流式响应；SSE 必须作为独立增量任务。
+- [x] 只接受有效 `xiaomi_session` Cookie。
+- [x] 校验 message、homeId、conversationId 和请求大小。
+- [x] 校验 homeId 属于当前登录用户。
+- [x] 统一执行 principal → quota reserve → agent → usage commit/release 流程。
+- [x] 配额不足返回 429 `AI_QUOTA_EXCEEDED` 和恢复时间。
+- [x] 响应返回 requestId、conversationId、message、tool result 和 quota summary。
+- [x] 明确错误码：未登录、额度不足、Agent 失败、Gateway 失败、场景失败。
+- [x] 响应设置 `Cache-Control: no-store`。
+- [x] 首期可使用非流式响应；SSE 必须作为独立增量任务。
+
+实现补充：
+
+- `POST /api/ai/conversations` 签发符合 Makers 格式、并通过 HMAC 绑定当前 principal/home 的不透明句柄；客户端不能自报平台会话 ID。
+- `DELETE /api/ai/conversations/:conversationId` 重新校验当前登录用户及家庭，并通过内部 `agents/ai-home/delete.ts` 删除对应的 scoped Agent conversation。
+- 未提供 `idempotencyKey` 的聊天请求只签发 `ai:chat` scope；即使模型尝试调用 `activate_scene` 也会被 Agent 拒绝。
+- Agent usage 缺失或标记为估算时，配额账本只记录估算 Token，不伪装为精确 prompt/completion usage。
+- 2026-09-17 EdgeOne KV 审批仍在进行；内存 Store 的自动化测试已覆盖 reserve/commit/release，真实 KV 绑定和 Web API 正向人工验证继续保留为门禁。
 
 ## 9. Phase 6：页面 AI 助手
 
@@ -316,6 +342,7 @@ AI_GATEWAY_API_KEY=<platform-injected>
 AI_GATEWAY_BASE_URL=https://ai-gateway.edgeone.link/v1
 AI_GATEWAY_MODEL=<verified-model-id>
 AI_AGENT_INTERNAL_SECRET=<environment-specific-secret>
+AI_SCENE_APPROVED_IDS=<approved-low-risk-scene-ids>
 AI_PRINCIPAL_SECRET=<environment-specific-secret>
 AI_QUOTA_ENABLED=true
 AI_QUOTA_DEFAULT_REQUESTS_PER_MINUTE=10
