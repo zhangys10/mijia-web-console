@@ -133,6 +133,7 @@ Authorization: Bearer <AI_AGENT_INTERNAL_SECRET>
 - 当前 `/api/ai/command` 保留为旧 Siri PoC 兼容入口，但迁移完成前不接入 Web UI；新部署应设置 `AI_COMMAND_ENABLED=false`。
 - `/api/ai/command` 只有在后续阶段改为复用同一 `AiAgentService`、Quota Service 和工具校验后才能重新开放。
 - Vercel Preview 采用只读预览：允许展示助手入口和 mock 文本，不调用 Makers Agent、不消耗 Gateway 配额、不执行真实米家场景。
+- Console main 已在 Web Chat 服务边界实现该 Preview mock；鉴权、家庭归属和会话句柄校验仍先执行。
 - Production、Preview、Development 使用不同的 `AI_AGENT_INTERNAL_SECRET`、`AI_PRINCIPAL_SECRET` 和会话加密 Secret。
 
 ## 6. 人工验证记录
