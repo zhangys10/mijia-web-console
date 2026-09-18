@@ -126,6 +126,7 @@ export function webApiErrorResponse(error: unknown) {
   }
   if (error instanceof WebChatError || error instanceof AgentClientError) {
     const body: Record<string, unknown> = { code: error.code, message: error.message };
+    if (error instanceof AgentClientError && error.quota) body.quota = error.quota;
     if (error instanceof AgentClientError && error.retryAfterSeconds !== undefined) {
       body.retryAfterSeconds = error.retryAfterSeconds;
     }

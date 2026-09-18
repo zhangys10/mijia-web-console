@@ -171,7 +171,7 @@ tests/ai-quota-*.test.mjs
 - [x] Store 故障按 `AI_QUOTA_FAIL_MODE` 处理，生产默认 closed。
 - [x] 增加 `GET /api/ai/quota`，只返回当前用户摘要。
 
-Agent 调用生命周期中的 `reserve/commit/release` 与 429 映射在 Phase 5 Web Chat API 完成。EdgeOne Agents Runtime 不直接读取 EdgeOne KV，避免绕过 Web API 的鉴权和结算边界。EdgeOne KV namespace 创建、全局绑定和真实多节点传播窗口测试需要目标项目环境人工执行；审批完成前可以继续实现不依赖真实 KV 的 Agent 阶段。
+Agent 调用生命周期中的 `reserve/commit/release` 与 429 映射在 Phase 5 Web Chat API 完成。EdgeOne Agents Runtime 不直接读取 EdgeOne KV，避免绕过 Web API 的鉴权和结算边界。设置 `AI_AGENT_BASE_URL` 后，配额归属迁移到新 Agent adapter；控制台只做身份鉴权、家庭校验和摘要代理。EdgeOne KV namespace 创建、全局绑定和真实多节点传播窗口测试需要目标项目环境人工执行；审批完成前可以继续实现不依赖真实 KV 的 Agent 阶段。
 
 ### 测试
 

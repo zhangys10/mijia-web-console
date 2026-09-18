@@ -245,11 +245,11 @@ export class AiWebService {
       issuedAt: now,
       expiresAt: now + 5 * 60_000,
     }, this.env.XIAOMI_SESSION_SECRET);
-    const quota = this.requireQuota();
+    const quota = this.env.AI_AGENT_BASE_URL ? undefined : this.requireQuota();
     const estimatedTokens = estimatedReservationTokens(input.message);
-    const lease = await quota.reserve(principalId, estimatedTokens);
+    const lease = await quota?.reserve(principalId, estimatedTokens);
 
-    let agentResult: AgentRunResult;
+    let agentResult: AgentRunResult & { quota?: QuotaSummary };
     try {
       agentResult = await this.requireAgent().run({
         conversationId,
@@ -265,12 +265,15 @@ export class AiWebService {
         signal,
       });
     } catch (error) {
-      await quota.release(lease);
+      if (quota && lease) await quota.release(lease);
       throw error;
     }
 
-    await quota.commit(lease, usageForQuota(agentResult, estimatedTokens));
-    const quotaSummary = await quota.getSummary(principalId);
+    if (quota && lease) await quota.commit(lease, usageForQuota(agentResult, estimatedTokens));
+    const quotaSummary = quota ? await quota.getSummary(principalId) : agentResult.quota;
+    if (!quotaSummary) {
+      throw new WebChatError("AI_AGENT_UNAVAILABLE", "Agent 未返回配额摘要", 502);
+    }
     return {
       requestId: agentResult.requestId,
       conversationId,
