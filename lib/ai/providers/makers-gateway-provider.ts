@@ -29,6 +29,7 @@ export type MakersGatewayErrorCode =
   | "AI_GATEWAY_RATE_LIMITED"
   | "AI_GATEWAY_REQUEST_REJECTED"
   | "AI_GATEWAY_TIMEOUT"
+  | "AI_GATEWAY_CANCELLED"
   | "AI_GATEWAY_UNAVAILABLE"
   | "AI_GATEWAY_RESPONSE_INVALID";
 
@@ -49,6 +50,19 @@ const systemPrompt = `你是家庭控制意图路由器。只有在用户明确�
 
 function gatewayTools(scenes: readonly SceneProjection[]) {
   return [
+    {
+      type: "function",
+      function: {
+        name: "list_scenes",
+        description: "列出当前家庭允许 AI 使用的已审核场景摘要。",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {},
+          required: [],
+        },
+      },
+    },
     {
       type: "function",
       function: {
@@ -134,6 +148,7 @@ export class MakersGatewayProvider {
     locale = "zh-CN",
     timezone = "Asia/Shanghai",
     history?: readonly ChatMessage[],
+    externalSignal?: AbortSignal,
   ): Promise<RawIntentDecision> {
     const { apiKey, baseUrl, model } = this.config;
     if (!this.config.allowedModels.includes(model)) {
@@ -166,6 +181,13 @@ export class MakersGatewayProvider {
     };
 
     const controller = new AbortController();
+    let cancelled = externalSignal?.aborted ?? false;
+    if (cancelled) throw new MakersGatewayError("AI_GATEWAY_CANCELLED");
+    const abortFromExternal = () => {
+      cancelled = true;
+      controller.abort();
+    };
+    externalSignal?.addEventListener("abort", abortFromExternal, { once: true });
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
     const startedAt = Date.now();
     try {
@@ -240,11 +262,15 @@ export class MakersGatewayProvider {
       };
     } catch (error) {
       if (error instanceof MakersGatewayError) throw error;
+      if (error instanceof Error && error.name === "AbortError" && cancelled) {
+        throw new MakersGatewayError("AI_GATEWAY_CANCELLED");
+      }
       if (error instanceof Error && error.name === "AbortError") {
         throw new MakersGatewayError("AI_GATEWAY_TIMEOUT");
       }
       throw new MakersGatewayError("AI_GATEWAY_UNAVAILABLE");
     } finally {
+      externalSignal?.removeEventListener("abort", abortFromExternal);
       clearTimeout(timer);
     }
   }
