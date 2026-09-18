@@ -8,6 +8,7 @@ import { InMemoryQuotaStore } from "../lib/ai/quota/in-memory-quota-store.ts";
 import { QuotaStoreError } from "../lib/ai/quota/quota-store.ts";
 import { verifyAgentBinding } from "../lib/ai/security/agent-binding.ts";
 import { derivePrincipalId } from "../lib/ai/security/principal.ts";
+import { AgentClientError, MakersAgentClient } from "../lib/ai/web-chat/agent-client.ts";
 import { seal } from "../lib/xiaomi-cloud.ts";
 
 const sessionSecret = "web-chat-session-secret-at-least-32-characters";
@@ -227,6 +228,92 @@ test("web chat releases a quota reservation when the Agent fails", async () => {
   assert.equal(snapshot.totalTokensThisMonth, 0);
 });
 
+test("web chat settles known model usage when the Agent fails", async () => {
+  const quotaStore = new InMemoryQuotaStore({ env: "test", now: () => fixedTime });
+  const handler = createChatHandler(handlerOptions({
+    quotaStore,
+    fetchImpl: async () => new Response(JSON.stringify({
+      code: "AI_GATEWAY_RATE_LIMITED",
+      usage: { promptTokens: 19, completionTokens: 7, totalTokens: 26, estimated: false },
+    }), {
+      status: 429,
+      headers: { "Content-Type": "application/json" },
+    }),
+  }));
+  const response = await handler({
+    request: await chatRequest({ homeId: home.id, message: "你好" }),
+    env: env(),
+  });
+
+  assert.equal(response.status, 429);
+  assert.equal((await response.json()).code, "AI_GATEWAY_RATE_LIMITED");
+  const principalId = await derivePrincipalId(sessionA, { AI_PRINCIPAL_SECRET: principalSecret });
+  const snapshot = await quotaStore.getSnapshot(principalId);
+  assert.equal(snapshot.requestsToday, 1);
+  assert.equal(snapshot.totalTokensThisMonth, 26);
+});
+
+test("web chat conservatively settles unknown Agent transport outcomes", async () => {
+  const quotaStore = new InMemoryQuotaStore({ env: "test", now: () => fixedTime });
+  const handler = createChatHandler(handlerOptions({
+    quotaStore,
+    fetchImpl: async () => new Response(JSON.stringify({ code: "AI_GATEWAY_TIMEOUT" }), {
+      status: 504,
+      headers: { "Content-Type": "application/json" },
+    }),
+  }));
+  const response = await handler({
+    request: await chatRequest({ homeId: home.id, message: "你好" }),
+    env: env(),
+  });
+
+  assert.equal(response.status, 504);
+  assert.equal((await response.json()).code, "AI_GATEWAY_TIMEOUT");
+  const principalId = await derivePrincipalId(sessionA, { AI_PRINCIPAL_SECRET: principalSecret });
+  const snapshot = await quotaStore.getSnapshot(principalId);
+  assert.equal(snapshot.requestsToday, 1);
+  assert.equal(snapshot.totalTokensThisMonth, 1036);
+  assert.equal(snapshot.estimatedTokensThisMonth, 1036);
+});
+
+test("remote Agent base URLs require HTTPS except local development", () => {
+  const options = { internalSecret: "x".repeat(32) };
+  assert.throws(
+    () => new MakersAgentClient({ ...options, baseUrl: "http://remote.example" }),
+    (error) => error instanceof AgentClientError && error.code === "AI_AGENT_UNAVAILABLE",
+  );
+  assert.throws(
+    () => new MakersAgentClient({ ...options, baseUrl: "https://user:password@example.com" }),
+    (error) => error instanceof AgentClientError && error.code === "AI_AGENT_UNAVAILABLE",
+  );
+  assert.doesNotThrow(() => new MakersAgentClient({ ...options, baseUrl: "http://localhost:3000" }));
+  assert.doesNotThrow(() => new MakersAgentClient({ ...options, baseUrl: "http://127.0.0.1:3000" }));
+  assert.doesNotThrow(() => new MakersAgentClient({ ...options, baseUrl: "http://[::1]:3000" }));
+});
+
+test("web chat maps disabled execution and uncertain agent state without generic 502", async () => {
+  const cases = [
+    { code: "AI_SCENE_EXECUTION_DISABLED", status: 403 },
+    { code: "AI_EXECUTION_STATUS_UNKNOWN", status: 409 },
+    { code: "AI_AGENT_STORE_UNAVAILABLE", status: 503 },
+  ];
+  for (const item of cases) {
+    const handler = createChatHandler(handlerOptions({
+      quotaStore: new InMemoryQuotaStore({ env: "test", now: () => fixedTime }),
+      fetchImpl: async () => new Response(JSON.stringify({ code: item.code }), {
+        status: item.status,
+        headers: { "Content-Type": "application/json" },
+      }),
+    }));
+    const response = await handler({
+      request: await chatRequest({ homeId: home.id, message: "你好" }),
+      env: env(),
+    });
+    assert.equal(response.status, item.status);
+    assert.equal((await response.json()).code, item.code);
+  }
+});
+
 test("web chat returns quota retry time and honors fail-open storage policy", async () => {
   const quotaStore = new InMemoryQuotaStore({ env: "test", now: () => fixedTime });
   const calls = [];
@@ -368,6 +455,12 @@ test("remote agent owns quota: console never reads or mutates its local ledger",
 });
 
 test("remote quota exhaustion and outages preserve public errors without a local refund", async () => {
+  const quotaStore = {
+    reserve() { throw new Error("local reserve forbidden"); },
+    commit() { throw new Error("local commit forbidden"); },
+    release() { throw new Error("local release forbidden"); },
+    getSnapshot() { throw new Error("local read forbidden"); },
+  };
   const failures = [
     ["AI_QUOTA_EXCEEDED", 429],
     ["AI_QUOTA_STORE_UNAVAILABLE", 503],
@@ -375,6 +468,7 @@ test("remote quota exhaustion and outages preserve public errors without a local
   ];
   for (const [code, status] of failures) {
     const handler = createChatHandler(handlerOptions({
+      quotaStore,
       fetchImpl: async () => Response.json({
         code,
         quota: { period: "day", retryAfter: "2026-09-18T00:00:00+08:00" },

@@ -36,12 +36,19 @@ export class AgentClientError extends Error {
   readonly httpStatus: number;
   readonly retryAfterSeconds?: number;
   readonly quota?: { period: string; retryAfter: string };
+  readonly usage?: AgentRunResult["usage"];
+  readonly usageUnknown: boolean;
 
   constructor(
     code: string,
     message: string,
     httpStatus: number,
-    options: { retryAfterSeconds?: number; quota?: { period: string; retryAfter: string } } = {},
+    options: {
+      retryAfterSeconds?: number;
+      quota?: { period: string; retryAfter: string };
+      usage?: AgentRunResult["usage"];
+      usageUnknown?: boolean;
+    } = {},
   ) {
     super(message);
     this.name = "AgentClientError";
@@ -49,6 +56,8 @@ export class AgentClientError extends Error {
     this.httpStatus = httpStatus;
     this.retryAfterSeconds = options.retryAfterSeconds;
     this.quota = options.quota;
+    this.usage = options.usage;
+    this.usageUnknown = options.usageUnknown ?? false;
   }
 }
 
@@ -83,6 +92,15 @@ function mappedAgentError(body: Record<string, unknown> | null) {
   const retryAfterSeconds = Number.isSafeInteger(body?.retryAfterSeconds)
     ? body?.retryAfterSeconds as number
     : undefined;
+  const usage = normalizeUsage(body?.usage);
+  const usageUnknown = !usage && [
+    "AI_GATEWAY_TIMEOUT",
+    "AI_GATEWAY_UNAVAILABLE",
+    "AI_AGENT_UNAVAILABLE",
+    "AI_AGENT_CANCELLED",
+    "AI_SCENE_FAILED",
+    "AI_SCENE_TIMEOUT",
+  ].includes(code);
   switch (code) {
     case "AI_QUOTA_EXCEEDED": {
       const quota = objectRecord(body?.quota);
@@ -106,27 +124,37 @@ function mappedAgentError(body: Record<string, unknown> | null) {
       return new AgentClientError(code, "AI 请求格式无效", 400);
     case "AI_SCOPE_FORBIDDEN":
       return new AgentClientError(code, "当前请求不允许执行设备动作", 403);
+    case "AI_HOME_FORBIDDEN":
+      return new AgentClientError(code, "当前账号无权访问该家庭", 403);
     case "AI_PREVIEW_READ_ONLY":
       return new AgentClientError(code, "当前预览环境只允许只读对话", 403);
+    case "AI_SCENE_NOT_FOUND":
+      return new AgentClientError(code, "未找到可用的审核场景", 400);
     case "AI_IDEMPOTENCY_CONFLICT":
       return new AgentClientError(code, "相同幂等键对应不同请求", 409);
     case "AI_REQUEST_IN_PROGRESS":
       return new AgentClientError(code, "相同请求仍在处理中", 409);
+    case "AI_AGENT_STORE_UNAVAILABLE":
+      return new AgentClientError(code, "AI 助手状态存储暂时不可用", 503);
     case "AI_GATEWAY_RATE_LIMITED":
-      return new AgentClientError(code, "AI Gateway 限流，请稍后重试", 429, { retryAfterSeconds });
+      return new AgentClientError(code, "AI Gateway 限流，请稍后重试", 429, {
+        retryAfterSeconds,
+        usage,
+      });
     case "AI_GATEWAY_TIMEOUT":
-      return new AgentClientError(code, "AI Gateway 响应超时", 504);
+      return new AgentClientError(code, "AI Gateway 响应超时", 504, { usage, usageUnknown });
     case "AI_SCENE_FAILED":
-      return new AgentClientError(code, "米家场景执行失败", 502);
+      return new AgentClientError(code, "米家场景执行失败", 502, { usage, usageUnknown });
     case "AI_SCENE_TIMEOUT":
-      return new AgentClientError(code, "米家场景执行超时", 504);
+      return new AgentClientError(code, "米家场景执行超时", 504, { usage, usageUnknown });
     case "AI_AGENT_CANCELLED":
-      return new AgentClientError(code, "请求已取消", 499);
+      return new AgentClientError(code, "请求已取消", 499, { usage, usageUnknown });
     default:
       return new AgentClientError(
         code.startsWith("AI_GATEWAY_") ? "AI_GATEWAY_UNAVAILABLE" : "AI_AGENT_UNAVAILABLE",
         code.startsWith("AI_GATEWAY_") ? "AI Gateway 暂时不可用" : "AI 助手暂时不可用",
         502,
+        { usage, usageUnknown },
       );
   }
 }
@@ -311,7 +339,15 @@ export class MakersAgentClient implements WebAgentClient {
 
   constructor(options: MakersAgentClientOptions) {
     const endpoint = new URL(options.baseUrl);
-    if (!['https:', 'http:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+    const localHttp = endpoint.protocol === "http:"
+      && ["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname);
+    if (
+      (endpoint.protocol !== "https:" && !localHttp)
+      || endpoint.username
+      || endpoint.password
+      || endpoint.search
+      || endpoint.hash
+    ) {
       throw new AgentClientError("AI_AGENT_UNAVAILABLE", "Agent URL 配置无效", 502);
     }
     this.baseUrl = options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`;

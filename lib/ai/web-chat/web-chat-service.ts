@@ -4,7 +4,7 @@ import type { QuotaService, QuotaSummary } from "../quota/quota-service.ts";
 import type { QuotaActualUsage } from "../quota/quota-store.ts";
 import { createAgentBinding, type AgentScope } from "../security/agent-binding.ts";
 import { derivePrincipalId } from "../security/principal.ts";
-import type { WebAgentClient } from "./agent-client.ts";
+import { AgentClientError, type WebAgentClient } from "./agent-client.ts";
 import {
   createConversationHandle,
   resolveConversationHomeId,
@@ -121,6 +121,20 @@ function usageForQuota(result: AgentRunResult, fallback: number): QuotaActualUsa
     };
   }
   return { promptTokens: fallback, completionTokens: 0, estimated: true };
+}
+
+function usageForError(error: unknown, fallback: number): QuotaActualUsage | null {
+  if (!(error instanceof AgentClientError)) return null;
+  if (error.usage) {
+    return {
+      promptTokens: error.usage.promptTokens,
+      completionTokens: error.usage.completionTokens,
+      estimated: error.usage.estimated === true,
+    };
+  }
+  return error.usageUnknown
+    ? { promptTokens: fallback, completionTokens: 0, estimated: true }
+    : null;
 }
 
 function publicQuota(summary: QuotaSummary): PublicQuotaSummary {
@@ -265,7 +279,11 @@ export class AiWebService {
         signal,
       });
     } catch (error) {
-      if (quota && lease) await quota.release(lease);
+      if (quota && lease) {
+        const failureUsage = usageForError(error, estimatedTokens);
+        if (failureUsage) await quota.commit(lease, failureUsage);
+        else await quota.release(lease);
+      }
       throw error;
     }
 
