@@ -230,3 +230,52 @@ test("remote quota failures never fall back to a separate ledger", async (testCo
   assert.equal(response.status, 503);
   assert.equal((await response.json()).code, "AI_QUOTA_STORE_UNAVAILABLE");
 });
+
+test("remote quota with quota disabled returns a local disabled summary without calling the agent", async (testContext) => {
+  delete globalThis.ai_quota_kv;
+  const fetchSpy = testContext.mock.method(globalThis, "fetch", async () => {
+    throw new Error("remote quota call forbidden");
+  });
+  const principalId = await derivePrincipalId(sessionA, { AI_PRINCIPAL_SECRET: principalSecret });
+  const response = await onRequest({
+    request: new Request("https://console.example/api/ai/quota?principalId=usr_forged", {
+      headers: { Cookie: await createCookieHeader(sessionA) },
+    }),
+    env: baseEnv({
+      AI_AGENT_BASE_URL: "https://agent.example",
+      AI_QUOTA_ENABLED: "false",
+    }),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.quota, {
+    principalId,
+    mode: "disabled",
+    limits: null,
+    usage: null,
+    remaining: {
+      requestsThisMinute: null,
+      requestsToday: null,
+      tokensThisMonth: null,
+    },
+    resetAt: null,
+    softLimit: true,
+  });
+  assert.equal(fetchSpy.mock.callCount(), 0);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+});
+
+test("remote quota validates the enabled flag instead of ignoring it", async () => {
+  delete globalThis.ai_quota_kv;
+  const response = await onRequest({
+    request: new Request("https://console.example/api/ai/quota", {
+      headers: { Cookie: await createCookieHeader(sessionA) },
+    }),
+    env: baseEnv({
+      AI_AGENT_BASE_URL: "https://agent.example",
+      AI_QUOTA_ENABLED: "yes",
+    }),
+  });
+  assert.equal(response.status, 500);
+  assert.equal((await response.json()).code, "AI_QUOTA_CONFIG_INVALID");
+});

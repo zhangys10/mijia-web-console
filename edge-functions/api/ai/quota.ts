@@ -2,9 +2,9 @@ import { readXiaomiSessionWithSecret } from "../../../lib/xiaomi-cloud.ts";
 import { MakersAgentClient } from "../../../lib/ai/web-chat/agent-client.ts";
 import { webApiErrorResponse } from "../../../lib/ai/web-chat/web-api-boundary.ts";
 import { derivePrincipalId } from "../../../lib/ai/security/principal.ts";
-import { loadQuotaPolicy } from "../../../lib/ai/quota/policy.ts";
+import { isQuotaEnabled, loadQuotaPolicy } from "../../../lib/ai/quota/policy.ts";
 import { EdgeOneKvQuotaStore, type EdgeOneKvBinding } from "../../../lib/ai/quota/edgeone-kv-quota-store.ts";
-import { QuotaService } from "../../../lib/ai/quota/quota-service.ts";
+import { QuotaService, disabledQuotaSummary } from "../../../lib/ai/quota/quota-service.ts";
 import { QuotaStoreError } from "../../../lib/ai/quota/quota-store.ts";
 
 type EdgeOneQuotaContext = {
@@ -80,6 +80,15 @@ export async function onRequest(context: EdgeOneQuotaContext) {
   }
 
   if (context.env.AI_AGENT_BASE_URL) {
+    let quotaEnabled: boolean;
+    try {
+      quotaEnabled = isQuotaEnabled(context.env);
+    } catch {
+      return json({ code: "AI_QUOTA_CONFIG_INVALID", message: "配额配置无效" }, 500);
+    }
+    if (!quotaEnabled) {
+      return json({ quota: disabledQuotaSummary(principalId) }, 200);
+    }
     try {
       const agent = new MakersAgentClient({
         baseUrl: context.env.AI_AGENT_BASE_URL,

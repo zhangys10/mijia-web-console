@@ -126,6 +126,10 @@ function parseOverrides(value: string | undefined): Record<string, Partial<Quota
   return overrides;
 }
 
+export function isQuotaEnabled(env: QuotaEnvironment = process.env): boolean {
+  return bool(env, "AI_QUOTA_ENABLED", true);
+}
+
 export function loadQuotaPolicy(env: QuotaEnvironment = process.env): QuotaPolicy {
   const failModeValue = env.AI_QUOTA_FAIL_MODE ?? "closed";
   if (failModeValue !== "closed" && failModeValue !== "open") {
@@ -133,7 +137,7 @@ export function loadQuotaPolicy(env: QuotaEnvironment = process.env): QuotaPolic
   }
 
   return {
-    enabled: bool(env, "AI_QUOTA_ENABLED", true),
+    enabled: isQuotaEnabled(env),
     failMode: failModeValue,
     defaultLimits: {
       requestsPerMinute: positiveInteger(env, "AI_QUOTA_DEFAULT_REQUESTS_PER_MINUTE", 10, MAX_LIMITS.requestsPerMinute),

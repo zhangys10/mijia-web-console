@@ -1,7 +1,8 @@
 import { listHomes, type XiaomiHome, type XiaomiSession } from "../../xiaomi-cloud.ts";
 import type { AgentRunResult } from "../agent/ai-agent-service.ts";
 import { isPreviewEnvironment } from "../config.ts";
-import type { QuotaService, QuotaSummary } from "../quota/quota-service.ts";
+import { isQuotaEnabled } from "../quota/policy.ts";
+import { disabledQuotaSummary, type QuotaService, type QuotaSummary } from "../quota/quota-service.ts";
 import type { QuotaActualUsage } from "../quota/quota-store.ts";
 import { createAgentBinding, type AgentScope } from "../security/agent-binding.ts";
 import { derivePrincipalId } from "../security/principal.ts";
@@ -283,7 +284,9 @@ export class AiWebService {
       issuedAt: now,
       expiresAt: now + 5 * 60_000,
     }, this.env.XIAOMI_SESSION_SECRET);
-    const quota = this.env.AI_AGENT_BASE_URL ? undefined : this.requireQuota();
+    const remote = Boolean(this.env.AI_AGENT_BASE_URL);
+    const quota = remote ? undefined : this.requireQuota();
+    const remoteQuotaDisabled = remote && !isQuotaEnabled(this.env);
     const estimatedTokens = estimatedReservationTokens(input.message);
     const lease = await quota?.reserve(principalId, estimatedTokens);
 
@@ -312,7 +315,11 @@ export class AiWebService {
     }
 
     if (quota && lease) await quota.commit(lease, usageForQuota(agentResult, estimatedTokens));
-    const quotaSummary = quota ? await quota.getSummary(principalId) : agentResult.quota;
+    const quotaSummary = quota
+      ? await quota.getSummary(principalId)
+      : remoteQuotaDisabled
+        ? disabledQuotaSummary(principalId)
+        : agentResult.quota;
     if (!quotaSummary) {
       throw new WebChatError("AI_AGENT_UNAVAILABLE", "Agent 未返回配额摘要", 502);
     }

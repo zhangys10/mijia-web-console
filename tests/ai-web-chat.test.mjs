@@ -599,3 +599,44 @@ test("remote mode refuses missing quota summaries and never silently falls back"
   });
   assert.equal(response.status, 502);
 });
+
+test("remote chat with quota disabled synthesizes a disabled summary without any ledger", async () => {
+  const calls = [];
+  const quotaStore = {
+    reserve() { throw new Error("local reserve forbidden"); },
+    commit() { throw new Error("local commit forbidden"); },
+    release() { throw new Error("local release forbidden"); },
+    getSnapshot() { throw new Error("local read forbidden"); },
+  };
+  const handler = createChatHandler(handlerOptions({ quotaStore, fetchImpl: successFetch(calls) }));
+  const response = await handler({
+    request: await chatRequest({ homeId: home.id, message: "查看场景" }),
+    env: env({
+      AI_AGENT_BASE_URL: "https://agent.example",
+      AI_QUOTA_ENABLED: "false",
+    }),
+  });
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.deepEqual(data.quota, {
+    mode: "disabled",
+    remainingRequestsToday: null,
+    remainingTokensThisMonth: null,
+    resetAt: null,
+    softLimit: true,
+  });
+  assert.deepEqual(calls.map((call) => call.url), ["https://agent.example/ai-home"]);
+});
+
+test("remote mode validates the quota enabled flag instead of ignoring it", async () => {
+  const handler = createChatHandler(handlerOptions({ fetchImpl: successFetch([]) }));
+  const response = await handler({
+    request: await chatRequest({ homeId: home.id, message: "hello" }),
+    env: env({
+      AI_AGENT_BASE_URL: "https://agent.example",
+      AI_QUOTA_ENABLED: "yes",
+    }),
+  });
+  assert.equal(response.status, 500);
+  assert.equal((await response.json()).code, "AI_QUOTA_CONFIG_INVALID");
+});

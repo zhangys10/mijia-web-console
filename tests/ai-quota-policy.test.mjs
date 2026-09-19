@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { loadQuotaPolicy, QuotaPolicyError, resolveQuotaPolicy } from "../lib/ai/quota/policy.ts";
+import { isQuotaEnabled, loadQuotaPolicy, QuotaPolicyError, resolveQuotaPolicy } from "../lib/ai/quota/policy.ts";
 
 const overridePrincipalId = "usr_override_user";
 const unlimitedPrincipalId = "usr_unlimited_user";
@@ -78,6 +78,17 @@ test("loadQuotaPolicy fails fast on invalid quota configuration", () => {
       (error) => error instanceof QuotaPolicyError && error.code === "AI_QUOTA_CONFIG_INVALID",
     );
   }
+});
+
+test("isQuotaEnabled reads the single flag strictly in both agent modes", () => {
+  assert.equal(isQuotaEnabled({}), true);
+  assert.equal(isQuotaEnabled({ AI_QUOTA_ENABLED: "" }), true);
+  assert.equal(isQuotaEnabled({ AI_QUOTA_ENABLED: "true" }), true);
+  assert.equal(isQuotaEnabled({ AI_QUOTA_ENABLED: "false" }), false);
+  assert.throws(
+    () => isQuotaEnabled({ AI_QUOTA_ENABLED: "yes" }),
+    (error) => error instanceof QuotaPolicyError && error.code === "AI_QUOTA_CONFIG_INVALID",
+  );
 });
 
 test("resolveQuotaPolicy rejects malformed principal IDs", () => {

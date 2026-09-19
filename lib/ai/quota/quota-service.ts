@@ -28,6 +28,22 @@ export type QuotaSummary = {
   softLimit: true;
 };
 
+export function disabledQuotaSummary(principalId: string): QuotaSummary {
+  return {
+    principalId,
+    mode: "disabled",
+    limits: null,
+    usage: null,
+    remaining: {
+      requestsThisMinute: null,
+      requestsToday: null,
+      tokensThisMonth: null,
+    },
+    resetAt: null,
+    softLimit: true,
+  };
+}
+
 const MAX_ESTIMATED_TOKENS = 1_000_000;
 
 type QuotaServiceOptions = {
@@ -149,7 +165,7 @@ export class QuotaService {
   async getSummary(principalId: string): Promise<QuotaSummary> {
     const resolved = this.resolved(principalId);
     if (resolved.mode === "disabled") {
-      return this.summaryFromSnapshot(principalId, resolved, null);
+      return disabledQuotaSummary(principalId);
     }
     try {
       const snapshot = await this.store.getSnapshot(principalId);
