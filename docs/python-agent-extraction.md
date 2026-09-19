@@ -1,8 +1,8 @@
 # Python Agent extraction
 
 Agent development is being extracted into the prepared `mijia-agent` project. The
-companion source baseline is PR #31 (`3009be70bf82f90ad5b3b51de9f8f17b1c7f213d`),
-including the stacked quota/Makers/chat work that is not all on `main`.
+companion source baseline is console `main` after the stacked quota/Makers/chat work was
+squashed into PR #34 (`e40cf0c`).
 
 The console remains responsible for QR login, encrypted Xiaomi sessions, principal
 derivation, home authorization, scene alias mapping and safe execution. Python owns model
@@ -27,7 +27,10 @@ conversation storage, agent usage quotas, and forwards bounded turns to Python.
 This is a draft, read-only integration boundary, not a production migration. Existing Agent
 code and public API shapes are preserved for rollback. Keep `AI_COMMAND_ENABLED=false`.
 
-Before cutover, propagate/settle known model usage on errors, map uncertain execution errors,
-test real KV binding/soft quota behavior, verify preview mock behavior at ingress, and verify
-standalone Makers routing/store/cancellation against the new project. Do not assume the
-current conversation-scoped store supplies global atomic idempotency.
+The console now settles known model usage on Agent errors, conservatively settles unknown
+Gateway outcomes, maps uncertain execution errors, and enforces the Preview mock at the outer
+chat ingress. Before cutover, the standalone adapter must still implement quota settlement,
+attach a quota summary to chat results, and serve `POST /api/internal/quota`; otherwise a remote
+turn completes but the console returns `502` because the summary is absent. Real KV soft-quota
+behavior and standalone Makers routing/store/cancellation also remain to be validated. Do not
+assume the current conversation-scoped store supplies global atomic idempotency.
