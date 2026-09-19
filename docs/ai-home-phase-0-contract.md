@@ -71,6 +71,10 @@
 
 - `GET /api/ai/quota`：只返回当前 Cookie 对应 principal 的配额摘要。
 - 配额为 EdgeOne KV 最终一致性约束下的软限额，响应和 UI 不承诺并发场景下精确不超额。
+- `AI_QUOTA_ENABLED=false` 时配额停用，所有配额响应返回固定停用摘要：
+  `mode: "disabled"`，`remainingRequestsToday`/`remainingTokensThisMonth`/`resetAt` 均为 `null`，`softLimit: true`。
+  该状态表示无限额、无 usage 记账、无费用保护，仅限开发联调；UI 必须呈现为“配额已停用/不可用”，不得呈现为零剩余。
+  生产配额（本地 KV 账本或远程 adapter 账本）重新启用后，429/503/500 等配额错误码恢复适用。
 
 ## 3. Agent Internal Contract
 
@@ -134,6 +138,7 @@ Authorization: Bearer <AI_AGENT_INTERNAL_SECRET>
 - `/api/ai/command` 只有在后续阶段改为复用同一 `AiAgentService`、Quota Service 和工具校验后才能重新开放。
 - Vercel Preview 采用只读预览：允许展示助手入口和 mock 文本，不调用 Makers Agent、不消耗 Gateway 配额、不执行真实米家场景。
 - Console main 已在 Web Chat 服务边界实现该 Preview mock；鉴权、家庭归属和会话句柄校验仍先执行。
+- 2026-09-19 状态：配额实现整体推迟（M3）。远程 Agent 模式（`AI_AGENT_BASE_URL`）可在开发环境设置 `AI_QUOTA_ENABLED=false` 直接联调；adapter 配额结算、聊天配额摘要与 `POST /api/internal/quota` 属于后续 M3 契约。
 - Production、Preview、Development 使用不同的 `AI_AGENT_INTERNAL_SECRET`、`AI_PRINCIPAL_SECRET` 和会话加密 Secret。
 
 ## 6. 人工验证记录
