@@ -2,8 +2,9 @@
 
 > 项目：`mijia-web-console`  
 > 状态：Phase 0 contract frozen
-> 更新日期：2026-09-17  
+> 更新日期：2026-09-19
 > 当前目标：在 WebApp 中提供可对话的 AI 助手，统一使用 EdgeOne Makers AI Gateway，并为每个登录用户实施应用级用量配额；后续复用同一能力接入 Siri 等自动化客户端。
+> 2026-09-19 状态：本设计的配额部分为目标态，实现整体推迟（M3）。当前远程 Agent 联调用 `AI_QUOTA_ENABLED=false` 运行，返回固定停用摘要，无任何限额或费用保护。
 
 ## 1. 本次架构调整
 

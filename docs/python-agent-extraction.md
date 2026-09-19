@@ -23,14 +23,19 @@ conversation storage, agent usage quotas, and forwards bounded turns to Python.
   In that mode the adapter owns quota reserve/commit; the console does not maintain a second
   ledger. Unset preserves same-project routing and the local quota path. The Python URL is
   not used here.
+- Quota implementation is deferred (M3): while the adapter quota surface does not exist,
+  remote mode runs with `AI_QUOTA_ENABLED=false`. The console then requires no adapter
+  quota summary, never calls `POST /api/internal/quota`, and synthesizes a principal-bound
+  `mode: "disabled"` summary itself. This means no limits, no usage accounting, and no
+  model-cost protection — development-only. Re-enabling quota requires the adapter to
+  implement settlement, chat quota summaries, and `POST /api/internal/quota` first.
 
 This is a draft, read-only integration boundary, not a production migration. Existing Agent
 code and public API shapes are preserved for rollback. Keep `AI_COMMAND_ENABLED=false`.
 
 The console now settles known model usage on Agent errors, conservatively settles unknown
 Gateway outcomes, maps uncertain execution errors, and enforces the Preview mock at the outer
-chat ingress. Before cutover, the standalone adapter must still implement quota settlement,
-attach a quota summary to chat results, and serve `POST /api/internal/quota`; otherwise a remote
-turn completes but the console returns `502` because the summary is absent. Real KV soft-quota
+chat ingress. Remote turns work today with `AI_QUOTA_ENABLED=false`; with quota enabled a
+remote turn that returns no quota summary still fails `502` by design. Real KV soft-quota
 behavior and standalone Makers routing/store/cancellation also remain to be validated. Do not
 assume the current conversation-scoped store supplies global atomic idempotency.

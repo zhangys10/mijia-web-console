@@ -122,7 +122,7 @@ Phase 4 已实现 EdgeOne Makers Agent 入口、密封内部身份上下文、�
 
 Phase 3 提供 `GET /api/ai/quota`（EdgeOne Edge Function），只返回当前 Cookie 会话对应 principal 的额度摘要。未设置 `AI_AGENT_BASE_URL` 时，控制台使用本地 EdgeOne KV 账本；设置后由远程 Agent adapter 负责 reserve/commit 和摘要，控制台只做身份鉴权与代理，不运行第二套账本。
 
-- `AI_QUOTA_ENABLED`：默认 `true`。
+- `AI_QUOTA_ENABLED`：默认 `true`。设为 `false` 时配额完全停用：本地模式不写 KV 账本；远程模式（`AI_AGENT_BASE_URL` 已设置）不要求 adapter 返回配额摘要，也不调用 `POST /api/internal/quota`，由控制台直接合成 principal 绑定的 `mode: "disabled"` 摘要。停用状态没有请求/Token 限额、没有 usage 记账、没有应用层 429，也没有模型费用保护，只适用于开发联调；生产迁移前必须按 M3 计划实现 adapter 配额后恢复 `true`。远程模式现在会校验该取值，非法值返回 500 `AI_QUOTA_CONFIG_INVALID`（此前远程模式会忽略全部配额配置）。
 - `AI_QUOTA_DEFAULT_REQUESTS_PER_MINUTE` / `AI_QUOTA_DEFAULT_REQUESTS_PER_DAY` / `AI_QUOTA_DEFAULT_TOKENS_PER_MONTH`：默认 `10` / `50` / `100000`。
 - `AI_QUOTA_UNLIMITED_IDS`：逗号分隔的服务端 principalId，优先级最高，仍记录 usage。
 - `AI_QUOTA_OVERRIDES_JSON`：按 principalId 覆盖部分额度，未覆盖字段继承默认值。
@@ -131,14 +131,14 @@ Phase 3 提供 `GET /api/ai/quota`（EdgeOne Edge Function），只返回当前 
 
 EdgeOne KV 没有原子自增/CAS，且跨节点传播最长约 60 秒。日/月额度是软限额，并发或传播窗口内可能少量超额；不要将其作为精确硬限额或商业计费依据。
 
-本地配额模式按实际结果结算：Agent 错误若附带已知模型 usage，则提交该 usage；Gateway 超时等结果未知的错误按请求预留估值保守结算；明确发生在模型调用前的配置或鉴权错误释放预留。底层网络请求在收到 Agent 响应前失败时仍释放预留，因为控制台没有可验证的远端 usage。设置 `AI_AGENT_BASE_URL` 后，这些 reserve/commit/release 操作全部由远程 adapter 负责，控制台不会写本地账本。
+本地配额模式按实际结果结算：Agent 错误若附带已知模型 usage，则提交该 usage；Gateway 超时等结果未知的错误按请求预留估值保守结算；明确发生在模型调用前的配置或鉴权错误释放预留。底层网络请求在收到 Agent 响应前失败时仍释放预留，因为控制台没有可验证的远端 usage。设置 `AI_AGENT_BASE_URL` 后，这些 reserve/commit/release 操作由远程 adapter 负责（`AI_QUOTA_ENABLED=false` 时整体停用，见上文），控制台不会写本地账本。
 
 ### AI Web Chat API
 
 Phase 5 提供 Cookie 鉴权的非流式 Web Chat API，浏览器不提交 principal、米家凭据、Gateway Key、Agent 内部 Secret 或原始 Makers conversation ID。
 
 - `POST /api/ai/conversations`：body 为 `{ "homeId": "..." }`，签发绑定当前登录用户和家庭的不透明 `conversationId`。
-- `POST /api/ai/chat`：body 为 `{ "conversationId"?, "homeId", "message", "idempotencyKey"? }`，统一执行 principal 派生、家庭校验、Agent 调用和配额结算；远程 Agent 模式由 Agent adapter 返回配额摘要。
+- `POST /api/ai/chat`：body 为 `{ "conversationId"?, "homeId", "message", "idempotencyKey"? }`，统一执行 principal 派生、家庭校验、Agent 调用和配额结算；远程 Agent 模式由 Agent adapter 返回配额摘要，`AI_QUOTA_ENABLED=false` 时由控制台返回固定的停用摘要。
 - `DELETE /api/ai/conversations/:conversationId`：只清除当前用户、当前家庭对应的 Agent 对话记忆，不修改米家设备、场景或配额账本。
 - 未提供 `idempotencyKey` 时，请求只拥有 `ai:chat` scope，不能执行 `activate_scene`；需要设备副作用的请求必须提供 16–128 字符的幂等键。
 - 所有响应均为 JSON 并设置 `Cache-Control: no-store`；首期不提供 SSE。
