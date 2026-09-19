@@ -42,11 +42,13 @@ export function createDeleteConversationHandler(
         context.env,
         dependencies.readSession,
       );
-      const agent = new MakersAgentClient({
-        baseUrl: context.env.AI_AGENT_BASE_URL || new URL("/", context.request.url).toString(),
-        internalSecret: context.env.AI_AGENT_INTERNAL_SECRET,
-        fetchImpl: dependencies.fetchImpl,
-      });
+      const agent = context.env.AI_AGENT_BASE_URL
+        ? new MakersAgentClient({
+          baseUrl: context.env.AI_AGENT_BASE_URL,
+          internalSecret: context.env.AI_AGENT_INTERNAL_SECRET,
+          fetchImpl: dependencies.fetchImpl,
+        })
+        : undefined;
       const service = new AiWebService({
         env: context.env,
         agent,
