@@ -1,3 +1,4 @@
+import { withTimeout } from "./abort-signals.ts";
 import { parseDerivedDeviceId } from "./device-topology.ts";
 import { xiaomiRequest, type XiaomiSession } from "./xiaomi-cloud.ts";
 import type { XiaomiRequester } from "./xiaomi-scenes.ts";
@@ -416,10 +417,10 @@ export async function loadAutomationModelSceneCatalog(
   if (!identifier(model)) throw new Error("INVALID_XIAOMI_MODEL");
   const url = new URL(AUTOMATION_MODEL_CATALOG_URL);
   url.searchParams.set("model", model);
-  const response = await fetcher(url, {
+  const response = await withTimeout(8_000, signal => fetcher(url, {
     headers: { Accept: "application/json" },
-    signal: AbortSignal.timeout(8_000),
-  });
+    signal,
+  }));
   if (!response.ok) throw new Error(`XIAOMI_AUTOMATION_MODEL_CATALOG_HTTP_${response.status}`);
   let payload: unknown;
   try { payload = await response.json(); } catch { throw new Error("XIAOMI_AUTOMATION_MODEL_CATALOG_INVALID"); }

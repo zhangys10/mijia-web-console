@@ -1,3 +1,5 @@
+import { withTimeout } from "./abort-signals.ts";
+
 type MiotRawValue = { value: number | string | boolean; description?: string };
 type MiotRawProperty = { iid: number; type: string; description?: string; format?: string; access?: string[]; unit?: string; "value-list"?: MiotRawValue[]; "value-range"?: number[] };
 type MiotRawAction = { iid: number; type: string; description?: string; in?: number[]; out?: number[] };
@@ -67,7 +69,7 @@ async function fetchSpecJson(path: string): Promise<Record<string, unknown>> {
   let failure: Error | undefined;
   for (const origin of origins) {
     try {
-      const response = await fetch(`${origin}${path}`, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(12000) });
+      const response = await withTimeout(12000, signal => fetch(`${origin}${path}`, { headers: { Accept: "application/json" }, signal }));
       if (!response.ok) { failure = new Error(`MIOT_SPEC_HTTP_${response.status}`); continue; }
       const data = await response.json();
       if (!data || typeof data !== "object") throw new Error("MIOT_SPEC_RESPONSE_INVALID");

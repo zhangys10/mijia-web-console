@@ -1,3 +1,4 @@
+import { withTimeout } from "./abort-signals.ts";
 import { parseEmbeddedControlObjectResults, type ChannelControlObjectResult } from "./xiaomi-control-objects.ts";
 
 const encoder = new TextEncoder();
@@ -162,7 +163,7 @@ async function harvestServiceToken(location: string, cookies: string, userAgent:
   let current = location;
   let jar = cookies;
   for (let hop = 0; hop < 6; hop++) {
-    const response = await fetch(current, { headers: { "User-Agent": userAgent, Cookie: jar }, redirect: "manual", signal: AbortSignal.timeout(12000) });
+    const response = await withTimeout(12000, signal => fetch(current, { headers: { "User-Agent": userAgent, Cookie: jar }, redirect: "manual", signal }));
     jar = mergeCookies(jar, cookiePairs(response));
     const token = jar.match(/(?:^|;\s*)serviceToken=([^;]+)/)?.[1];
     if (token) return decodeURIComponent(token);
@@ -250,7 +251,7 @@ export async function startQrLogin(region: string): Promise<XiaomiQrState> {
   const userAgent = buildUserAgent();
   const url = new URL("https://account.xiaomi.com/longPolling/loginUrl");
   for (const [key, value] of Object.entries({ _qrsize: "480", qs: "%3Fsid%3Dxiaomiio%26_json%3Dtrue", callback: "https://sts.api.io.mi.com/sts", _hasLogo: "false", sid: "xiaomiio", serviceParam: "", _locale: "zh_CN", _dc: String(Date.now()) })) url.searchParams.set(key, value);
-  const response = await fetch(url, { headers: { "User-Agent": userAgent, Cookie: qrAccountCookieHeader(deviceId) }, signal: AbortSignal.timeout(12000) });
+  const response = await withTimeout(12000, signal => fetch(url, { headers: { "User-Agent": userAgent, Cookie: qrAccountCookieHeader(deviceId) }, signal }));
   if (!response.ok) throw new Error(`XIAOMI_LOGIN_HTTP_${response.status}`);
   const result = parseXiaomiJson(await response.text());
   if (!result.qr || !result.lp || !result.loginUrl) throw new Error("XIAOMI_QR_UNAVAILABLE");
@@ -258,7 +259,7 @@ export async function startQrLogin(region: string): Promise<XiaomiQrState> {
 }
 
 export async function loadQrImage(state: XiaomiQrState) {
-  const response = await fetch(state.imageUrl, { headers: { "User-Agent": state.userAgent, Cookie: state.cookieHeader }, signal: AbortSignal.timeout(12000) });
+  const response = await withTimeout(12000, signal => fetch(state.imageUrl, { headers: { "User-Agent": state.userAgent, Cookie: state.cookieHeader }, signal }));
   if (!response.ok) throw new Error(`XIAOMI_QR_IMAGE_HTTP_${response.status}`);
   return { data: await response.arrayBuffer(), contentType: response.headers.get("content-type") || "image/png" };
 }
@@ -266,7 +267,7 @@ export async function loadQrImage(state: XiaomiQrState) {
 export async function pollQrLogin(state: XiaomiQrState): Promise<{ pending: true } | { pending: false; session: XiaomiSession }> {
   if (Date.now() - state.createdAt > 5 * 60 * 1000) throw new Error("XIAOMI_QR_EXPIRED");
   let response: Response;
-  try { response = await fetch(state.pollUrl, { headers: { "User-Agent": state.userAgent, Cookie: state.cookieHeader }, signal: AbortSignal.timeout(8000) }); }
+  try { response = await withTimeout(8000, signal => fetch(state.pollUrl, { headers: { "User-Agent": state.userAgent, Cookie: state.cookieHeader }, signal })); }
   catch (error) { if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) return { pending: true }; throw error; }
   if (response.status === 408 || response.status === 504) return { pending: true };
   if (!response.ok) throw new Error(`XIAOMI_POLL_HTTP_${response.status}`);
@@ -326,7 +327,7 @@ export async function xiaomiRequest(session: XiaomiSession, path: string, data: 
   const fields = new URLSearchParams({ ...encrypted, signature, ssecurity: session.ssecurity, _nonce: nonceValue });
   let response: Response;
   try {
-    response = await fetch(`${base}${path}?${fields.toString()}`, { method: "POST", headers: { "User-Agent": session.userAgent, "Content-Type": "application/x-www-form-urlencoded", "Accept-Encoding": "identity", "x-xiaomi-protocal-flag-cli": "PROTOCAL-HTTP2", "MIOT-ENCRYPT-ALGORITHM": "ENCRYPT-RC4", Cookie: appCookieHeader(session) }, signal: AbortSignal.timeout(9000) });
+    response = await withTimeout(9000, signal => fetch(`${base}${path}?${fields.toString()}`, { method: "POST", headers: { "User-Agent": session.userAgent, "Content-Type": "application/x-www-form-urlencoded", "Accept-Encoding": "identity", "x-xiaomi-protocal-flag-cli": "PROTOCAL-HTTP2", "MIOT-ENCRYPT-ALGORITHM": "ENCRYPT-RC4", Cookie: appCookieHeader(session) }, signal }));
   } catch (error) {
     throw transportError(error);
   }
@@ -349,12 +350,12 @@ async function signedXiaomiRequest(session: XiaomiSession, path: string, data: R
   const signature = bytesToBase64(new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(source))));
   let response: Response;
   try {
-    response = await fetch(`https://${region}api.io.mi.com${path}`, {
+    response = await withTimeout(9000, signal => fetch(`https://${region}api.io.mi.com${path}`, {
       method: "POST",
       headers: { "User-Agent": session.userAgent, "Content-Type": "application/x-www-form-urlencoded", Cookie: appCookieHeader(session) },
       body: new URLSearchParams({ data: payload, _nonce: nonceValue, signature }),
-      signal: AbortSignal.timeout(9000),
-    });
+      signal,
+    }));
   } catch (error) {
     throw transportError(error);
   }

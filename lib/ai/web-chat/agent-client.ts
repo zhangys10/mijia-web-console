@@ -1,3 +1,4 @@
+import { withTimeout } from "../../abort-signals.ts";
 import type { AgentRunResult } from "../agent/ai-agent-service.ts";
 import type { QuotaSummary } from "../quota/quota-service.ts";
 import type { AgentScope } from "../security/agent-binding.ts";
@@ -355,13 +356,13 @@ export class MakersAgentClient implements WebAgentClient {
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
-  private async post(path: string, conversationId: string, body: unknown, signal?: AbortSignal) {
+  private async post(path: string, conversationId: string, body: unknown, signal?: AbortSignal, timeoutMilliseconds = 55000) {
     if (!this.internalSecret || this.internalSecret.length < 32) {
       throw new AgentClientError("AI_AGENT_UNAVAILABLE", "AI 助手内部鉴权尚未配置", 502);
     }
     let response: Response;
     try {
-      response = await this.fetchImpl(new URL(path, this.baseUrl), {
+      response = await withTimeout(timeoutMilliseconds, deadline => this.fetchImpl(new URL(path, this.baseUrl), {
         method: "POST",
         redirect: "error",
         headers: {
@@ -370,8 +371,8 @@ export class MakersAgentClient implements WebAgentClient {
           Authorization: `Bearer ${this.internalSecret}`,
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.any([AbortSignal.timeout(55000), ...(signal ? [signal] : [])]),
-      });
+        signal: deadline,
+      }), signal);
     } catch {
       throw new AgentClientError("AI_AGENT_UNAVAILABLE", "AI 助手暂时不可用", 502);
     }
@@ -385,7 +386,8 @@ export class MakersAgentClient implements WebAgentClient {
       "api/internal/quota",
       "quota_summary",
       { operation: "summary", principalId },
-      AbortSignal.timeout(5000),
+      undefined,
+      5000,
     );
     return normalizeQuota(body?.quota, principalId);
   }
