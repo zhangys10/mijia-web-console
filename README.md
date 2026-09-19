@@ -30,7 +30,6 @@
 自动化 API 为 `GET/POST /api/xiaomi/automations`、`GET/PUT /api/xiaomi/automations/:automationId` 和只返回脱敏能力目录的 `GET /api/xiaomi/automations/catalog`。当前版本不提供删除操作。
 
 设备建模与交互规则见 [设备管理设计](docs/device-management-design.md)。
-AI 语音与 LLM 场景控制的范围、安全边界和验收标准见 [AI Home PoC 设计](docs/ai-home-poc-design.md)。
 
 ## 技术栈
 
@@ -75,37 +74,22 @@ npm run dev
 
 本地可以通过未跟踪的 `.env.local` 提供该变量；仓库的 `.gitignore` 会排除所有 `.env*` 文件。生产环境应使用部署平台的加密 Secret 配置。
 
-### AI Home PoC
+### AI Home
 
-AI Home 正在从“用户自带模型 Key 的 Siri PoC”迁移到“EdgeOne Makers Agent + 项目级 AI Gateway + 用户配额”的 Web 助手。目标方案不要求用户输入或保存模型 Key，Gateway 凭据只通过服务端项目环境注入。
+AI Web 助手的 Agent 运行时已迁移到独立的 `mijia-agent` 仓库（EdgeOne Makers Agent + Python agent，独立部署，生产地址 `https://agent.fabloki.xyz`）。本仓库只保留 Cookie 鉴权的 Web Chat / 会话 / 配额 API、principal 派生、密封 session binding 和 `/api/ai/tools` 只读工具 facade；模型调用、场景执行和配额记账全部由远程 Agent 完成。
 
 当前仓库仍保留旧 `/api/ai/command`、Automation Token 和 AI 设置页面作为待迁移兼容实现；它们不代表新架构 contract。新部署在迁移完成前应设置 `AI_COMMAND_ENABLED=false`，不要向用户开放旧模型 Key 流程。
 
-Phase 0 已冻结 Web Chat、Agent 内部请求、错误码、Preview 策略和人工验证门禁。目标 EdgeOne 项目启用 Agents 且批准模型 ID 经人工验证后，才进入 Gateway Provider 实现。
+### 远程 Makers Agent
 
-### `AI_GATEWAY_API_KEY` / `AI_GATEWAY_BASE_URL` / `AI_GATEWAY_MODEL`
+Agent 运行时位于独立的 `mijia-agent` 仓库。本仓库的 Web Chat API 在完成小米登录、家庭归属和会话校验后，使用密封 session binding 携带内部鉴权调用远程 Agent；Agent 端点不是公开 Web API。
 
-AI Gateway Provider 必需的三个服务端变量，由 EdgeOne 项目环境注入，客户端和请求体不提供任何 Gateway 凭据。
-
-- `AI_GATEWAY_ALLOWED_MODELS`：逗号分隔的模型 allowlist，缺省只允许当前 `AI_GATEWAY_MODEL`。
-- `AI_GATEWAY_TIMEOUT_MS`：上游调用超时，默认 `5000`，范围 `1–60000`。
-- `AI_GATEWAY_MAX_OUTPUT_TOKENS`：单次最大输出 Token，默认 `256`，范围 `1–4096`。
-- `AI_GATEWAY_API_KEY` 只进入上游 `Authorization: Bearer` 头；错误、日志和客户端响应不得包含该值。
-- 模型固定使用非思考模式（`enable_thinking=false`），不设源码默认模型。
-
-详细设计见 [AI Home PoC 设计](docs/ai-home-poc-design.md)，冻结接口见 [AI Home Phase 0 Contract](docs/ai-home-phase-0-contract.md)，实施顺序见 [AI Home 实现 TODO](docs/ai-home-implementation-todo.md)。
-
-### Makers Agent
-
-Phase 4 已实现 EdgeOne Makers Agent 入口、密封内部身份上下文、会话存储、幂等执行和 `list_scenes` / `activate_scene` 两个受控工具。Agent 请求不是公开 Web API；后续 Web Chat API 会先校验小米登录、家庭归属和用户配额，再携带内部鉴权调用 Agent。
-
-- 模型只看到场景别名、名称和描述；Gateway Key、小米会话、真实场景 ID、DID 和原始用户 ID 不进入模型上下文。
+- `AI_AGENT_BASE_URL`：远程 Makers Agent origin，非预览聊天与会话删除的必填配置。生产环境的 `mijia-agent` EdgeOne 部署地址为 `https://agent.fabloki.xyz`；未设置时非预览请求返回 502 `AI_AGENT_UNAVAILABLE` 配置错误。除 `localhost`、`127.0.0.1` 和 IPv6 loopback 的本地开发地址外，HTTP origin 会被拒绝。
 - `AI_AGENT_INTERNAL_SECRET`：Web API 调用 Agent 的内部 Bearer Secret，每个部署环境独立，至少 32 个字符。
-- `AI_AGENT_BASE_URL`：可选的远程 Makers Agent HTTPS origin。生产环境的 `mijia-agent` EdgeOne 部署地址为 `https://agent.fabloki.xyz`；设置后 Web Chat 和配额摘要路由到新 Agent 项目，未设置时保持同项目路由和本地配额模式。除 `localhost`、`127.0.0.1` 和 IPv6 loopback 的本地开发地址外，HTTP origin 会被拒绝。
-- `AI_SCENE_APPROVED_IDS`：逗号分隔的低风险手动场景 ID 审核名单；默认为空，任何场景都不会被执行。
+- `AI_SCENE_APPROVED_IDS`：`/api/ai/tools` 场景目录使用的低风险手动场景 ID 审核名单，逗号分隔；默认为空，任何场景都不会被执行。
+- 模型只看到场景别名、名称和描述；小米会话、真实场景 ID、DID 和原始用户 ID 不进入模型上下文。
 - 连续对话由 Makers Agent 的 `Makers-Conversation-Id` 和服务端 principal/home 派生的存储键隔离。
 - 副作用必须携带 Idempotency-Key；相同请求只执行一次，不同请求复用同一 key 会返回冲突。
-- stop 请求按官方 contract 携带 `Makers-Conversation-Id`，body 使用 `conversation_id`，并调用运行时 `abortActiveRun`。
 
 ### `AI_PRINCIPAL_SECRET`
 
@@ -120,9 +104,9 @@ Phase 4 已实现 EdgeOne Makers Agent 入口、密封内部身份上下文、�
 
 ### AI Quota
 
-Phase 3 提供 `GET /api/ai/quota`（EdgeOne Edge Function），只返回当前 Cookie 会话对应 principal 的额度摘要。未设置 `AI_AGENT_BASE_URL` 时，控制台使用本地 EdgeOne KV 账本；设置后由远程 Agent adapter 负责 reserve/commit 和摘要，控制台只做身份鉴权与代理，不运行第二套账本。
+Phase 3 提供 `GET /api/ai/quota`（EdgeOne Edge Function），只返回当前 Cookie 会话对应 principal 的额度摘要。摘要由远程 Agent adapter 负责 reserve/commit 和返回，控制台只做身份鉴权与代理，不运行第二套账本。
 
-- `AI_QUOTA_ENABLED`：默认 `true`。设为 `false` 时配额完全停用：本地模式不写 KV 账本；远程模式（`AI_AGENT_BASE_URL` 已设置）不要求 adapter 返回配额摘要，也不调用 `POST /api/internal/quota`，由控制台直接合成 principal 绑定的 `mode: "disabled"` 摘要。停用状态没有请求/Token 限额、没有 usage 记账、没有应用层 429，也没有模型费用保护，只适用于开发联调；生产迁移前必须按 M3 计划实现 adapter 配额后恢复 `true`。远程模式现在会校验该取值，非法值返回 500 `AI_QUOTA_CONFIG_INVALID`（此前远程模式会忽略全部配额配置）。
+- `AI_QUOTA_ENABLED`：默认 `true`。设为 `false` 时配额完全停用：不要求 adapter 返回配额摘要，也不调用 `POST /api/internal/quota`，由控制台直接合成 principal 绑定的 `mode: "disabled"` 摘要。停用状态没有请求/Token 限额、没有 usage 记账、没有应用层 429，也没有模型费用保护，只适用于开发联调。该取值会被校验，非法值返回 500 `AI_QUOTA_CONFIG_INVALID`。
 - `AI_QUOTA_DEFAULT_REQUESTS_PER_MINUTE` / `AI_QUOTA_DEFAULT_REQUESTS_PER_DAY` / `AI_QUOTA_DEFAULT_TOKENS_PER_MONTH`：默认 `10` / `50` / `100000`。
 - `AI_QUOTA_UNLIMITED_IDS`：逗号分隔的服务端 principalId，优先级最高，仍记录 usage。
 - `AI_QUOTA_OVERRIDES_JSON`：按 principalId 覆盖部分额度，未覆盖字段继承默认值。
@@ -131,25 +115,25 @@ Phase 3 提供 `GET /api/ai/quota`（EdgeOne Edge Function），只返回当前 
 
 EdgeOne KV 没有原子自增/CAS，且跨节点传播最长约 60 秒。日/月额度是软限额，并发或传播窗口内可能少量超额；不要将其作为精确硬限额或商业计费依据。
 
-本地配额模式按实际结果结算：Agent 错误若附带已知模型 usage，则提交该 usage；Gateway 超时等结果未知的错误按请求预留估值保守结算；明确发生在模型调用前的配置或鉴权错误释放预留。底层网络请求在收到 Agent 响应前失败时仍释放预留，因为控制台没有可验证的远端 usage。设置 `AI_AGENT_BASE_URL` 后，这些 reserve/commit/release 操作由远程 adapter 负责（`AI_QUOTA_ENABLED=false` 时整体停用，见上文），控制台不会写本地账本。
+配额 reserve/commit/release 与错误结算由远程 Agent adapter 负责（`AI_QUOTA_ENABLED=false` 时整体停用，见上文）；控制台在聊天路径不读写任何本地账本。
 
 ### AI Web Chat API
 
 Phase 5 提供 Cookie 鉴权的非流式 Web Chat API，浏览器不提交 principal、米家凭据、Gateway Key、Agent 内部 Secret 或原始 Makers conversation ID。
 
 - `POST /api/ai/conversations`：body 为 `{ "homeId": "..." }`，签发绑定当前登录用户和家庭的不透明 `conversationId`。
-- `POST /api/ai/chat`：body 为 `{ "conversationId"?, "homeId", "message", "idempotencyKey"? }`，统一执行 principal 派生、家庭校验、Agent 调用和配额结算；远程 Agent 模式由 Agent adapter 返回配额摘要，`AI_QUOTA_ENABLED=false` 时由控制台返回固定的停用摘要。
+- `POST /api/ai/chat`：body 为 `{ "conversationId"?, "homeId", "message", "idempotencyKey"? }`，统一执行 principal 派生、家庭校验和远程 Agent 调用；配额摘要由 Agent adapter 返回，`AI_QUOTA_ENABLED=false` 时由控制台返回固定的停用摘要。
 - `DELETE /api/ai/conversations/:conversationId`：只清除当前用户、当前家庭对应的 Agent 对话记忆，不修改米家设备、场景或配额账本。
 - 未提供 `idempotencyKey` 时，请求只拥有 `ai:chat` scope，不能执行 `activate_scene`；需要设备副作用的请求必须提供 16–128 字符的幂等键。
 - 所有响应均为 JSON 并设置 `Cache-Control: no-store`；首期不提供 SSE。
 
-Web API 默认通过同项目 `/ai-home` 和 `/ai-home/delete` Agent 路由通信；设置 `AI_AGENT_BASE_URL` 时改用远程 Agent origin。内部请求使用 `Makers-Conversation-Id` 与 `Authorization: Bearer <AI_AGENT_INTERNAL_SECRET>`。客户端响应不会返回 Agent usage 明细、真实场景 ID、DID、原始 Xiaomi userId 或任何 Secret。
+Web API 通过 `AI_AGENT_BASE_URL` 指定的远程 Agent origin 的 `/ai-home` 与 `/ai-home/delete` 路由通信；未设置该变量时，非预览聊天与删除返回 502 `AI_AGENT_UNAVAILABLE`。内部请求使用 `Makers-Conversation-Id` 与 `Authorization: Bearer <AI_AGENT_INTERNAL_SECRET>`。客户端响应不会返回 Agent usage 明细、真实场景 ID、DID、原始 Xiaomi userId 或任何 Secret。
 
 `AI_ENVIRONMENT=preview` 时，聊天在完成 Cookie 鉴权、家庭归属和会话句柄校验后直接返回固定 mock 文本 `预览模式：不会调用模型或控制真实设备。`，配额模式为 `disabled`。该路径不创建执行 scope、不调用 Makers Agent，也不预留或消耗配额；删除会话返回本地幂等成功。预览判定只读取 `AI_ENVIRONMENT`，不读取 `VERCEL_ENV` 等平台特定变量；各平台的预览部署需显式设置该变量。Preview 部署应保持 `AI_AGENT_BASE_URL` 未设置，避免在进入服务层 mock 之前因无效远程配置失败。
 
-EdgeOne KV 审批完成前，本地自动化测试使用 `InMemoryQuotaStore`。如果只做本地 Agent/Web API 联调，可以在本地临时设置 `AI_QUOTA_FAIL_MODE=open`；生产环境仍应保持默认 `closed`，不得在 KV 未绑定时继续产生共享模型费用。
+EdgeOne KV 审批完成前，本地自动化测试使用 `InMemoryQuotaStore`。生产环境应保持 `AI_QUOTA_FAIL_MODE` 默认 `closed`，不得在存储不可用时继续产生共享模型费用。
 
-本地人工验证建议使用 `edgeone makers dev` 启动同项目 Edge Functions 与 Agent，并准备已登录浏览器中的 `xiaomi_session` Cookie。以下命令中的 Secret 和 Cookie 只应保存在当前终端，不要写入仓库或 shell history：
+本地人工验证需要同时运行本仓库 Edge Functions 和 `mijia-agent` 仓库的本地 Agent：用 `edgeone makers dev` 启动控制台后，将 `AI_AGENT_BASE_URL` 指向本地 Agent origin（或直接使用 `https://agent.fabloki.xyz`），并准备已登录浏览器中的 `xiaomi_session` Cookie。以下命令中的 Secret 和 Cookie 只应保存在当前终端，不要写入仓库或 shell history：
 
 ```bash
 export BASE=http://localhost:8088
@@ -174,7 +158,7 @@ curl -i -X DELETE "$BASE/api/ai/conversations/$CONV" \
   -H "Cookie: $COOKIE"
 ```
 
-预期结果：创建会话返回 201；聊天返回 200、相同 `conversationId` 和脱敏 quota；副作用请求只执行审核名单中的低风险场景；删除返回 200，随后使用同一句柄会建立空的 Agent 对话历史。KV 未绑定且 `AI_QUOTA_FAIL_MODE=closed` 时，聊天应返回 503 `AI_QUOTA_STORE_UNAVAILABLE`。
+预期结果：创建会话返回 201；聊天返回 200、相同 `conversationId` 和脱敏 quota；副作用请求只执行审核名单中的低风险场景；删除返回 200，随后使用同一句柄会建立空的 Agent 对话历史。
 
 ## 常用命令
 
