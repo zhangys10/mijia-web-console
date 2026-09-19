@@ -4,7 +4,7 @@ const DEFAULT_CONVERSATION_MAX_TURNS = 5;
 const MAX_CONVERSATION_TURNS_LIMIT = 20;
 
 export function isPreviewEnvironment(env: Record<string, string | undefined>) {
-  return env.VERCEL_ENV === "preview" || env.AI_ENVIRONMENT === "preview";
+  return env.AI_ENVIRONMENT === "preview";
 }
 
 export type AiCommandConfig = {

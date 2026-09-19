@@ -145,7 +145,7 @@ Phase 5 提供 Cookie 鉴权的非流式 Web Chat API，浏览器不提交 princ
 
 Web API 默认通过同项目 `/ai-home` 和 `/ai-home/delete` Agent 路由通信；设置 `AI_AGENT_BASE_URL` 时改用远程 Agent origin。内部请求使用 `Makers-Conversation-Id` 与 `Authorization: Bearer <AI_AGENT_INTERNAL_SECRET>`。客户端响应不会返回 Agent usage 明细、真实场景 ID、DID、原始 Xiaomi userId 或任何 Secret。
 
-`VERCEL_ENV=preview` 或 `AI_ENVIRONMENT=preview` 时，聊天在完成 Cookie 鉴权、家庭归属和会话句柄校验后直接返回固定 mock 文本 `预览模式：不会调用模型或控制真实设备。`，配额模式为 `disabled`。该路径不创建执行 scope、不调用 Makers Agent，也不预留或消耗配额；删除会话返回本地幂等成功。Preview 部署应保持 `AI_AGENT_BASE_URL` 未设置，避免在进入服务层 mock 之前因无效远程配置失败。
+`AI_ENVIRONMENT=preview` 时，聊天在完成 Cookie 鉴权、家庭归属和会话句柄校验后直接返回固定 mock 文本 `预览模式：不会调用模型或控制真实设备。`，配额模式为 `disabled`。该路径不创建执行 scope、不调用 Makers Agent，也不预留或消耗配额；删除会话返回本地幂等成功。预览判定只读取 `AI_ENVIRONMENT`，不读取 `VERCEL_ENV` 等平台特定变量；各平台的预览部署需显式设置该变量。Preview 部署应保持 `AI_AGENT_BASE_URL` 未设置，避免在进入服务层 mock 之前因无效远程配置失败。
 
 EdgeOne KV 审批完成前，本地自动化测试使用 `InMemoryQuotaStore`。如果只做本地 Agent/Web API 联调，可以在本地临时设置 `AI_QUOTA_FAIL_MODE=open`；生产环境仍应保持默认 `closed`，不得在 KV 未绑定时继续产生共享模型费用。
 

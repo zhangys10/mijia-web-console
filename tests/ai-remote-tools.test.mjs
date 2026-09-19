@@ -75,20 +75,19 @@ test("remote execution requires a valid idempotency key and strict scene argumen
   );
 });
 
-test("remote execution stays read-only under both preview environment flags", async () => {
+test("remote execution stays read-only in the preview environment", async () => {
   const body = {
     ...await input(["ai:chat", "scene:activate"]),
     idempotencyKey: "valid-idempotency-key-0001",
     tool: "activate_scene",
     arguments: { sceneId: "scene_0123456789abcdef" },
   };
-  for (const previewEnv of [
-    { AI_ENVIRONMENT: "preview" },
-    { VERCEL_ENV: "preview" },
-  ]) {
-    await assert.rejects(
-      runRemoteTool(body, { ...env, ...previewEnv }, dependencies),
-      /AI_PREVIEW_READ_ONLY/,
-    );
-  }
+  await assert.rejects(
+    runRemoteTool(body, { ...env, AI_ENVIRONMENT: "preview" }, dependencies),
+    /AI_PREVIEW_READ_ONLY/,
+  );
+  await assert.rejects(
+    runRemoteTool(body, { ...env, VERCEL_ENV: "preview" }, dependencies),
+    /AI_SCENE_EXECUTION_DISABLED/,
+  );
 });

@@ -207,46 +207,41 @@ test("web chat rejects unauthenticated, oversized, foreign-home, and client-forg
 });
 
 test("preview chat returns a local mock without Agent or quota activity", async () => {
-  for (const previewEnv of [
-    { AI_ENVIRONMENT: "preview" },
-    { VERCEL_ENV: "preview" },
-  ]) {
-    const calls = [];
-    const quotaStore = new InMemoryQuotaStore({ env: "test", now: () => fixedTime });
-    const handler = createChatHandler(handlerOptions({
-      quotaStore,
-      fetchImpl: async (...args) => {
-        calls.push(args);
-        return new Response(null, { status: 500 });
-      },
-    }));
-    const response = await handler({
-      request: await chatRequest({ homeId: home.id, message: "打开回家模式" }),
-      env: env(previewEnv),
-    });
+  const calls = [];
+  const quotaStore = new InMemoryQuotaStore({ env: "test", now: () => fixedTime });
+  const handler = createChatHandler(handlerOptions({
+    quotaStore,
+    fetchImpl: async (...args) => {
+      calls.push(args);
+      return new Response(null, { status: 500 });
+    },
+  }));
+  const response = await handler({
+    request: await chatRequest({ homeId: home.id, message: "打开回家模式" }),
+    env: env({ AI_ENVIRONMENT: "preview" }),
+  });
 
-    assert.equal(response.status, 200);
-    const data = await response.json();
-    assert.match(data.conversationId, /^cv1_[A-Za-z0-9_-]+$/);
-    assert.deepEqual(data, {
-      requestId: "req_00000000000040008000000000000001",
-      conversationId: data.conversationId,
-      message: "预览模式：不会调用模型或控制真实设备。",
-      intent: "none",
-      quota: {
-        mode: "disabled",
-        remainingRequestsToday: null,
-        remainingTokensThisMonth: null,
-        resetAt: null,
-        softLimit: true,
-      },
-    });
-    assert.equal(calls.length, 0);
-    const principalId = await derivePrincipalId(sessionA, { AI_PRINCIPAL_SECRET: principalSecret });
-    const snapshot = await quotaStore.getSnapshot(principalId);
-    assert.equal(snapshot.requestsToday, 0);
-    assert.equal(snapshot.totalTokensThisMonth, 0);
-  }
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.match(data.conversationId, /^cv1_[A-Za-z0-9_-]+$/);
+  assert.deepEqual(data, {
+    requestId: "req_00000000000040008000000000000001",
+    conversationId: data.conversationId,
+    message: "预览模式：不会调用模型或控制真实设备。",
+    intent: "none",
+    quota: {
+      mode: "disabled",
+      remainingRequestsToday: null,
+      remainingTokensThisMonth: null,
+      resetAt: null,
+      softLimit: true,
+    },
+  });
+  assert.equal(calls.length, 0);
+  const principalId = await derivePrincipalId(sessionA, { AI_PRINCIPAL_SECRET: principalSecret });
+  const snapshot = await quotaStore.getSnapshot(principalId);
+  assert.equal(snapshot.requestsToday, 0);
+  assert.equal(snapshot.totalTokensThisMonth, 0);
 });
 
 test("preview chat still enforces authentication, home, and conversation binding", async () => {
