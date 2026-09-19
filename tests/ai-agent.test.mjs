@@ -497,8 +497,29 @@ test("stop endpoint follows the official header and body contract and aborts the
   assert.equal(unavailableResponse.status, 503);
 });
 
+// The embedded Makers runtime store implements deleteConversation({ conversationId }) -> void and
+// throws MemoryNotFoundError (as error.code on a plain Error) when the conversation is absent.
+function makersRuntimeStore() {
+  const legacy = new InMemoryAgentConversationStore();
+  return {
+    getMessages: legacy.getMessages.bind(legacy),
+    appendMessage: legacy.appendMessage.bind(legacy),
+    getConversation: legacy.getConversation.bind(legacy),
+    updateConversation: legacy.updateConversation.bind(legacy),
+    deleteConversation: async ({ conversationId }) => {
+      const existing = await legacy.getMessages({ conversationId, limit: 100 });
+      if (existing.length === 0) {
+        const error = new Error(`conversation ${conversationId} not found`);
+        error.code = "MemoryNotFoundError";
+        throw error;
+      }
+      await legacy.deleteConversation(conversationId);
+    },
+  };
+}
+
 test("delete endpoint verifies the binding and clears only the scoped conversation", async () => {
-  const store = new InMemoryAgentConversationStore();
+  const store = makersRuntimeStore();
   const scopedId = await scopedAgentConversationId(conversationId, principalId, homeId);
   const otherScopedId = await scopedAgentConversationId(conversationId, otherPrincipalId, homeId);
   await store.appendMessage({ conversationId: scopedId, role: "user", content: "需要删除" });
@@ -545,4 +566,20 @@ test("delete endpoint verifies the binding and clears only the scoped conversati
   }));
   assert.equal(mismatch.status, 403);
   assert.equal((await mismatch.json()).code, "AI_AGENT_BINDING_MISMATCH");
+
+  const repeat = await deleteAgentConversation(agentContext({
+    request: {
+      body: {
+        requestId,
+        principalId,
+        homeId,
+        scopes: ["ai:chat"],
+        sessionBinding,
+      },
+      headers: { Authorization: `Bearer ${internalSecret}` },
+    },
+    store,
+  }));
+  assert.equal(repeat.status, 200);
+  assert.deepEqual(await repeat.json(), { ok: true, deleted: false, requestId });
 });

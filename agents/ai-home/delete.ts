@@ -51,8 +51,22 @@ export async function onRequest(context: MakersAgentContext) {
       return errorResponse("AI_AGENT_STORE_UNAVAILABLE", "Agent 会话存储不可用", 503, requestId);
     }
     const scopedId = await scopedAgentConversationId(conversationId, principalId, homeId);
-    const deleted = await context.store.deleteConversation(scopedId);
-    return jsonResponse({ ok: true, deleted, requestId: parsedRequestId });
+    // The embedded Makers runtime store implements deleteConversation({ conversationId }) -> Promise<void>
+    // and raises MemoryNotFoundError when the conversation is absent; the legacy store type models
+    // neither, so narrow to the runtime contract at the call site.
+    const makersStore = context.store as NonNullable<typeof context.store> & {
+      deleteConversation(input: { conversationId: string }): Promise<void>;
+    };
+    try {
+      await makersStore.deleteConversation({ conversationId: scopedId });
+      return jsonResponse({ ok: true, deleted: true, requestId: parsedRequestId });
+    } catch (error) {
+      // Makers raises MemoryNotFoundError only for an absent conversation: already deleted.
+      if (error instanceof Error && (error as Error & { code?: unknown }).code === "MemoryNotFoundError") {
+        return jsonResponse({ ok: true, deleted: false, requestId: parsedRequestId });
+      }
+      throw error;
+    }
   } catch (error) {
     return agentErrorResponse(error, requestId);
   }
