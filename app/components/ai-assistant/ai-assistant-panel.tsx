@@ -11,13 +11,27 @@ type AssistantQuota = {
   resetAt: string | null;
 };
 
+type AssistantHomeStatus = {
+  capturedAt: string;
+  completeness: "complete" | "partial" | "empty";
+  groups: Array<{
+    metric: "temperature" | "humidity" | "co2" | "formaldehyde" | "pm25" | "pm10" | "tvoc" | "pressure" | "battery";
+    label: string;
+    unit: string;
+    latest: { value: number; unit: string; sourceLabel: string; roomName: string | null } | null;
+    readings: Array<{ value: number; unit: string; sourceLabel: string; roomName: string | null }>;
+  }>;
+  warnings: string[];
+};
+
 type ChatResponse = {
   requestId: string;
   conversationId: string;
   message: string;
-  intent: "none" | "list_scenes" | "activate_scene";
-  tool?: { name: "list_scenes" | "activate_scene"; status: "success" | "partial_success"; sceneName?: string };
+  intent: "none" | "list_scenes" | "get_home_status" | "activate_scene";
+  tool?: { name: "list_scenes" | "get_home_status" | "activate_scene"; status: "success" | "partial_success"; sceneName?: string };
   scenes?: Array<{ name: string; description: string; actionCount: number }>;
+  homeStatus?: AssistantHomeStatus;
   quota: AssistantQuota;
 };
 
@@ -35,7 +49,7 @@ type Props = {
   onMessage: (text: string) => void;
 };
 
-const SUGGESTIONS = ["查看可用场景", "我回家了"];
+const SUGGESTIONS = ["查看可用场景", "家里环境怎么样", "我回家了"];
 
 function assistantErrorText(code: string, fallback: string) {
   switch (code) {
@@ -160,6 +174,7 @@ export default function AiAssistantPanel({ homeId, homeName, onClose, onOpenLogi
         text: result.message,
         tool: result.tool,
         scenes: result.scenes && result.scenes.length > 0 ? result.scenes : undefined,
+        homeStatus: result.homeStatus,
       }]);
     } catch (caught) {
       setMessages(list => {

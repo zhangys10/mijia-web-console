@@ -5,11 +5,32 @@ import test from "node:test";
 const pageUrl = new URL("../app/page.tsx", import.meta.url);
 const stylesUrl = new URL("../app/responsive.css", import.meta.url);
 
+test("environment dashboard renders unit-honest formaldehyde values and session trend charts", async () => {
+  const source = await readFile(pageUrl, "utf8");
+  // Formaldehyde reads like 0.08 must not be rounded to one decimal ("0.1").
+  assert.match(source, /Math\.abs\(value\)<1\)return value\.toPrecision\(3\)/, "sub-1 values need 3 significant digits");
+  // Session-local history feeds the charts; one point per refresh per device.
+  assert.match(source, /environmentHistory/);
+  assert.match(source, /setEnvironmentHistory\(previous=>\{/);
+  assert.match(source, /points\.length>60\?points\.slice\(points\.length-60\):points/, "history must stay bounded");
+  // Time is the x axis; each metric is its own chart (no dual axis).
+  assert.match(source, /EnvironmentTrendChart/);
+  assert.match(source, /const linePath=\(points/, "charts draw lines over time");
+  assert.match(source, /Date\.parse\(.*capturedAt\)/);
+  // Table view + legend + crosshair tooltip present.
+  assert.match(source, /environment-chart-table/, "charts must offer a table view");
+  assert.match(source, /environment-chart-legend/);
+  assert.match(source, /environment-crosshair/);
+  // Auto-refresh only runs while the environment tab is open.
+  assert.match(source, /tab!=="环境"\|\|!connection\.connected\|\|!selectedHome\|\|selectedHome==="demo"\)return/, "auto-refresh must be gated on the environment tab");
+  assert.match(source, /window\.setInterval\(\(\)=>\{if\(!environmentLoading\)void loadEnvironment\(selectedHome\)\},120_000\)/);
+});
+
 test("connected scene UI never falls back to demo data", async () => {
   const source = await readFile(pageUrl, "utf8");
   assert.match(source, /XIAOMI_DEVICE_HTTP_\$\{response\.status\}/, "deployment HTML errors must not leak JSON parser messages");
   assert.match(source, /connection\.connected\?\(selectedHome==="demo"\?\[\]:sceneState\.items\):demoScenes/);
-  assert.match(source, /connection\.connected\)void loadScenes\(homeId\)/, "switching homes must load that home's scenes");
+  assert.match(source, /connection\.connected\)\{void loadScenes\(homeId\);void loadEnvironment\(homeId\)\}/, "switching homes must load that home's scenes and environment readings");
   assert.match(source, /URLSearchParams\(\{includeScenes:"1"\}\)/, "device sync must include the selected home's scenes in the same request");
   assert.doesNotMatch(source, /await loadDevices\(true\);await loadScenes/, "manual sync must not issue a second scene request");
   assert.match(source, /setDevices\(\[\]\);setHomes\(\[\]\);setSelectedHome\(""\)/, "a failed first live sync must not leave demo devices visible");

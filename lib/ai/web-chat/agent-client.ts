@@ -1,5 +1,6 @@
 import { withTimeout } from "../../abort-signals.ts";
 import type { AgentSceneSummary } from "../tools/agent-scene-catalog.ts";
+import type { EnvironmentSnapshot } from "../../home-environment.ts";
 import type { ModelUsage } from "../types.ts";
 import type { QuotaSummary } from "../quota/quota-service.ts";
 import type { AgentScope } from "../security/agent-binding.ts";
@@ -8,10 +9,11 @@ export type AgentRunResult = {
   requestId: string;
   conversationId: string;
   message: string;
-  intent: "none" | "list_scenes" | "activate_scene";
+  intent: "none" | "list_scenes" | "get_home_status" | "activate_scene";
   scenes?: AgentSceneSummary[];
+  homeStatus?: EnvironmentSnapshot;
   tool?: {
-    name: "list_scenes" | "activate_scene";
+    name: "list_scenes" | "get_home_status" | "activate_scene";
     status: "success" | "partial_success";
     sceneName?: string;
   };
@@ -83,9 +85,20 @@ type MakersAgentClientOptions = {
   fetchImpl?: typeof fetch;
 };
 
-const knownIntent = new Set(["none", "list_scenes", "activate_scene"]);
-const knownTool = new Set(["list_scenes", "activate_scene"]);
+const knownIntent = new Set(["none", "list_scenes", "get_home_status", "activate_scene"]);
+const knownTool = new Set(["list_scenes", "get_home_status", "activate_scene"]);
 const knownToolStatus = new Set(["success", "partial_success"]);
+const knownEnvironmentMetric = new Set([
+  "temperature",
+  "humidity",
+  "co2",
+  "formaldehyde",
+  "pm25",
+  "pm10",
+  "tvoc",
+  "pressure",
+  "battery",
+]);
 
 function objectRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -199,6 +212,89 @@ function normalizeUsage(value: unknown) {
   };
 }
 
+type NormalizedHomeStatus = NonNullable<AgentRunResult["homeStatus"]>;
+type NormalizedHomeStatusReading = NormalizedHomeStatus["groups"][number]["readings"][number];
+
+function normalizeHomeStatusReading(value: unknown): NormalizedHomeStatusReading | null {
+  const reading = objectRecord(value);
+  if (
+    !reading
+    || typeof reading.value !== "number"
+    || !Number.isFinite(reading.value)
+    || typeof reading.unit !== "string"
+    || reading.unit.length > 24
+    || typeof reading.sourceLabel !== "string"
+    || !reading.sourceLabel
+    || reading.sourceLabel.length > 200
+    || (reading.capturedAt !== undefined && (typeof reading.capturedAt !== "string" || reading.capturedAt.length > 40))
+    || (reading.roomName !== undefined && reading.roomName !== null && typeof reading.roomName !== "string")
+  ) {
+    return null;
+  }
+  return {
+    value: reading.value,
+    unit: reading.unit,
+    sourceLabel: reading.sourceLabel,
+    roomName: typeof reading.roomName === "string" ? reading.roomName : null,
+    capturedAt: typeof reading.capturedAt === "string" ? reading.capturedAt : "",
+    freshness: reading.freshness === "stale" ? "stale" : "fresh",
+  };
+}
+
+function normalizeHomeStatus(value: unknown): NormalizedHomeStatus | undefined {
+  const status = objectRecord(value);
+  if (
+    !status
+    || typeof status.capturedAt !== "string"
+    || status.capturedAt.length > 40
+    || typeof status.completeness !== "string"
+    || !["complete", "partial", "empty"].includes(status.completeness)
+    || !Array.isArray(status.groups)
+    || status.groups.length > 16
+  ) {
+    return undefined;
+  }
+  const groups = status.groups.flatMap((item): NormalizedHomeStatus["groups"] => {
+    const group = objectRecord(item);
+    const metric = typeof group?.metric === "string" && knownEnvironmentMetric.has(group.metric)
+      ? group.metric as NormalizedHomeStatus["groups"][number]["metric"]
+      : null;
+    if (
+      !group
+      || !metric
+      || typeof group.label !== "string"
+      || !group.label
+      || group.label.length > 40
+      || typeof group.unit !== "string"
+      || group.unit.length > 24
+      || !Array.isArray(group.readings)
+      || group.readings.length > 20
+    ) {
+      return [];
+    }
+    const readings = group.readings.flatMap((entry) => {
+      const reading = normalizeHomeStatusReading(entry);
+      return reading ? [reading] : [];
+    });
+    return [{
+      metric,
+      label: group.label,
+      unit: group.unit,
+      latest: readings[0] ?? null,
+      readings,
+    }];
+  });
+  const warnings = Array.isArray(status.warnings)
+    ? status.warnings.flatMap((entry): string[] => (typeof entry === "string" && entry ? [entry.slice(0, 200)] : []))
+    : [];
+  return {
+    capturedAt: status.capturedAt,
+    completeness: status.completeness as NormalizedHomeStatus["completeness"],
+    groups,
+    warnings: warnings.slice(0, 8),
+  };
+}
+
 function normalizeAgentResult(
   body: Record<string, unknown> | null,
   expected: Pick<AgentClientRunInput, "requestId" | "conversationId">,
@@ -239,6 +335,10 @@ function normalizeAgentResult(
         }]
         : [];
     });
+  }
+  // Malformed status payloads are dropped (undefined), never partially trusted.
+  if (body.homeStatus !== undefined) {
+    result.homeStatus = normalizeHomeStatus(body.homeStatus);
   }
   const tool = objectRecord(body.tool);
   if (
