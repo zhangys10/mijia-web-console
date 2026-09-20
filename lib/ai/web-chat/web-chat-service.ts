@@ -1,12 +1,11 @@
 import { listHomes, type XiaomiHome, type XiaomiSession } from "../../xiaomi-cloud.ts";
-import type { AgentRunResult } from "../agent/ai-agent-service.ts";
+import type { AgentRunResult } from "./agent-client.ts";
 import { isPreviewEnvironment } from "../config.ts";
 import { isQuotaEnabled } from "../quota/policy.ts";
-import { disabledQuotaSummary, type QuotaService, type QuotaSummary } from "../quota/quota-service.ts";
-import type { QuotaActualUsage } from "../quota/quota-store.ts";
+import { disabledQuotaSummary, type QuotaSummary } from "../quota/quota-service.ts";
 import { createAgentBinding, type AgentScope } from "../security/agent-binding.ts";
 import { derivePrincipalId } from "../security/principal.ts";
-import { AgentClientError, type WebAgentClient } from "./agent-client.ts";
+import type { WebAgentClient } from "./agent-client.ts";
 import {
   createConversationHandle,
   resolveConversationHomeId,
@@ -55,7 +54,6 @@ export class WebChatError extends Error {
 
 type AiWebServiceOptions = {
   env: WebChatEnvironment;
-  quota?: QuotaService;
   agent?: WebAgentClient;
   loadHomes?: (session: XiaomiSession) => Promise<XiaomiHome[]>;
   now?: () => number;
@@ -64,7 +62,6 @@ type AiWebServiceOptions = {
 };
 
 const allowedFields = new Set(["conversationId", "homeId", "message", "idempotencyKey"]);
-const encoder = new TextEncoder();
 
 function requireField(value: unknown, name: string, maximum: number) {
   if (typeof value !== "string") {
@@ -103,43 +100,6 @@ function requestId(randomUuid: () => string) {
   return `req_${randomUuid().replace(/-/g, "")}`;
 }
 
-function estimatedReservationTokens(message: string) {
-  const bytes = encoder.encode(message).byteLength;
-  return Math.min(16_384, Math.max(1024, 1024 + bytes * 2));
-}
-
-function usageForQuota(result: AgentRunResult, fallback: number): QuotaActualUsage {
-  const usage = result.usage;
-  if (
-    usage
-    && Number.isSafeInteger(usage.promptTokens)
-    && Number.isSafeInteger(usage.completionTokens)
-    && usage.promptTokens >= 0
-    && usage.completionTokens >= 0
-  ) {
-    return {
-      promptTokens: usage.promptTokens,
-      completionTokens: usage.completionTokens,
-      estimated: usage.estimated === true,
-    };
-  }
-  return { promptTokens: fallback, completionTokens: 0, estimated: true };
-}
-
-function usageForError(error: unknown, fallback: number): QuotaActualUsage | null {
-  if (!(error instanceof AgentClientError)) return null;
-  if (error.usage) {
-    return {
-      promptTokens: error.usage.promptTokens,
-      completionTokens: error.usage.completionTokens,
-      estimated: error.usage.estimated === true,
-    };
-  }
-  return error.usageUnknown
-    ? { promptTokens: fallback, completionTokens: 0, estimated: true }
-    : null;
-}
-
 function publicQuota(summary: QuotaSummary): PublicQuotaSummary {
   return {
     mode: summary.mode,
@@ -162,7 +122,6 @@ function previewQuota(): PublicQuotaSummary {
 
 export class AiWebService {
   private readonly env: WebChatEnvironment;
-  private readonly quota: QuotaService | undefined;
   private readonly agent: WebAgentClient | undefined;
   private readonly loadHomes: (session: XiaomiSession) => Promise<XiaomiHome[]>;
   private readonly now: () => number;
@@ -171,7 +130,6 @@ export class AiWebService {
 
   constructor(options: AiWebServiceOptions) {
     this.env = options.env;
-    this.quota = options.quota;
     this.agent = options.agent;
     this.loadHomes = options.loadHomes ?? listHomes;
     this.now = options.now ?? Date.now;
@@ -200,11 +158,6 @@ export class AiWebService {
   private requireAgent() {
     if (!this.agent) throw new WebChatError("AI_AGENT_UNAVAILABLE", "AI 助手尚未配置", 502);
     return this.agent;
-  }
-
-  private requireQuota() {
-    if (!this.quota) throw new WebChatError("AI_AGENT_UNAVAILABLE", "AI 配额服务尚未配置", 502);
-    return this.quota;
   }
 
   async createConversation(session: XiaomiSession, rawHomeId: unknown) {
@@ -285,42 +238,24 @@ export class AiWebService {
       issuedAt: now,
       expiresAt: now + 5 * 60_000,
     }, this.env.XIAOMI_SESSION_SECRET);
-    const remote = Boolean(this.env.AI_AGENT_BASE_URL);
-    const quota = remote ? undefined : this.requireQuota();
-    const remoteQuotaDisabled = remote && !isQuotaEnabled(this.env);
-    const estimatedTokens = estimatedReservationTokens(input.message);
-    const lease = await quota?.reserve(principalId, estimatedTokens);
+    const remoteQuotaDisabled = !isQuotaEnabled(this.env);
+    const agentResult = await this.requireAgent().run({
+      conversationId,
+      requestId: id,
+      principalId,
+      homeId: input.homeId,
+      message: input.message,
+      idempotencyKey: input.idempotencyKey ?? `readonly_${id}`,
+      scopes,
+      sessionBinding,
+      locale: "zh-CN",
+      timezone: "Asia/Shanghai",
+      signal,
+    });
 
-    let agentResult: AgentRunResult & { quota?: QuotaSummary };
-    try {
-      agentResult = await this.requireAgent().run({
-        conversationId,
-        requestId: id,
-        principalId,
-        homeId: input.homeId,
-        message: input.message,
-        idempotencyKey: input.idempotencyKey ?? `readonly_${id}`,
-        scopes,
-        sessionBinding,
-        locale: "zh-CN",
-        timezone: "Asia/Shanghai",
-        signal,
-      });
-    } catch (error) {
-      if (quota && lease) {
-        const failureUsage = usageForError(error, estimatedTokens);
-        if (failureUsage) await quota.commit(lease, failureUsage);
-        else await quota.release(lease);
-      }
-      throw error;
-    }
-
-    if (quota && lease) await quota.commit(lease, usageForQuota(agentResult, estimatedTokens));
-    const quotaSummary = quota
-      ? await quota.getSummary(principalId)
-      : remoteQuotaDisabled
-        ? disabledQuotaSummary(principalId)
-        : agentResult.quota;
+    const quotaSummary = remoteQuotaDisabled
+      ? disabledQuotaSummary(principalId)
+      : agentResult.quota;
     if (!quotaSummary) {
       throw new WebChatError("AI_AGENT_UNAVAILABLE", "Agent 未返回配额摘要", 502);
     }

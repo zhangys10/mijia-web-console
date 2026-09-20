@@ -21,11 +21,6 @@ test("uses the platform-specific build output for each deployment target", async
     buildCommand: "npm run build:edgeone",
     installCommand: "npm ci",
     outputDirectory: ".next",
-    agents: {
-      framework: "openai-agents-sdk",
-      dir: "agents",
-      timeout: 60,
-    },
   });
   assert.equal(vercel.buildCommand, "npm run build:vercel");
 });

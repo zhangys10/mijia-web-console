@@ -1,8 +1,5 @@
 import { readXiaomiSessionWithSecret, type XiaomiSession } from "../../xiaomi-cloud.ts";
-import { EdgeOneKvQuotaStore, type EdgeOneKvBinding } from "../quota/edgeone-kv-quota-store.ts";
-import { loadQuotaPolicy, QuotaPolicyError } from "../quota/policy.ts";
-import { QuotaService } from "../quota/quota-service.ts";
-import type { QuotaStore } from "../quota/quota-store.ts";
+import { QuotaPolicyError } from "../quota/policy.ts";
 import { QuotaExceededError, QuotaStoreError } from "../quota/quota-store.ts";
 import { AgentBindingError } from "../security/agent-binding.ts";
 import { PrincipalError } from "../security/principal.ts";
@@ -78,46 +75,6 @@ export async function readJsonBody(request: Request, maximumBytes: number) {
   } catch {
     throw new WebChatError("AI_INVALID_REQUEST", "请求体必须是合法 JSON", 400);
   }
-}
-
-function resolveKvBinding(env: Record<string, string | undefined>) {
-  const bindingName = env.AI_QUOTA_KV_BINDING?.trim() || "ai_quota_kv";
-  const bindings = globalThis as typeof globalThis & Record<string, unknown>;
-  const binding = bindings[bindingName];
-  return binding && typeof binding === "object" && "get" in binding && "put" in binding
-    ? binding as EdgeOneKvBinding
-    : undefined;
-}
-
-const unavailableStore: QuotaStore = {
-  async reserve() {
-    throw new QuotaStoreError("AI_QUOTA_STORE_UNAVAILABLE", "配额存储未绑定");
-  },
-  async commit() {
-    throw new QuotaStoreError("AI_QUOTA_STORE_UNAVAILABLE", "配额存储未绑定");
-  },
-  async release() {
-    throw new QuotaStoreError("AI_QUOTA_STORE_UNAVAILABLE", "配额存储未绑定");
-  },
-  async getSnapshot() {
-    throw new QuotaStoreError("AI_QUOTA_STORE_UNAVAILABLE", "配额存储未绑定");
-  },
-};
-
-export function createQuotaService(
-  env: Record<string, string | undefined>,
-  options: { store?: QuotaStore; now?: () => number } = {},
-) {
-  const policy = loadQuotaPolicy(env);
-  const binding = options.store ? undefined : resolveKvBinding(env);
-  const store = options.store
-    ?? (binding
-      ? new EdgeOneKvQuotaStore(binding, {
-        env: env.APP_ENV ?? env.NODE_ENV ?? "development",
-        now: options.now,
-      })
-      : unavailableStore);
-  return new QuotaService(store, policy, { now: options.now });
 }
 
 export function webApiErrorResponse(error: unknown) {

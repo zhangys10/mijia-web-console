@@ -4,8 +4,6 @@ import test from "node:test";
 import { createChatHandler } from "../edge-functions/api/ai/chat.ts";
 import { createConversationHandler } from "../edge-functions/api/ai/conversations.ts";
 import { createDeleteConversationHandler } from "../edge-functions/api/ai/conversations/[conversationId].ts";
-import { InMemoryQuotaStore } from "../lib/ai/quota/in-memory-quota-store.ts";
-import { QuotaStoreError } from "../lib/ai/quota/quota-store.ts";
 import { verifyAgentBinding } from "../lib/ai/security/agent-binding.ts";
 import { derivePrincipalId } from "../lib/ai/security/principal.ts";
 import { AgentClientError, MakersAgentClient } from "../lib/ai/web-chat/agent-client.ts";
@@ -85,16 +83,27 @@ function successFetch(calls, overrides = {}) {
       intent: "activate_scene",
       tool: { name: "activate_scene", status: "success", sceneName: "回家模式" },
       usage: { promptTokens: 24, completionTokens: 6, totalTokens: 30, estimated: false },
+      quota: {
+        principalId: body.principalId,
+        mode: "default",
+        limits: null,
+        usage: null,
+        remaining: {
+          requestsThisMinute: null,
+          requestsToday: 9,
+          tokensThisMonth: 99970,
+        },
+        resetAt: "2026-09-18T00:00:00+08:00",
+        softLimit: true,
+      },
       ...overrides,
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   };
 }
 
-test("web chat derives principal, issues a bound conversation, commits usage, and exposes only safe fields", async () => {
+test("web chat derives principal, issues a bound conversation, and exposes only safe fields", async () => {
   const calls = [];
-  const quotaStore = new InMemoryQuotaStore({ env: "test", now: () => fixedTime });
   const handler = createChatHandler(handlerOptions({
-    quotaStore,
     fetchImpl: successFetch(calls, {
       scenes: [{
         alias: "scene_safe_alias",
@@ -110,7 +119,7 @@ test("web chat derives principal, issues a bound conversation, commits usage, an
       message: " 我回家了 ",
       idempotencyKey: "web-chat-idempotency-000001",
     }),
-    env: env(),
+    env: env({ AI_AGENT_BASE_URL: "http://localhost" }),
   });
 
   assert.equal(response.status, 200);
@@ -153,7 +162,6 @@ test("web chat derives principal, issues a bound conversation, commits usage, an
 test("web chat without a client idempotency key remains read-only", async () => {
   const calls = [];
   const handler = createChatHandler(handlerOptions({
-    quotaStore: new InMemoryQuotaStore({ env: "test", now: () => fixedTime }),
     fetchImpl: successFetch(calls, {
       message: "当前请求未执行设备动作。",
       intent: "none",
@@ -162,7 +170,7 @@ test("web chat without a client idempotency key remains read-only", async () => 
   }));
   const response = await handler({
     request: await chatRequest({ homeId: home.id, message: "有哪些场景？" }),
-    env: env(),
+    env: env({ AI_AGENT_BASE_URL: "http://localhost" }),
   });
 
   assert.equal(response.status, 200);
@@ -172,7 +180,6 @@ test("web chat without a client idempotency key remains read-only", async () => 
 
 test("web chat rejects unauthenticated, oversized, foreign-home, and client-forged context", async () => {
   const handler = createChatHandler(handlerOptions({
-    quotaStore: new InMemoryQuotaStore({ env: "test", now: () => fixedTime }),
     fetchImpl: async () => assert.fail("Agent must not be called"),
   }));
   const missingSession = await handler({
@@ -206,11 +213,9 @@ test("web chat rejects unauthenticated, oversized, foreign-home, and client-forg
   assert.equal((await oversized.json()).code, "AI_INVALID_REQUEST");
 });
 
-test("preview chat returns a local mock without Agent or quota activity", async () => {
+test("preview chat returns a local mock without Agent activity", async () => {
   const calls = [];
-  const quotaStore = new InMemoryQuotaStore({ env: "test", now: () => fixedTime });
   const handler = createChatHandler(handlerOptions({
-    quotaStore,
     fetchImpl: async (...args) => {
       calls.push(args);
       return new Response(null, { status: 500 });
@@ -238,15 +243,10 @@ test("preview chat returns a local mock without Agent or quota activity", async 
     },
   });
   assert.equal(calls.length, 0);
-  const principalId = await derivePrincipalId(sessionA, { AI_PRINCIPAL_SECRET: principalSecret });
-  const snapshot = await quotaStore.getSnapshot(principalId);
-  assert.equal(snapshot.requestsToday, 0);
-  assert.equal(snapshot.totalTokensThisMonth, 0);
 });
 
 test("preview chat still enforces authentication, home, and conversation binding", async () => {
   const handler = createChatHandler(handlerOptions({
-    quotaStore: new InMemoryQuotaStore({ env: "test", now: () => fixedTime }),
     fetchImpl: async () => assert.fail("Agent must not be called"),
   }));
   const previewEnv = env({ AI_ENVIRONMENT: "preview" });
@@ -312,14 +312,9 @@ test("preview delete returns a local no-op without Agent calls", async () => {
   assert.equal(calls.length, 0);
 });
 
-test("web chat releases a quota reservation when the Agent fails", async () => {
-  const quotaStore = new InMemoryQuotaStore({ env: "test", now: () => fixedTime });
+test("non-preview chat without AI_AGENT_BASE_URL fails as a configuration error", async () => {
   const handler = createChatHandler(handlerOptions({
-    quotaStore,
-    fetchImpl: async () => new Response(JSON.stringify({ code: "AI_GATEWAY_AUTH_FAILED" }), {
-      status: 502,
-      headers: { "Content-Type": "application/json" },
-    }),
+    fetchImpl: async () => assert.fail("Agent must not be called"),
   }));
   const response = await handler({
     request: await chatRequest({ homeId: home.id, message: "你好" }),
@@ -327,59 +322,35 @@ test("web chat releases a quota reservation when the Agent fails", async () => {
   });
 
   assert.equal(response.status, 502);
-  assert.equal((await response.json()).code, "AI_GATEWAY_UNAVAILABLE");
-  const principalId = await derivePrincipalId(sessionA, { AI_PRINCIPAL_SECRET: principalSecret });
-  const snapshot = await quotaStore.getSnapshot(principalId);
-  assert.equal(snapshot.requestsToday, 0);
-  assert.equal(snapshot.totalTokensThisMonth, 0);
+  const body = await response.json();
+  assert.equal(body.code, "AI_AGENT_UNAVAILABLE");
+  assert.equal(body.message, "AI 助手尚未配置");
 });
 
-test("web chat settles known model usage when the Agent fails", async () => {
-  const quotaStore = new InMemoryQuotaStore({ env: "test", now: () => fixedTime });
-  const handler = createChatHandler(handlerOptions({
-    quotaStore,
-    fetchImpl: async () => new Response(JSON.stringify({
-      code: "AI_GATEWAY_RATE_LIMITED",
-      usage: { promptTokens: 19, completionTokens: 7, totalTokens: 26, estimated: false },
-    }), {
-      status: 429,
-      headers: { "Content-Type": "application/json" },
+test("non-preview conversation delete without AI_AGENT_BASE_URL fails as a configuration error", async () => {
+  const createHandler = createConversationHandler(handlerOptions());
+  const created = await createHandler({
+    request: new Request("http://localhost/api/ai/conversations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: await cookie(sessionA) },
+      body: JSON.stringify({ homeId: home.id }),
     }),
+    env: env(),
+  });
+  const { conversationId } = await created.json();
+  const handler = createDeleteConversationHandler(handlerOptions({
+    fetchImpl: async () => assert.fail("Agent must not be called"),
   }));
   const response = await handler({
-    request: await chatRequest({ homeId: home.id, message: "你好" }),
+    request: new Request(`http://localhost/api/ai/conversations/${conversationId}`, {
+      method: "DELETE",
+      headers: { Cookie: await cookie(sessionA) },
+    }),
     env: env(),
   });
 
-  assert.equal(response.status, 429);
-  assert.equal((await response.json()).code, "AI_GATEWAY_RATE_LIMITED");
-  const principalId = await derivePrincipalId(sessionA, { AI_PRINCIPAL_SECRET: principalSecret });
-  const snapshot = await quotaStore.getSnapshot(principalId);
-  assert.equal(snapshot.requestsToday, 1);
-  assert.equal(snapshot.totalTokensThisMonth, 26);
-});
-
-test("web chat conservatively settles unknown Agent transport outcomes", async () => {
-  const quotaStore = new InMemoryQuotaStore({ env: "test", now: () => fixedTime });
-  const handler = createChatHandler(handlerOptions({
-    quotaStore,
-    fetchImpl: async () => new Response(JSON.stringify({ code: "AI_GATEWAY_TIMEOUT" }), {
-      status: 504,
-      headers: { "Content-Type": "application/json" },
-    }),
-  }));
-  const response = await handler({
-    request: await chatRequest({ homeId: home.id, message: "你好" }),
-    env: env(),
-  });
-
-  assert.equal(response.status, 504);
-  assert.equal((await response.json()).code, "AI_GATEWAY_TIMEOUT");
-  const principalId = await derivePrincipalId(sessionA, { AI_PRINCIPAL_SECRET: principalSecret });
-  const snapshot = await quotaStore.getSnapshot(principalId);
-  assert.equal(snapshot.requestsToday, 1);
-  assert.equal(snapshot.totalTokensThisMonth, 1036);
-  assert.equal(snapshot.estimatedTokensThisMonth, 1036);
+  assert.equal(response.status, 502);
+  assert.equal((await response.json()).code, "AI_AGENT_UNAVAILABLE");
 });
 
 test("remote Agent base URLs require HTTPS except local development", () => {
@@ -405,7 +376,6 @@ test("web chat maps disabled execution and uncertain agent state without generic
   ];
   for (const item of cases) {
     const handler = createChatHandler(handlerOptions({
-      quotaStore: new InMemoryQuotaStore({ env: "test", now: () => fixedTime }),
       fetchImpl: async () => new Response(JSON.stringify({ code: item.code }), {
         status: item.status,
         headers: { "Content-Type": "application/json" },
@@ -413,49 +383,11 @@ test("web chat maps disabled execution and uncertain agent state without generic
     }));
     const response = await handler({
       request: await chatRequest({ homeId: home.id, message: "你好" }),
-      env: env(),
+      env: env({ AI_AGENT_BASE_URL: "http://localhost" }),
     });
     assert.equal(response.status, item.status);
     assert.equal((await response.json()).code, item.code);
   }
-});
-
-test("web chat returns quota retry time and honors fail-open storage policy", async () => {
-  const quotaStore = new InMemoryQuotaStore({ env: "test", now: () => fixedTime });
-  const calls = [];
-  const quotaHandler = createChatHandler(handlerOptions({ quotaStore, fetchImpl: successFetch(calls) }));
-  const limitedEnv = env({ AI_QUOTA_DEFAULT_REQUESTS_PER_DAY: "1" });
-  const first = await quotaHandler({
-    request: await chatRequest({ homeId: home.id, message: "第一条" }),
-    env: limitedEnv,
-  });
-  assert.equal(first.status, 200);
-  const second = await quotaHandler({
-    request: await chatRequest({ homeId: home.id, message: "第二条" }),
-    env: limitedEnv,
-  });
-  assert.equal(second.status, 429);
-  const limited = await second.json();
-  assert.equal(limited.code, "AI_QUOTA_EXCEEDED");
-  assert.equal(limited.quota.period, "day");
-  assert.equal(typeof limited.quota.retryAfter, "string");
-
-  const unavailableStore = {
-    async reserve() { throw new QuotaStoreError("AI_QUOTA_STORE_UNAVAILABLE", "offline"); },
-    async commit() { throw new QuotaStoreError("AI_QUOTA_STORE_UNAVAILABLE", "offline"); },
-    async release() { throw new QuotaStoreError("AI_QUOTA_STORE_UNAVAILABLE", "offline"); },
-    async getSnapshot() { throw new QuotaStoreError("AI_QUOTA_STORE_UNAVAILABLE", "offline"); },
-  };
-  const openHandler = createChatHandler(handlerOptions({
-    quotaStore: unavailableStore,
-    fetchImpl: successFetch([]),
-  }));
-  const openResponse = await openHandler({
-    request: await chatRequest({ homeId: home.id, message: "只读请求" }),
-    env: env({ AI_QUOTA_FAIL_MODE: "open" }),
-  });
-  assert.equal(openResponse.status, 200);
-  assert.equal((await openResponse.json()).quota.remainingRequestsToday, null);
 });
 
 test("conversation APIs bind handles to principal/home and delete only scoped Agent memory", async () => {
@@ -488,7 +420,7 @@ test("conversation APIs bind handles to principal/home and delete only scoped Ag
       method: "DELETE",
       headers: { Cookie: await cookie(sessionA) },
     }),
-    env: env(),
+    env: env({ AI_AGENT_BASE_URL: "http://localhost" }),
   });
   assert.equal(deleted.status, 200);
   assert.equal((await deleted.json()).deleted, true);
@@ -501,7 +433,7 @@ test("conversation APIs bind handles to principal/home and delete only scoped Ag
       method: "DELETE",
       headers: { Cookie: await cookie(sessionB) },
     }),
-    env: env(),
+    env: env({ AI_AGENT_BASE_URL: "http://localhost" }),
   });
   assert.equal(wrongUser.status, 400);
   assert.equal(deleteCalls.length, 1);
@@ -524,7 +456,6 @@ test("remote agent owns quota: console never reads or mutates its local ledger",
     },
   };
   const handler = createChatHandler(handlerOptions({
-    quotaStore,
     fetchImpl: async (url, init) => {
       const input = JSON.parse(init.body);
       return successFetch(calls, {
@@ -574,7 +505,6 @@ test("remote quota exhaustion and outages preserve public errors without a local
   ];
   for (const [code, status] of failures) {
     const handler = createChatHandler(handlerOptions({
-      quotaStore,
       fetchImpl: async () => Response.json({
         code,
         quota: { period: "day", retryAfter: "2026-09-18T00:00:00+08:00" },
@@ -592,7 +522,9 @@ test("remote quota exhaustion and outages preserve public errors without a local
 });
 
 test("remote mode refuses missing quota summaries and never silently falls back", async () => {
-  const handler = createChatHandler(handlerOptions({ fetchImpl: successFetch([]) }));
+  const handler = createChatHandler(handlerOptions({
+    fetchImpl: successFetch([], { quota: undefined }),
+  }));
   const response = await handler({
     request: await chatRequest({ homeId: home.id, message: "hello" }),
     env: env({ AI_AGENT_BASE_URL: "https://agent.example" }),
@@ -608,7 +540,9 @@ test("remote chat with quota disabled synthesizes a disabled summary without any
     release() { throw new Error("local release forbidden"); },
     getSnapshot() { throw new Error("local read forbidden"); },
   };
-  const handler = createChatHandler(handlerOptions({ quotaStore, fetchImpl: successFetch(calls) }));
+  const handler = createChatHandler(handlerOptions({
+    fetchImpl: successFetch(calls),
+  }));
   const response = await handler({
     request: await chatRequest({ homeId: home.id, message: "查看场景" }),
     env: env({

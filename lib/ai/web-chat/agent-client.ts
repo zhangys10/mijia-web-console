@@ -1,7 +1,24 @@
 import { withTimeout } from "../../abort-signals.ts";
-import type { AgentRunResult } from "../agent/ai-agent-service.ts";
+import type { AgentSceneSummary } from "../tools/agent-scene-catalog.ts";
+import type { EnvironmentSnapshot } from "../../home-environment.ts";
+import type { ModelUsage } from "../types.ts";
 import type { QuotaSummary } from "../quota/quota-service.ts";
 import type { AgentScope } from "../security/agent-binding.ts";
+
+export type AgentRunResult = {
+  requestId: string;
+  conversationId: string;
+  message: string;
+  intent: "none" | "list_scenes" | "get_home_status" | "activate_scene";
+  scenes?: AgentSceneSummary[];
+  homeStatus?: EnvironmentSnapshot;
+  tool?: {
+    name: "list_scenes" | "get_home_status" | "activate_scene";
+    status: "success" | "partial_success";
+    sceneName?: string;
+  };
+  usage?: ModelUsage;
+};
 
 export type AgentClientRunInput = {
   conversationId: string;
