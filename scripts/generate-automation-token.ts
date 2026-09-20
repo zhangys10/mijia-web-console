@@ -4,9 +4,8 @@
  * Uses the console's own automation-token library, so the issued token is
  * byte-compatible with the settings UI: AES-GCM under
  * AI_AUTOMATION_TOKEN_SECRET, payload v1 / "ai-home-automation", with the
- * sealed Xiaomi session embedded. BYOK provider/model/apiKey are filled with
- * placeholders — the Python agent ignores them and model access stays on the
- * Makers Gateway.
+ * sealed Xiaomi session embedded. The token carries no model fields —
+ * model access stays on the Makers Gateway in the agent.
  *
  * Usage:
  *   node --experimental-strip-types scripts/generate-automation-token.ts \
@@ -86,10 +85,6 @@ const payload = {
   xiaomiSession: session,
   region: session.region || "cn",
   ...(parsed.home ? { homeId: parsed.home } : {}),
-  // Placeholders: the Python agent never reads these fields.
-  provider: "makers-gateway",
-  model: "gateway-managed",
-  apiKey: "not-used-by-the-agent",
   issuedAt: now,
   expiresAt: now + days * 86_400_000,
 };

@@ -25,7 +25,8 @@ conversation storage, agent usage quotas, and forwards bounded turns to Python.
   re-derives the principal from the embedded Xiaomi session, and resolves the home the
   way `/api/ai/command` does: explicit request `home` (ID, exact name, then substring),
   the token-bound homeId (failing closed if no longer owned), then the account's first
-  home. The token's BYOK provider/model/apiKey fields are ignored — model access stays
+  home. Tokens issued after phase 3 carry no BYOK provider/model/apiKey fields at all;
+  legacy tokens that still do are ignored on this path — model access stays
   with the Makers Gateway in the agent. On this path the body envelope is
   requestId/home/tool/arguments/idempotencyKey; the binding-only fields are rejected so
   the two envelopes cannot be mixed. Tool semantics are identical to the binding path,
@@ -45,9 +46,10 @@ conversation storage, agent usage quotas, and forwards bounded turns to Python.
 
 This is a draft, read-only integration boundary, not a production migration. The embedded
 agent runtime and its rollback copy have been removed from this repo; the remote `mijia-agent`
-deployment is the only agent runtime. `AI_COMMAND_ENABLED` now defaults to `false`: the
-legacy `/api/ai/command` route stays off unless explicitly enabled, and command traffic
-moves to the agent's automation-token ingress.
+deployment is the only agent runtime. The legacy `/api/ai/command` route has been retired
+(410 `AI_COMMAND_RETIRED`): command traffic uses the agent's automation-token ingress.
+Automation-token generation on the settings page no longer carries BYOK provider/model/apiKey
+fields — the token seals only the Xiaomi session and an optional bound home.
 
 The console maps uncertain execution errors, enforces the Preview mock at the outer
 chat ingress, and requires a quota summary from the adapter when quota is enabled — a remote

@@ -6,12 +6,10 @@ import {
   sealAutomationToken,
   type AutomationTokenPayload,
 } from "../../../../lib/ai/security/automation-token.ts";
-import {
-  listSupportedProviders,
-  resolveProvider,
-  validateProviderKey,
-  ProviderCatalogError,
-} from "../../../../lib/ai/providers/provider-catalog.ts";
+
+// Phase 3 之后，automation token 是 mijia-agent /ai/command 的入口凭据：
+// 只封装小米会话与可选的绑定家庭，不再携带 BYOK 模型字段（模型访问由
+// agent 侧的 Makers Gateway 提供）。
 
 export async function GET() {
   const cookieJar = await cookies();
@@ -34,7 +32,6 @@ export async function GET() {
       ok: true,
       authenticated: loggedIn,
       userId: userId ? `${userId.slice(0, 3)}***` : undefined,
-      supportedProviders: listSupportedProviders(),
     },
     {
       headers: {
@@ -67,36 +64,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 拒绝自定义 baseUrl，防止外部重定向或凭据外送
-    if ("baseUrl" in body) {
+    // 拒绝 BYOK 字段：token 不再携带任何模型凭据，防止旧客户端把密钥封进来。
+    if ("apiKey" in body || "provider" in body || "model" in body || "baseUrl" in body) {
       return NextResponse.json(
-        { error: "INVALID_REQUEST", message: "不支持自定义 baseUrl" },
+        { error: "INVALID_REQUEST", message: "automation token 不再携带模型凭据（BYOK 已下线）" },
         { status: 400, headers: { "Cache-Control": "no-store" } },
       );
-    }
-
-    const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "INVALID_REQUEST", message: "必须提供模型 API Key" },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
-      );
-    }
-
-    const providerId = typeof body.provider === "string" ? body.provider.trim() : "qwen-cn";
-    const modelId = typeof body.model === "string" ? body.model.trim() : undefined;
-
-    let resolved;
-    try {
-      resolved = resolveProvider(providerId, modelId);
-    } catch (err) {
-      if (err instanceof ProviderCatalogError) {
-        return NextResponse.json(
-          { error: err.code, message: err.message },
-          { status: 422, headers: { "Cache-Control": "no-store" } },
-        );
-      }
-      throw err;
     }
 
     const homeIdParam =
@@ -138,40 +111,6 @@ export async function POST(request: NextRequest) {
       expiresInDays = parsed;
     }
 
-    // 发起最小验证请求，确认用户的 API Key 是否有效，不允许跳过
-    try {
-      await validateProviderKey(resolved.provider.id, apiKey, resolved.model);
-    } catch (err) {
-      const cause = err instanceof Error ? err : new Error(String(err));
-      const providerFetchCause = cause.cause;
-      console.error("[automation-token] Provider validation failed:", {
-        provider: resolved.provider.id,
-        model: resolved.model,
-        error: cause instanceof ProviderCatalogError ? cause.code : "LLM_PROVIDER_ERROR",
-        message: cause.message,
-        ...(providerFetchCause instanceof Error && {
-          fetchError: providerFetchCause.message,
-          fetchErrorName: providerFetchCause.name,
-        }),
-      });
-      if (err instanceof ProviderCatalogError) {
-        const status =
-          err.code === "LLM_CREDENTIAL_INVALID"
-            ? 422
-            : err.code === "LLM_TIMEOUT"
-              ? 504
-              : 502;
-        return NextResponse.json(
-          { error: err.code, message: err.message },
-          { status, headers: { "Cache-Control": "no-store" } },
-        );
-      }
-      return NextResponse.json(
-        { error: "LLM_PROVIDER_ERROR", message: "验证模型凭据失败" },
-        { status: 502, headers: { "Cache-Control": "no-store" } },
-      );
-    }
-
     const now = Date.now();
     const expiresAt = now + expiresInDays * 86400 * 1000;
     const principalId = await computePrincipalId(session.region || "cn", session.userId);
@@ -183,9 +122,6 @@ export async function POST(request: NextRequest) {
       xiaomiSession: session,
       region: session.region || "cn",
       homeId: homeIdParam,
-      provider: resolved.provider.id,
-      model: resolved.model,
-      apiKey,
       issuedAt: now,
       expiresAt,
     };
@@ -196,8 +132,6 @@ export async function POST(request: NextRequest) {
       {
         ok: true,
         token,
-        provider: resolved.provider.id,
-        model: resolved.model,
         homeId: homeIdParam ?? null,
         expiresAt,
       },
