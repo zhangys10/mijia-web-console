@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { authorizeRemoteTool, runRemoteTool } from "../lib/ai/tools/remote-tool-service.ts";
 import { createAgentBinding } from "../lib/ai/security/agent-binding.ts";
 import { derivePrincipalId } from "../lib/ai/security/principal.ts";
+import { sealAutomationToken } from "../lib/ai/security/automation-token.ts";
 
 const env = { XIAOMI_SESSION_SECRET: "test-session-secret-not-real-123456789", AI_PRINCIPAL_SECRET: "test-principal-secret-not-real-123456789" };
 const session = { userId: "test-user", serviceToken: "fake-token", ssecurity: "fake-security", region: "cn" };
@@ -118,5 +119,180 @@ test("get_home_status rejects non-empty arguments and preview environments", asy
   await assert.rejects(
     runRemoteTool({ ...await input(), tool: "get_home_status" }, { ...env, AI_ENVIRONMENT: "preview" }, dependencies),
     /AI_PREVIEW_READ_ONLY/,
+  );
+});
+
+// --- automation-token ingress (X-Ai-User-Token) -------------------------------
+
+const tokenEnv = { ...env, AI_AUTOMATION_TOKEN_SECRET: "test-automation-secret-not-real-12345" };
+const tokenHomes = [{ id: "home-a", name: "我的家" }, { id: "home-b", name: "度假屋" }];
+
+async function automationToken(overrides = {}) {
+  return sealAutomationToken({
+    version: 1,
+    purpose: "ai-home-automation",
+    principalId: "forged-principal-ignored",
+    xiaomiSession: session,
+    region: "cn",
+    provider: "byok-provider",
+    model: "byok-model",
+    apiKey: "byok-secret-key",
+    issuedAt: Date.now() - 1000,
+    expiresAt: Date.now() + 60000,
+    ...overrides,
+  }, { secret: tokenEnv.AI_AUTOMATION_TOKEN_SECRET });
+}
+
+function tokenInput(tool = "list_scenes", extra = {}) {
+  return { requestId: "req_test_token_tool", tool, arguments: {}, ...extra };
+}
+
+function tokenDeps(seen = []) {
+  return {
+    homes: async () => tokenHomes,
+    scenes: async (input) => {
+      seen.push(input);
+      return [{ alias: "scene_0123456789abcdef", sceneId: "private-real-id", homeId: input.homeId, name: "回家模式", description: "审核场景", actionCount: 1 }];
+    },
+  };
+}
+
+test("token path derives the principal from the session and resolves home by name", async () => {
+  const seen = [];
+  const result = await runRemoteTool(
+    tokenInput("list_scenes", { home: "我的家" }),
+    tokenEnv,
+    tokenDeps(seen),
+    await automationToken(),
+  );
+  assert.equal(seen[0].homeId, "home-a");
+  assert.equal(seen[0].principalId, await derivePrincipalId(session, tokenEnv));
+  assert.equal(result.scenes[0].alias, "scene_0123456789abcdef");
+});
+
+test("token payload principal and BYOK fields are never trusted or echoed", async () => {
+  const seen = [];
+  const result = await runRemoteTool(
+    tokenInput(),
+    tokenEnv,
+    tokenDeps(seen),
+    await automationToken(),
+  );
+  assert.notEqual(seen[0].principalId, "forged-principal-ignored");
+  const serialized = JSON.stringify(result);
+  for (const secret of ["byok-secret-key", "byok-model", "forged-principal-ignored", "fake-token", "fake-security"]) {
+    assert.ok(!serialized.includes(secret), `${secret} must not leak`);
+  }
+});
+
+test("explicit request home wins over the token-bound homeId", async () => {
+  const seen = [];
+  await runRemoteTool(
+    tokenInput("list_scenes", { home: "我的家" }),
+    tokenEnv,
+    tokenDeps(seen),
+    await automationToken({ homeId: "home-b" }),
+  );
+  assert.equal(seen[0].homeId, "home-a");
+});
+
+test("token-bound homeId is used when no request home is provided", async () => {
+  const seen = [];
+  await runRemoteTool(tokenInput(), tokenEnv, tokenDeps(seen), await automationToken({ homeId: "home-b" }));
+  assert.equal(seen[0].homeId, "home-b");
+});
+
+test("request home may match by id, exact name, or substring like /api/ai/command", async () => {
+  const seen = [];
+  await runRemoteTool(tokenInput("list_scenes", { home: "home-b" }), tokenEnv, tokenDeps(seen), await automationToken());
+  assert.equal(seen[0].homeId, "home-b");
+  await runRemoteTool(tokenInput("list_scenes", { home: "度假屋" }), tokenEnv, tokenDeps(seen), await automationToken());
+  assert.equal(seen[1].homeId, "home-b");
+  await runRemoteTool(tokenInput("list_scenes", { home: "度假" }), tokenEnv, tokenDeps(seen), await automationToken());
+  assert.equal(seen[2].homeId, "home-b");
+});
+
+test("unmatched request homes and revoked bound homes fail closed", async () => {
+  await assert.rejects(
+    runRemoteTool(tokenInput("list_scenes", { home: "不存在的家" }), tokenEnv, tokenDeps(), await automationToken()),
+    /AI_HOME_NOT_FOUND/,
+  );
+  await assert.rejects(
+    runRemoteTool(tokenInput(), tokenEnv, tokenDeps(), await automationToken({ homeId: "home-gone" })),
+    /AI_HOME_NOT_FOUND/,
+  );
+  await assert.rejects(
+    runRemoteTool(tokenInput(), tokenEnv, { ...tokenDeps(), homes: async () => [] }, await automationToken()),
+    /AI_HOME_NOT_FOUND/,
+  );
+});
+
+test("expired and malformed tokens are rejected without secret leakage", async () => {
+  await assert.rejects(
+    runRemoteTool(tokenInput(), tokenEnv, tokenDeps(), await automationToken({ expiresAt: Date.now() - 1000 })),
+    /AUTOMATION_TOKEN_EXPIRED/,
+  );
+  await assert.rejects(
+    runRemoteTool(tokenInput(), tokenEnv, tokenDeps(), "v1.not.a.real.token"),
+    /AUTOMATION_TOKEN_INVALID/,
+  );
+  await assert.rejects(
+    runRemoteTool(tokenInput(), env, tokenDeps(), await automationToken()),
+    /AI_AUTOMATION_TOKEN_SECRET_NOT_CONFIGURED/,
+  );
+});
+
+test("token path rejects binding-only fields and strict lengths", async () => {
+  const token = await automationToken();
+  await assert.rejects(
+    runRemoteTool({ ...tokenInput(), sessionBinding: "mixed-envelope" }, tokenEnv, tokenDeps(), token),
+    /AI_INVALID_REQUEST/,
+  );
+  await assert.rejects(
+    runRemoteTool({ ...tokenInput(), principalId: "usr_forged" }, tokenEnv, tokenDeps(), token),
+    /AI_INVALID_REQUEST/,
+  );
+  await assert.rejects(
+    runRemoteTool({ ...tokenInput(), home: "" }, tokenEnv, tokenDeps(), token),
+    /AI_INVALID_REQUEST/,
+  );
+  await assert.rejects(
+    runRemoteTool(tokenInput(), tokenEnv, tokenDeps(), "x".repeat(8193)),
+    /AUTOMATION_TOKEN_INVALID/,
+  );
+});
+
+test("token path keeps get_home_status read-only", async () => {
+  const seen = [];
+  const deps = {
+    ...tokenDeps(),
+    homeStatus: async (input) => {
+      seen.push(input);
+      return { completeness: "partial", groups: [] };
+    },
+  };
+  const result = await runRemoteTool(tokenInput("get_home_status"), tokenEnv, deps, await automationToken());
+  assert.equal(result.completeness, "partial");
+  assert.equal(seen.at(-1)?.homeId, "home-a");
+  await assert.rejects(
+    runRemoteTool(tokenInput("get_home_status", { arguments: { metric: "temperature" } }), tokenEnv, deps, await automationToken()),
+    /AI_INVALID_REQUEST/,
+  );
+});
+
+test("token path activation stays disabled and requires an idempotency key", async () => {
+  const token = await automationToken();
+  await assert.rejects(
+    runRemoteTool(
+      tokenInput("activate_scene", { arguments: { sceneId: "scene_0123456789abcdef" }, idempotencyKey: "valid-idempotency-key-0001" }),
+      tokenEnv,
+      tokenDeps(),
+      token,
+    ),
+    /AI_SCENE_EXECUTION_DISABLED/,
+  );
+  await assert.rejects(
+    runRemoteTool(tokenInput("activate_scene", { arguments: { sceneId: "scene_0123456789abcdef" } }), tokenEnv, tokenDeps(), token),
+    /AI_INVALID_REQUEST/,
   );
 });
