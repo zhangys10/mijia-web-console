@@ -9,9 +9,22 @@ export type AssistantSceneSummary = {
 };
 
 export type AssistantToolResult = {
-  name: "list_scenes" | "activate_scene";
+  name: "list_scenes" | "get_home_status" | "activate_scene";
   status: "success" | "partial_success";
   sceneName?: string;
+};
+
+export type AssistantHomeStatus = {
+  capturedAt: string;
+  completeness: "complete" | "partial" | "empty";
+  groups: Array<{
+    metric: "temperature" | "humidity" | "co2" | "formaldehyde" | "pm25" | "pm10" | "tvoc" | "pressure" | "battery";
+    label: string;
+    unit: string;
+    latest: { value: number; unit: string; sourceLabel: string; roomName: string | null } | null;
+    readings: Array<{ value: number; unit: string; sourceLabel: string; roomName: string | null }>;
+  }>;
+  warnings: string[];
 };
 
 export type AssistantMessage = {
@@ -19,6 +32,7 @@ export type AssistantMessage = {
   text: string;
   tool?: AssistantToolResult;
   scenes?: AssistantSceneSummary[];
+  homeStatus?: AssistantHomeStatus;
 };
 
 const toolStatusLabel: Record<string, string> = {
@@ -28,8 +42,43 @@ const toolStatusLabel: Record<string, string> = {
 
 function toolSummary(tool: AssistantToolResult) {
   if (tool.name === "list_scenes") return `已查询场景列表 · ${toolStatusLabel[tool.status] ?? tool.status}`;
+  if (tool.name === "get_home_status") return `已查询家庭环境 · ${toolStatusLabel[tool.status] ?? tool.status}`;
   const sceneName = tool.sceneName ?? "未命名场景";
   return `已执行场景「${sceneName}」 · ${toolStatusLabel[tool.status] ?? tool.status}`;
+}
+
+function formatReadingValue(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function HomeStatusCard({ status }: { status: AssistantHomeStatus }) {
+  if (!status.groups.length) {
+    return (
+      <div className="ai-message-home-status ai-message-home-status-empty">
+        <strong>当前家庭暂无环境读数</strong>
+        <small>{status.warnings[0] ?? "未发现可读取环境数据的设备"}</small>
+      </div>
+    );
+  }
+  return (
+    <div className="ai-message-home-status" aria-label="家庭环境读数">
+      {status.groups.map(group => (
+        <div key={group.metric} className="ai-message-metric">
+          <span className="ai-message-metric-value">
+            {formatReadingValue(group.latest?.value ?? group.readings[0]?.value ?? 0)}
+            <small>{group.unit}</small>
+          </span>
+          <span className="ai-message-metric-label">{group.label}</span>
+          {group.readings.length > 1 && (
+            <small className="ai-message-metric-count">{group.readings.length} 台设备</small>
+          )}
+        </div>
+      ))}
+      {status.completeness === "partial" && status.warnings.length > 0 && (
+        <small className="ai-message-home-warning">{status.warnings[0]}</small>
+      )}
+    </div>
+  );
 }
 
 export default function AiMessageList({ messages, sending }: { messages: AssistantMessage[]; sending: boolean }) {
@@ -49,6 +98,7 @@ export default function AiMessageList({ messages, sending }: { messages: Assista
             <div className="ai-message-bubble">
               <p>{message.text}</p>
               {message.tool && <span className="ai-message-tool">⌁ {toolSummary(message.tool)}</span>}
+              {message.homeStatus && <HomeStatusCard status={message.homeStatus} />}
               {message.scenes && message.scenes.length > 0 && (
                 <div className="ai-message-scenes">
                   {message.scenes.map((scene) => (

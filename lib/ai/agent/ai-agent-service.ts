@@ -1,5 +1,6 @@
 import type { AgentBindingPayload } from "../security/agent-binding.ts";
 import type { SafeAgentScene, AgentSceneRecord, AgentSceneSummary } from "../tools/agent-scene-catalog.ts";
+import type { EnvironmentSnapshot as HomeEnvironmentSnapshot } from "../../home-environment.ts";
 import { safeScenesForModel } from "../tools/agent-scene-catalog.ts";
 import { listScenes } from "../tools/list-scenes.ts";
 import { validateActivateSceneCall } from "../tools/activate-scene.ts";
@@ -48,10 +49,11 @@ export type AgentRunResult = {
   requestId: string;
   conversationId: string;
   message: string;
-  intent: "none" | "list_scenes" | "activate_scene";
+  intent: "none" | "list_scenes" | "get_home_status" | "activate_scene";
   scenes?: AgentSceneSummary[];
+  homeStatus?: HomeEnvironmentSnapshot;
   tool?: {
-    name: "list_scenes" | "activate_scene";
+    name: "list_scenes" | "get_home_status" | "activate_scene";
     status: "success" | "partial_success";
     sceneName?: string;
   };

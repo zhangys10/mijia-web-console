@@ -91,3 +91,32 @@ test("remote execution stays read-only in the preview environment", async () => 
     /AI_SCENE_EXECUTION_DISABLED/,
   );
 });
+
+test("get_home_status returns a sanitized read-only snapshot", async () => {
+  const snapshot = {
+    capturedAt: "2026-09-20T08:00:00Z",
+    completeness: "partial",
+    groups: [{ metric: "temperature", label: "温度", unit: "°C", latest: { value: 25.5, unit: "°C", sourceLabel: "客厅温湿度计", roomName: "客厅", capturedAt: "2026-09-20T08:00:00Z", freshness: "fresh" }, readings: [] }],
+    warnings: ["部分设备读数暂时不可用。"],
+  };
+  const statusDeps = {
+    ...dependencies,
+    homeStatus: async () => snapshot,
+  };
+  const result = await runRemoteTool({ ...await input(), tool: "get_home_status" }, env, statusDeps);
+  assert.equal(result.completeness, "partial");
+  assert.equal(result.groups[0].metric, "temperature");
+  // ai:chat alone suffices; no scene:activate scope was requested.
+  assert.deepEqual(result.warnings, ["部分设备读数暂时不可用。"]);
+});
+
+test("get_home_status rejects non-empty arguments and preview environments", async () => {
+  await assert.rejects(
+    runRemoteTool({ ...await input(), tool: "get_home_status", arguments: { metric: "temperature" } }, env, dependencies),
+    /AI_INVALID_REQUEST/,
+  );
+  await assert.rejects(
+    runRemoteTool({ ...await input(), tool: "get_home_status" }, { ...env, AI_ENVIRONMENT: "preview" }, dependencies),
+    /AI_PREVIEW_READ_ONLY/,
+  );
+});

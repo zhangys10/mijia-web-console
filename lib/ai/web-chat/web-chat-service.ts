@@ -37,6 +37,7 @@ export type WebChatResult = {
   intent: AgentRunResult["intent"];
   tool?: AgentRunResult["tool"];
   scenes?: Array<{ name: string; description: string; actionCount: number }>;
+  homeStatus?: AgentRunResult["homeStatus"];
   quota: PublicQuotaSummary;
 };
 
@@ -334,6 +335,7 @@ export class AiWebService {
         description,
         actionCount,
       })),
+      homeStatus: agentResult.homeStatus,
       quota: publicQuota(quotaSummary),
     };
   }

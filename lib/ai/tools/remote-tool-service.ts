@@ -2,18 +2,23 @@ import { listHomes, type XiaomiSession } from "../../xiaomi-cloud.ts";
 import { isPreviewEnvironment } from "../config.ts";
 import { verifyAgentBinding, type AgentScope } from "../security/agent-binding.ts";
 import { derivePrincipalId } from "../security/principal.ts";
+import { collectHomeEnvironment } from "../../home-environment.ts";
 import { loadAgentScenes, parseApprovedSceneIds, sceneSummaries, type AgentSceneRecord } from "./agent-scene-catalog.ts";
 
 type Environment = Record<string, string | undefined>;
 type Dependencies = {
   homes?: typeof listHomes;
   scenes?: (input: { principalId: string; homeId: string; session: XiaomiSession; approvedSceneIds: ReadonlySet<string> }) => Promise<AgentSceneRecord[]>;
+  homeStatus?: (input: { session: XiaomiSession; homeId: string }) => Promise<ReturnType<typeof collectHomeEnvironment>>;
 };
 
 export class RemoteToolError extends Error {
   readonly status: number;
   constructor(code: string, status: number) { super(code); this.status = status; }
 }
+
+const defaultHomeStatusCollector = (input: { session: XiaomiSession; homeId: string }) =>
+  collectHomeEnvironment(input.session, input.homeId);
 
 export async function runRemoteTool(body: unknown, env: Environment, dependencies: Dependencies = {}) {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
@@ -52,6 +57,13 @@ export async function runRemoteTool(body: unknown, env: Environment, dependencie
     if (input.tool === "authorize") return { ok: true };
     const scenes = await (dependencies.scenes ?? loadAgentScenes)({ principalId, homeId, session: binding.session, approvedSceneIds: parseApprovedSceneIds(env.AI_SCENE_APPROVED_IDS) });
     return { scenes: sceneSummaries(scenes) };
+  }
+  if (input.tool === "get_home_status") {
+    // Read-only: ai:chat alone suffices, no physical-action scope is involved.
+    if (Object.keys(args).length) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
+    if (isPreviewEnvironment(env)) throw new RemoteToolError("AI_PREVIEW_READ_ONLY", 403);
+    const collector = dependencies.homeStatus ?? defaultHomeStatusCollector;
+    return await collector({ session: binding.session, homeId });
   }
   if (input.tool !== "activate_scene") throw new RemoteToolError("AI_INVALID_REQUEST", 400);
   if (!scopes.includes("scene:activate")) throw new RemoteToolError("AI_SCOPE_FORBIDDEN", 403);

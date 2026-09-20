@@ -9,7 +9,7 @@ test("connected scene UI never falls back to demo data", async () => {
   const source = await readFile(pageUrl, "utf8");
   assert.match(source, /XIAOMI_DEVICE_HTTP_\$\{response\.status\}/, "deployment HTML errors must not leak JSON parser messages");
   assert.match(source, /connection\.connected\?\(selectedHome==="demo"\?\[\]:sceneState\.items\):demoScenes/);
-  assert.match(source, /connection\.connected\)void loadScenes\(homeId\)/, "switching homes must load that home's scenes");
+  assert.match(source, /connection\.connected\)\{void loadScenes\(homeId\);void loadEnvironment\(homeId\)\}/, "switching homes must load that home's scenes and environment readings");
   assert.match(source, /URLSearchParams\(\{includeScenes:"1"\}\)/, "device sync must include the selected home's scenes in the same request");
   assert.doesNotMatch(source, /await loadDevices\(true\);await loadScenes/, "manual sync must not issue a second scene request");
   assert.match(source, /setDevices\(\[\]\);setHomes\(\[\]\);setSelectedHome\(""\)/, "a failed first live sync must not leave demo devices visible");
