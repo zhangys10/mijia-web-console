@@ -11,9 +11,12 @@ test("assistant button is a labeled floating entry that guides login when discon
   assert.match(source, /aria-controls="ai-assistant-panel"/);
   assert.match(source, /type="button"/);
   assert.match(source, /if \(!connected\) \{\s*onOpenLogin\(\);/, "logged-out clicks must open the existing Xiaomi login instead of the panel");
-  assert.match(source, /aria-expanded=\{open\}/);
   assert.match(source, /homeId !== "demo"/, "the assistant must never open against the demo home");
   assert.match(source, /key=\{homeId\}/, "switching homes must reset the home-bound conversation handle");
+  assert.match(source, /ai-assistant-button\$\{open \? " is-open" : ""\}/, "the launcher must yield to the panel it opened");
+  assert.match(source, /buttonRef\.current\?\.focus\(\)/, "closing the panel must return focus to the launcher");
+  const styles = await read("../app/ai-assistant.css");
+  assert.match(styles, /\.ai-assistant-button\.is-open\{visibility:hidden/, "the launcher must not cover the composer send button while the panel is open");
 });
 
 test("assistant panel is an accessible dialog with escape close and honest clear-conversation copy", async () => {
