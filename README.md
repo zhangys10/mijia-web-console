@@ -149,6 +149,16 @@ Web API 默认通过同项目 `/ai-home` 和 `/ai-home/delete` Agent 路由通�
 
 EdgeOne KV 审批完成前，本地自动化测试使用 `InMemoryQuotaStore`。如果只做本地 Agent/Web API 联调，可以在本地临时设置 `AI_QUOTA_FAIL_MODE=open`；生产环境仍应保持默认 `closed`，不得在 KV 未绑定时继续产生共享模型费用。
 
+### AI 助手面板
+
+Phase 6 在主要页面挂载右下角的 AI 助手按钮，打开对话面板调用上述 Web Chat API。四个公开 AI 路由同时以 EdgeOne Edge Function（`edge-functions/api/ai/*`）和 Next 路由（`app/api/ai/*`）两种形式提供：Next 路由是薄委托，直接复用 Edge Function 的 handler 工厂并传入 `process.env`，保证本地开发与 Vercel 部署可访问同一套鉴权、家庭校验、配额与预览逻辑。
+
+- 未登录时点击按钮会引导现有的小米扫码登录；演示家庭（demo）不打开面板。
+- 桌面端为右侧面板，移动端（≤760px）为全屏抽屉；发送中可点"停止"中断本地请求——服务端可能仍在处理该轮对话。
+- "清除会话"只清除 Agent 对话记忆，不影响设备、场景或配额账本。
+- 配额 `mode: "disabled"` 时面板显示"配额已停用/不可用"，不会显示为零剩余；429 时显示恢复时间并禁用重试，绝不自动重试。
+- 本地联调注意：Next 路由没有 EdgeOne KV 绑定，配额开启且未设置 `AI_AGENT_BASE_URL` 时聊天会按设计失败（503 `AI_QUOTA_STORE_UNAVAILABLE`）。本地开发请使用 `AI_ENVIRONMENT=preview`（固定 mock）、`AI_QUOTA_ENABLED=false` 或远程模式。
+
 本地人工验证建议使用 `edgeone makers dev` 启动同项目 Edge Functions 与 Agent，并准备已登录浏览器中的 `xiaomi_session` Cookie。以下命令中的 Secret 和 Cookie 只应保存在当前终端，不要写入仓库或 shell history：
 
 ```bash
