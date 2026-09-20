@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import DeviceManagement from "./device-management";
 import { isDeviceGroupId } from "../lib/device-groups";
 import { buildActiveDeviceGroups, type ActiveDeviceGroup, type ActiveDeviceItem, type ManagedDevice, type ManagedPowerControl } from "../lib/device-management";
@@ -32,6 +32,8 @@ type Qr = { loading:boolean;imageUrl?:string;loginUrl?:string;error?:string;expi
 type SceneLoadState = { loading:boolean;items:ManualScene[];error?:string;loaded?:boolean };
 type SyncWarning = { code:string;scope:"devices"|"properties"|"specifications"|"scenes";retryable:boolean;retryAfterSeconds?:number };
 type EnvironmentSnapshot = { capturedAt:string;completeness:"complete"|"partial"|"empty";groups:Array<{metric:string;label:string;unit:string;latest:{value:number;unit:string;sourceLabel:string;roomName:string|null;capturedAt?:string}|null;readings:Array<{value:number;unit:string;sourceLabel:string;roomName:string|null;capturedAt?:string}>}>;warnings:string[] };
+type EnvironmentHistoryPoint = { capturedAt:string;value:number };
+type EnvironmentHistory = Record<string,EnvironmentHistoryPoint[]>;
 
 class SyncRequestError extends Error {
   readonly retryable:boolean;readonly retryAfterSeconds?:number;
@@ -60,7 +62,7 @@ const demoScenes:ManualScene[]=[
 const regionLabels:Record<string,string>={cn:"中国大陆",sg:"新加坡",de:"欧洲",us:"美国",ru:"俄罗斯",i2:"印度"};
 
 export default function Home({ initialTab = "首页" }: { initialTab?: string } = {}){
-  const [devices,setDevices]=useState(demo),[homes,setHomes]=useState<XiaomiHome[]>([{id:"demo",name:"我的家"}]),[selectedHome,setSelectedHome]=useState("demo"),[room,setRoom]=useState("全屋"),[tab,setTab]=useState(initialTab),[mobileMenuOpen,setMobileMenuOpen]=useState(false),[dashboardNow,setDashboardNow]=useState<Date|null>(null),[toast,setToast]=useState(""),[authOpen,setAuthOpen]=useState(false),[region,setRegion]=useState("cn"),[connection,setConnection]=useState<Connection>({loading:true,connected:false}),[qr,setQr]=useState<Qr>({loading:false}),[syncing,setSyncing]=useState(false),[syncCooling,setSyncCooling]=useState(false),[lastSuccessfulSync,setLastSuccessfulSync]=useState<string>(),[syncWarnings,setSyncWarnings]=useState<SyncWarning[]>([]),[qrSeconds,setQrSeconds]=useState(0),[selectedDevice,setSelectedDevice]=useState<Device|null>(null),[settingValues,setSettingValues]=useState<Record<string,SettingValue>>({}),[operating,setOperating]=useState(""),[deviceSpec,setDeviceSpec]=useState<DeviceSpecification>({loading:false,groups:[]}),[focusedMapping,setFocusedMapping]=useState<Device|null>(null),[scenesByHome,setScenesByHome]=useState<Record<string,SceneLoadState>>({demo:{loading:false,items:demoScenes,loaded:true}}),[sceneOperating,setSceneOperating]=useState(""),[selectedScene,setSelectedScene]=useState<ManualScene|null>(null),[sceneEditor,setSceneEditor]=useState<{sceneId?:string}|null>(null),[environment,setEnvironment]=useState<EnvironmentSnapshot|null>(null),[environmentLoading,setEnvironmentLoading]=useState(false),[environmentError,setEnvironmentError]=useState<string>();
+  const [devices,setDevices]=useState(demo),[homes,setHomes]=useState<XiaomiHome[]>([{id:"demo",name:"我的家"}]),[selectedHome,setSelectedHome]=useState("demo"),[room,setRoom]=useState("全屋"),[tab,setTab]=useState(initialTab),[mobileMenuOpen,setMobileMenuOpen]=useState(false),[dashboardNow,setDashboardNow]=useState<Date|null>(null),[toast,setToast]=useState(""),[authOpen,setAuthOpen]=useState(false),[region,setRegion]=useState("cn"),[connection,setConnection]=useState<Connection>({loading:true,connected:false}),[qr,setQr]=useState<Qr>({loading:false}),[syncing,setSyncing]=useState(false),[syncCooling,setSyncCooling]=useState(false),[lastSuccessfulSync,setLastSuccessfulSync]=useState<string>(),[syncWarnings,setSyncWarnings]=useState<SyncWarning[]>([]),[qrSeconds,setQrSeconds]=useState(0),[selectedDevice,setSelectedDevice]=useState<Device|null>(null),[settingValues,setSettingValues]=useState<Record<string,SettingValue>>({}),[operating,setOperating]=useState(""),[deviceSpec,setDeviceSpec]=useState<DeviceSpecification>({loading:false,groups:[]}),[focusedMapping,setFocusedMapping]=useState<Device|null>(null),[scenesByHome,setScenesByHome]=useState<Record<string,SceneLoadState>>({demo:{loading:false,items:demoScenes,loaded:true}}),[sceneOperating,setSceneOperating]=useState(""),[selectedScene,setSelectedScene]=useState<ManualScene|null>(null),[sceneEditor,setSceneEditor]=useState<{sceneId?:string}|null>(null),[environment,setEnvironment]=useState<EnvironmentSnapshot|null>(null),[environmentLoading,setEnvironmentLoading]=useState(false),[environmentError,setEnvironmentError]=useState<string>(),[environmentHistory,setEnvironmentHistory]=useState<EnvironmentHistory>({});
   const polling=useRef(false),specRequest=useRef(0),sceneGeneration=useRef(0),syncInFlight=useRef<Promise<void>|null>(null),deviceLoadInFlight=useRef<Promise<string>|null>(null),sceneRequests=useRef(new Map<string,Promise<void>>()),cooldownTimer=useRef<number|null>(null);
   const homeDevices=useMemo(()=>devices.filter(device=>device.homeId===selectedHome),[devices,selectedHome]);
   const hardwareDevices=useMemo(()=>selectDeviceView(homeDevices,"hardware"),[homeDevices]);
@@ -153,7 +155,21 @@ export default function Home({ initialTab = "首页" }: { initialTab?: string } 
       const response=await fetch(`/api/xiaomi/environment?homeId=${encodeURIComponent(homeId)}`);
       const data=await response.json().catch(()=>{throw new SyncRequestError(`XIAOMI_DEVICE_HTTP_${response.status}`,response.status===429||response.status>=500,8)});
       if(!response.ok)throw new SyncRequestError(data.error||"XIAOMI_ENVIRONMENT_SYNC_FAILED",Boolean(data.retryable),Number(data.retryAfterSeconds)||undefined);
-      setEnvironment(data as EnvironmentSnapshot);
+      const snapshot=data as EnvironmentSnapshot;
+      setEnvironment(snapshot);
+      // Session-local history for the trend charts: one point per metric per refresh,
+      // capped so long sessions stay bounded. Values are already canonical-unit.
+      setEnvironmentHistory(previous=>{
+        const next:EnvironmentHistory={};
+        for(const group of snapshot.groups){
+          for(const reading of group.readings){
+            const key=`${group.metric}:${reading.sourceLabel}`;
+            const points=[...(previous[key]??[]),{capturedAt:snapshot.capturedAt,value:reading.value}];
+            next[key]=points.length>60?points.slice(points.length-60):points;
+          }
+        }
+        return next;
+      });
     }catch(error){
       const reason=error instanceof Error?error.message:"UNKNOWN_ERROR";
       setEnvironmentError(reason);
@@ -179,16 +195,25 @@ export default function Home({ initialTab = "首页" }: { initialTab?: string } 
   function selectHome(homeId:string){
     if(homeId===selectedHome)return;
     specRequest.current++;
-    setSelectedHome(homeId);setSelectedScene(null);setSceneEditor(null);setSelectedDevice(null);setFocusedMapping(null);setRoom("全屋");setEnvironment(null);
+    setSelectedHome(homeId);setSelectedScene(null);setSceneEditor(null);setSelectedDevice(null);setFocusedMapping(null);setRoom("全屋");setEnvironment(null);setEnvironmentHistory({});
     if(connection.connected){void loadScenes(homeId);void loadEnvironment(homeId)}
   }
 
   async function checkSession(){
-    try{const response=await fetch("/api/xiaomi/status");const result=await response.json();if(result.connected){setConnection({loading:false,connected:true,region:result.region,userId:result.userId});setRegion(result.region);setDevices([]);setHomes([]);setSelectedHome("");setScenesByHome({});try{const homeId=await loadDevices();if(homeId&&homeId!=="demo")await loadEnvironment(homeId)}catch(error){const reason=error instanceof Error?error.message:"UNKNOWN_ERROR";setConnection(state=>({...state,error:reason}));if(error instanceof SyncRequestError&&error.retryable)beginSyncCooldown(error.retryAfterSeconds);message(`设备同步失败：${friendlyError(reason)}`)}}else setConnection({loading:false,connected:false})}
+    try{const response=await fetch("/api/xiaomi/status");const result=await response.json();if(result.connected){setConnection({loading:false,connected:true,region:result.region,userId:result.userId});setRegion(result.region);setDevices([]);setHomes([]);setSelectedHome("");setScenesByHome({});setEnvironmentHistory({});try{const homeId=await loadDevices();if(homeId&&homeId!=="demo")await loadEnvironment(homeId)}catch(error){const reason=error instanceof Error?error.message:"UNKNOWN_ERROR";setConnection(state=>({...state,error:reason}));if(error instanceof SyncRequestError&&error.retryable)beginSyncCooldown(error.retryAfterSeconds);message(`设备同步失败：${friendlyError(reason)}`)}}else setConnection({loading:false,connected:false})}
     catch(error){setConnection({loading:false,connected:false,error:error instanceof Error?error.message:"UNKNOWN_ERROR"})}
   }
 
   useEffect(()=>{void checkSession();return()=>{polling.current=false;if(cooldownTimer.current)window.clearTimeout(cooldownTimer.current)}},[]);
+  // Opening the 环境 tab shows readings immediately: load on activation when nothing
+  // is on screen yet (first open, or the last attempt failed), then auto-refresh
+  // every 2 minutes while the tab stays open. Every refresh also feeds the charts.
+  useEffect(()=>{
+    if(tab!=="环境"||!connection.connected||!selectedHome||selectedHome==="demo")return;
+    if(!environment&&!environmentLoading)void loadEnvironment(selectedHome);
+    const interval=window.setInterval(()=>{if(!environmentLoading)void loadEnvironment(selectedHome)},120_000);
+    return()=>window.clearInterval(interval);
+  },[tab,connection.connected,selectedHome,environmentLoading,environment]);
   useEffect(()=>{
     const updateClock=()=>setDashboardNow(new Date());
     updateClock();
@@ -349,7 +374,7 @@ export default function Home({ initialTab = "首页" }: { initialTab?: string } 
       <Title title="当前运行" sub={`${currentHome?.name??"当前家庭"} · ${activeDeviceCount} 台设备正在运行`} action="管理设备 →" onAction={()=>setTab("设备")}/>
       <ActiveDeviceList groups={activeDeviceGroups} connected={connection.connected} operating={operating} onOpen={(device,mappedDevice)=>void openDevice(device,mappedDevice)} onClose={item=>void closeActiveDevice(item)} onManage={()=>setTab("设备")}/>
       <Title title="快捷场景" sub={connection.connected?"当前家庭的真实手动场景":"演示场景 · 连接米家后显示真实数据"} action="管理场景 →" onAction={()=>setTab("场景")}/><SceneStateMessage loading={connection.connected&&sceneState.loading} error={connection.connected?sceneState.error:undefined}/><section className="scenes">{quickScenes.map((scene,index)=><SceneCard key={scene.id} scene={scene} tone={["orange","blue","violet","indigo"][index%4]} connected={connection.connected} running={sceneOperating===scene.id} blocked={Boolean(sceneOperating)} compact onOpen={()=>openScene(scene)} onRun={item=>void runScene(item)}/>)}</section>{!sceneState.loading&&!sceneState.error&&quickScenes.length===0&&<SceneStateMessage empty/>}
-    </>:tab==="设备"?<DeviceManagement key={selectedHome} devices={homeDevices} room={room} connected={connection.connected} onSelectRoom={setRoom} onOpenDevice={(device,mappedDevice)=>void openDevice(device,mappedDevice)}/>:tab==="环境"?<EnvironmentDashboard snapshot={environment} loading={environmentLoading} error={environmentError?friendlyError(environmentError):undefined} connected={connection.connected} homeName={currentHome?.name??"当前家庭"} onRefresh={()=>{if(connection.connected&&selectedHome&&selectedHome!=="demo")void loadEnvironment(selectedHome)}}/>:tab==="场景"?sceneEditor?<SceneEditor homeId={selectedHome} homeName={homes.find(home=>home.id===selectedHome)?.name||"当前家庭"} devices={homeDevices} sceneId={sceneEditor.sceneId} onClose={()=>setSceneEditor(null)} onSaved={sceneSaved}/>:selectedScene?<SceneDetailPage scene={selectedScene} homeName={homes.find(home=>home.id===selectedScene.homeId)?.name||"当前家庭"} devices={homeDevices} connected={connection.connected} running={sceneOperating===selectedScene.id} blocked={Boolean(sceneOperating)} onBack={()=>setSelectedScene(null)} onEdit={()=>setSceneEditor({sceneId:selectedScene.id})} onRun={()=>void runScene(selectedScene)}/>:<Panel title="场景中心" text={connection.connected?"查看、执行并管理当前家庭的真实手动场景。":"当前为演示数据；连接米家后才能新建和编辑。"}><div className="scene-center-toolbar"><span>{connection.connected?`${currentHome?.name||"当前家庭"} · ${currentScenes.length} 个场景`:"演示模式下不会写入米家云"}</span><button type="button" disabled={!connection.connected||selectedHome==="demo"} onClick={()=>{setSelectedScene(null);setSceneEditor({})}}>＋ 新建场景</button></div><SceneStateMessage loading={connection.connected&&sceneState.loading} error={connection.connected?sceneState.error:undefined} empty={!sceneState.loading&&currentScenes.length===0}/><div className="panel-grid scene-list">{currentScenes.map((scene,index)=><SceneCard key={scene.id} scene={scene} tone={["orange","blue","violet","indigo"][index%4]} connected={connection.connected} running={sceneOperating===scene.id} blocked={Boolean(sceneOperating)} onOpen={()=>openScene(scene)} onRun={item=>void runScene(item)}/>)}</div></Panel>:tab==="自动化"?<AutomationCenter key={`${selectedHome}:${connection.connected}`} homeId={selectedHome} homeName={currentHome?.name??"当前家庭"} devices={homeDevices} connected={connection.connected} onMessage={message}/>:tab==="设置"?<SettingsView onOpenLogin={openLogin} homes={homes.filter(h=>h.id!=="demo")} selectedHomeId={selectedHome!=="demo"?selectedHome:undefined} selectedHomeName={currentHome?.name}/>:<Panel title="家庭能耗" text={`${currentHome?.name??"当前家庭"} · 查看设备用电趋势，发现节能空间。`}><div className="chart">{[44,62,52,78,68,90,64].map((height,index)=><i key={index} style={{height:`${height}%`}}/>)}</div><div className="labels">{["周一","周二","周三","周四","周五","周六","今天"].map(day=><span key={day}>{day}</span>)}</div></Panel>}
+    </>:tab==="设备"?<DeviceManagement key={selectedHome} devices={homeDevices} room={room} connected={connection.connected} onSelectRoom={setRoom} onOpenDevice={(device,mappedDevice)=>void openDevice(device,mappedDevice)}/>:tab==="环境"?<EnvironmentDashboard snapshot={environment} history={environmentHistory} loading={environmentLoading} error={environmentError?friendlyError(environmentError):undefined} connected={connection.connected} homeName={currentHome?.name??"当前家庭"} onRefresh={()=>{if(connection.connected&&selectedHome&&selectedHome!=="demo")void loadEnvironment(selectedHome)}}/>:tab==="场景"?sceneEditor?<SceneEditor homeId={selectedHome} homeName={homes.find(home=>home.id===selectedHome)?.name||"当前家庭"} devices={homeDevices} sceneId={sceneEditor.sceneId} onClose={()=>setSceneEditor(null)} onSaved={sceneSaved}/>:selectedScene?<SceneDetailPage scene={selectedScene} homeName={homes.find(home=>home.id===selectedScene.homeId)?.name||"当前家庭"} devices={homeDevices} connected={connection.connected} running={sceneOperating===selectedScene.id} blocked={Boolean(sceneOperating)} onBack={()=>setSelectedScene(null)} onEdit={()=>setSceneEditor({sceneId:selectedScene.id})} onRun={()=>void runScene(selectedScene)}/>:<Panel title="场景中心" text={connection.connected?"查看、执行并管理当前家庭的真实手动场景。":"当前为演示数据；连接米家后才能新建和编辑。"}><div className="scene-center-toolbar"><span>{connection.connected?`${currentHome?.name||"当前家庭"} · ${currentScenes.length} 个场景`:"演示模式下不会写入米家云"}</span><button type="button" disabled={!connection.connected||selectedHome==="demo"} onClick={()=>{setSelectedScene(null);setSceneEditor({})}}>＋ 新建场景</button></div><SceneStateMessage loading={connection.connected&&sceneState.loading} error={connection.connected?sceneState.error:undefined} empty={!sceneState.loading&&currentScenes.length===0}/><div className="panel-grid scene-list">{currentScenes.map((scene,index)=><SceneCard key={scene.id} scene={scene} tone={["orange","blue","violet","indigo"][index%4]} connected={connection.connected} running={sceneOperating===scene.id} blocked={Boolean(sceneOperating)} onOpen={()=>openScene(scene)} onRun={item=>void runScene(item)}/>)}</div></Panel>:tab==="自动化"?<AutomationCenter key={`${selectedHome}:${connection.connected}`} homeId={selectedHome} homeName={currentHome?.name??"当前家庭"} devices={homeDevices} connected={connection.connected} onMessage={message}/>:tab==="设置"?<SettingsView onOpenLogin={openLogin} homes={homes.filter(h=>h.id!=="demo")} selectedHomeId={selectedHome!=="demo"?selectedHome:undefined} selectedHomeName={currentHome?.name}/>:<Panel title="家庭能耗" text={`${currentHome?.name??"当前家庭"} · 查看设备用电趋势，发现节能空间。`}><div className="chart">{[44,62,52,78,68,90,64].map((height,index)=><i key={index} style={{height:`${height}%`}}/>)}</div><div className="labels">{["周一","周二","周三","周四","周五","周六","今天"].map(day=><span key={day}>{day}</span>)}</div></Panel>}
       {icpFiling.enabled&&<footer className="site-footer"><a href={icpFiling.url} target="_blank" rel="noreferrer">{icpFiling.icpNumber}</a></footer>}
     </section>
 
@@ -474,16 +499,17 @@ function SceneActionItem({item}:{item:ManualSceneActionItem}){
 function SceneActionDetails({action}:{action:ManualScene["actions"][number]}){return action.details.length?<div className="scene-action-details">{action.details.map((detail,detailIndex)=><em className={`scene-action-detail ${detail.kind}${detail.state?` ${detail.state}`:""}`} style={sceneActionDetailStyle(detail)} key={`${detail.kind}:${detail.label}:${detailIndex}`}><i>{sceneActionDetailGlyph(detail)}</i><span>{detail.label}</span><b>{detail.value}</b></em>)}</div>:null}
 function SceneStateMessage({loading,error,empty}:{loading?:boolean;error?:string;empty?:boolean}){if(!loading&&!error&&!empty)return null;return <div className={`scene-state${error?" error":""}`}>{loading?"正在读取米家场景…":error?`场景读取失败：${friendlyError(error)}`:"当前家庭没有可用的手动场景"}</div>}
 
-function formatEnvironmentValue(value:number){return Number.isInteger(value)?String(value):value.toFixed(1)}
+function formatEnvironmentValue(value:number){if(Number.isInteger(value))return String(value);if(Math.abs(value)<1)return value.toPrecision(3).replace(/\.?0+$/,"");return value.toFixed(1)}
 function formatEnvironmentTime(value:string){const timestamp=Date.parse(value);return Number.isFinite(timestamp)?new Intl.DateTimeFormat("zh-CN",{hour:"2-digit",minute:"2-digit"}).format(new Date(timestamp)):value}
 
-function EnvironmentDashboard({snapshot,loading,error,connected,homeName,onRefresh}:{snapshot:EnvironmentSnapshot|null;loading:boolean;error?:string;connected:boolean;homeName:string;onRefresh:()=>void}){
+function EnvironmentDashboard({snapshot,history,loading,error,connected,homeName,onRefresh}:{snapshot:EnvironmentSnapshot|null;history:EnvironmentHistory;loading:boolean;error?:string;connected:boolean;homeName:string;onRefresh:()=>void}){
   if(!connected)return <Panel title="家庭环境" text="连接米家账号后，这里会显示已支持设备的实时环境读数。"><p className="readonly-note">当前为演示模式；环境读数来自真实传感器，不会使用演示数据。</p></Panel>;
   return <section aria-label="家庭环境">
     <Title title="家庭环境" sub={`${homeName} · ${snapshot?snapshot.completeness==="complete"?"读数完整":snapshot.completeness==="partial"?"部分读数待确认":"暂无环境读数":"读取中"}`} action={loading?"读取中…":"↻ 刷新读数"} onAction={loading?undefined:onRefresh}/>
     {error&&<div className="scene-state error">环境读数失败：{error}</div>}
     {loading&&!snapshot&&<div className="spec-loading"><span/>正在从米家读取环境读数…</div>}
     {snapshot&&<EnvironmentSnapshotView snapshot={snapshot}/>}
+    {snapshot&&<EnvironmentTrendSection snapshot={snapshot} history={history} loading={loading}/>}
   </section>;
 }
 
@@ -506,6 +532,114 @@ function EnvironmentSnapshotView({snapshot}:{snapshot:EnvironmentSnapshot}){
     </Panel>}
     {snapshot.completeness==="partial"&&snapshot.warnings.length>0&&<div className="scene-state">{snapshot.warnings.join(" ")}</div>}
   </>;
+}
+
+// Trend charts: one small-multiple per metric, time on the x axis, so each metric
+// keeps its own scale (never a dual-axis chart). Series = devices reporting that
+// metric; colors follow the device (fixed categorical order), never the row.
+const environmentChartSeries=["var(--viz-series-1)","var(--viz-series-2)","var(--viz-series-3)"];
+const CHART_HEIGHT=180,CHART_PADDING={top:12,right:14,bottom:26,left:44};
+
+function environmentHistorySeries(snapshot:EnvironmentSnapshot,history:EnvironmentHistory){
+  return snapshot.groups
+    .filter(group=>group.readings.length>0)
+    .map(group=>({
+      metric:group.metric,
+      label:group.label,
+      unit:group.unit,
+      series:group.readings.map((reading,index)=>({
+        name:reading.sourceLabel+(reading.roomName?` · ${reading.roomName}`:""),
+        color:environmentChartSeries[index%environmentChartSeries.length],
+        points:history[`${group.metric}:${reading.sourceLabel}`]??[{capturedAt:snapshot.capturedAt,value:reading.value}],
+      })),
+    }));
+}
+
+function EnvironmentTrendSection({snapshot,history,loading}:{snapshot:EnvironmentSnapshot;history:EnvironmentHistory;loading:boolean}){
+  const charts=environmentHistorySeries(snapshot,history);
+  if(!charts.length)return null;
+  return <Panel title="环境趋势" text="本次会话内每次刷新记录一点 · 时间为横轴 · 同一指标多台设备各画一条线。">
+    <div className={`environment-charts${loading?" refreshing":""}`}>{charts.map(chart=><EnvironmentTrendChart key={chart.metric} chart={chart}/>)}</div>
+    <p className="environment-trend-note">趋势为当前浏览器会话内的读数记录，离开页面后不保留；每 5 分钟左右刷新一次可积累更多数据点。</p>
+  </Panel>;
+}
+
+function trendScale(points:Array<{capturedAt:string;value:number}>){
+  const timestamps=points.map(point=>Date.parse(point.capturedAt)).filter(Number.isFinite);
+  const values=points.map(point=>point.value);
+  const minTime=timestamps.length?Math.min(...timestamps):Date.now();
+  const maxTime=timestamps.length?Math.max(...timestamps):minTime+1;
+  let minValue=Math.min(...values),maxValue=Math.max(...values);
+  if(!Number.isFinite(minValue)||!Number.isFinite(maxValue)){minValue=0;maxValue=1}
+  if(minValue===maxValue){minValue-=Math.abs(minValue)*0.1||1;maxValue+=Math.abs(maxValue)*0.1||1}
+  return {minTime,maxTime:minTime===maxTime?maxTime+1:maxTime,minValue,maxValue};
+}
+
+function trendYTicks(minValue:number,maxValue:number){
+  const span=maxValue-minValue;
+  const magnitude=Math.pow(10,Math.floor(Math.log10(span)));
+  const candidates=[1,2,2.5,5,10].map(step=>step*magnitude);
+  const step=candidates.find(candidate=>span/candidate<=4)??candidates[candidates.length-1];
+  const ticks:number[]=[];
+  for(let tick=Math.ceil(minValue/step)*step;tick<=maxValue+1e-9;tick+=step)ticks.push(Number(tick.toFixed(6)));
+  return ticks.length?ticks:[minValue,maxValue];
+}
+
+function EnvironmentTrendChart({chart}:{chart:{metric:string;label:string;unit:string;series:Array<{name:string;color:string;points:Array<{capturedAt:string;value:number}>}>}}){
+  const [tableOpen,setTableOpen]=useState(false);
+  const [hover,setHover]=useState<{x:number;index:number}|null>(null);
+  const width=560,plotWidth=width-CHART_PADDING.left-CHART_PADDING.right,plotHeight=CHART_HEIGHT-CHART_PADDING.top-CHART_PADDING.bottom;
+  const scales=chart.series.map(item=>trendScale(item.points));
+  const minTime=Math.min(...scales.map(scale=>scale.minTime)),maxTime=Math.max(...scales.map(scale=>scale.maxTime));
+  const minValue=Math.min(...scales.map(scale=>scale.minValue)),maxValue=Math.max(...scales.map(scale=>scale.maxValue));
+  const safeMinTime=minTime===maxTime?maxTime-1:minTime;
+  const x=useCallback((timestamp:number)=>CHART_PADDING.left+((timestamp-safeMinTime)/(maxTime-safeMinTime))*plotWidth,[safeMinTime,maxTime,plotWidth]);
+  const y=useCallback((value:number)=>CHART_PADDING.top+plotHeight-((value-minValue)/(maxValue-minValue))*plotHeight,[minValue,maxValue,plotHeight]);
+  const ticks=trendYTicks(minValue,maxValue);
+  // One shared time index across series so the crosshair lists every device at that time.
+  const times=Array.from(new Set(chart.series.flatMap(item=>item.points.map(point=>Date.parse(point.capturedAt))).filter(Number.isFinite))).sort((left,right)=>left-right);
+  const xTicks=times.length<=6?times:[0,1,2,3,4,5,6].map(slot=>{
+    const target=safeMinTime+(maxTime-safeMinTime)*slot/6;
+    return times.reduce((best,candidate)=>Math.abs(candidate-target)<Math.abs(best-target)?candidate:best,times[0]);
+  });
+  const hoverIndex=hover?times.reduce((best,candidate,index)=>Math.abs(x(candidate)-hover.x)<Math.abs(x(times[best])-hover.x)?index:best,0):null;
+
+  const linePath=(points:Array<{capturedAt:string;value:number}>)=>{
+    const sorted=[...points].sort((left,right)=>Date.parse(left.capturedAt)-Date.parse(right.capturedAt));
+    if(sorted.length===1){const position=x(Date.parse(sorted[0].capturedAt));return `M ${position-0.5} ${y(sorted[0].value)} L ${position+0.5} ${y(sorted[0].value)}`}
+    return sorted.map((point,index)=>`${index===0?"M":"L"} ${x(Date.parse(point.capturedAt))} ${y(point.value)}`).join(" ");
+  };
+
+  return <figure className="environment-chart" aria-label={`${chart.label}趋势`}>
+    <figcaption><strong>{chart.label}</strong><small>{chart.unit}{chart.series.length>1?` · ${chart.series.length} 台设备`:""}</small><button type="button" className="environment-chart-table" aria-expanded={tableOpen} onClick={()=>setTableOpen(open=>!open)}>{tableOpen?"隐藏数据表":"数据表"}</button></figcaption>
+    {chart.series.length>1&&<div className="environment-chart-legend">{chart.series.map(item=><span key={item.name}><i style={{background:item.color}}/>{item.name}</span>)}</div>}
+    <svg viewBox={`0 0 ${width} ${CHART_HEIGHT}`} role="img" aria-label={`${chart.label}随时间变化折线图`} onPointerMove={event=>{
+      const rect=event.currentTarget.getBoundingClientRect();
+      setHover({x:((event.clientX-rect.left)/rect.width)*width,index:0});
+    }} onPointerLeave={()=>setHover(null)}>
+      {ticks.map(tick=><g key={tick}><line className="environment-grid-line" x1={CHART_PADDING.left} x2={width-CHART_PADDING.right} y1={y(tick)} y2={y(tick)}/><text className="environment-axis-text" x={CHART_PADDING.left-6} y={y(tick)+4} textAnchor="end">{formatEnvironmentValue(tick)}</text></g>)}
+      {xTicks.map(timestamp=><g key={timestamp}><text className="environment-axis-text" x={x(timestamp)} y={CHART_HEIGHT-8} textAnchor="middle">{formatEnvironmentTime(new Date(timestamp).toISOString())}</text></g>)}
+      <line className="environment-baseline" x1={CHART_PADDING.left} x2={width-CHART_PADDING.right} y1={CHART_PADDING.top+plotHeight} y2={CHART_PADDING.top+plotHeight}/>
+      {chart.series.map(item=><path key={item.name} className="environment-series-line" stroke={item.color} d={linePath(item.points)}/>)}
+      {chart.series.map(item=>item.points.map((point,pointIndex)=>{
+        const isEnd=pointIndex===item.points.length-1;
+        return <circle key={`${item.name}:${pointIndex}`} className={`environment-series-dot${isEnd?" end":""}`} stroke="var(--viz-surface)" fill={item.color} cx={x(Date.parse(point.capturedAt))} cy={y(point.value)}/>;
+      }))}
+      {hoverIndex!==null&&times[hoverIndex]!==undefined&&<line className="environment-crosshair" x1={x(times[hoverIndex])} x2={x(times[hoverIndex])} y1={CHART_PADDING.top} y2={CHART_PADDING.top+plotHeight}/>}
+    </svg>
+    {hoverIndex!==null&&times[hoverIndex]!==undefined&&<div className="environment-tooltip" style={{left:`${x(times[hoverIndex])/width*100}%`}}>
+      <strong>{formatEnvironmentTime(new Date(times[hoverIndex]).toISOString())}</strong>
+      {chart.series.map(item=>{
+        const nearest=item.points.reduce((best,candidate)=>Math.abs(Date.parse(candidate.capturedAt)-times[hoverIndex])<Math.abs(Date.parse(best.capturedAt)-times[hoverIndex])?candidate:best,item.points[0]);
+        if(!nearest)return null;
+        return <span key={item.name}><i style={{background:item.color}}/><b>{formatEnvironmentValue(nearest.value)}{chart.unit}</b><small>{item.name}</small></span>;
+      })}
+    </div>}
+    {tableOpen&&<table className="environment-chart-table"><thead><tr><th>时间</th>{chart.series.map(item=><th key={item.name}><i style={{background:item.color}}/>{item.name}</th>)}</tr></thead><tbody>{times.map(timestamp=><tr key={timestamp}><td>{formatEnvironmentTime(new Date(timestamp).toISOString())}</td>{chart.series.map(item=>{
+      const point=item.points.find(candidate=>Date.parse(candidate.capturedAt)===timestamp);
+      return <td key={item.name}>{point?formatEnvironmentValue(point.value):"—"}</td>;
+    })}</tr>)}</tbody></table>}
+  </figure>;
 }
 
 function formatSyncTime(value:string){const date=new Date(value);return Number.isNaN(date.getTime())?"刚刚":date.toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"})}

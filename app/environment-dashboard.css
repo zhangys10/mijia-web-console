@@ -9,5 +9,41 @@
 .environment-row strong{font-size:13px;color:#26303b}
 .environment-row span{font-size:10px;color:#7d8792;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-@media(max-width:1100px){.environment-grid{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:440px){.environment-grid{grid-template-columns:1fr}.environment-row{grid-template-columns:80px 1fr}}
+/* Trend charts — palette per dataviz reference (validated ΔE 9.2/9.4 CVD, both modes). */
+:root{--viz-surface:#fcfcfb;--viz-series-1:#2a78d6;--viz-series-2:#eb6834;--viz-series-3:#1baf7a;--viz-text-primary:#0b0b0b;--viz-text-secondary:#52514e;--viz-text-muted:#898781;--viz-grid:#e1e0d9;--viz-baseline:#c3c2b7}
+@media(prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) body{--viz-surface:#1a1a19;--viz-series-1:#3987e5;--viz-series-2:#d95926;--viz-series-3:#199e70;--viz-text-primary:#fff;--viz-text-secondary:#c3c2b7;--viz-text-muted:#898781;--viz-grid:#2c2c2a;--viz-baseline:#383835}
+  :root[data-theme="dark"] body{--viz-surface:#1a1a19;--viz-series-1:#3987e5;--viz-series-2:#d95926;--viz-series-3:#199e70;--viz-text-primary:#fff;--viz-text-secondary:#c3c2b7;--viz-text-muted:#898781;--viz-grid:#2c2c2a;--viz-baseline:#383835}
+}
+.environment-charts{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.environment-charts.refreshing{opacity:.55;transition:opacity .2s}
+.environment-chart{position:relative;background:var(--viz-surface);border:1px solid var(--line);border-radius:12px;padding:14px 12px 8px;display:grid;gap:8px;margin:0}
+.environment-chart figcaption{display:flex;align-items:baseline;gap:8px}
+.environment-chart figcaption strong{font-size:12px;color:var(--viz-text-primary)}
+.environment-chart figcaption small{font-size:10px;color:var(--viz-text-secondary)}
+.environment-chart-table{margin-left:auto;font-size:10px;color:var(--viz-text-secondary);background:none;border:1px solid var(--viz-grid);border-radius:6px;padding:2px 8px;cursor:pointer}
+.environment-chart-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:10px;color:var(--viz-text-secondary)}
+.environment-chart-legend i{display:inline-block;width:14px;height:0;border-top:2px solid;border-radius:1px;margin-right:4px;vertical-align:middle}
+.environment-chart svg{width:100%;height:auto;display:block;touch-action:none}
+.environment-series-line{fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.environment-series-dot{r:2.5}
+.environment-series-dot.end{r:4}
+.environment-series-dot,.environment-baseline{stroke-width:2}
+.environment-grid-line{stroke:var(--viz-grid);stroke-width:1}
+.environment-baseline{stroke:var(--viz-baseline)}
+.environment-axis-text{fill:var(--viz-text-muted);font-size:9px;tabular-nums:1}
+.environment-crosshair{stroke:var(--viz-text-muted);stroke-width:1}
+.environment-tooltip{position:absolute;top:44px;transform:translateX(-50%);background:var(--viz-surface);border:1px solid var(--viz-grid);border-radius:8px;padding:8px 10px;display:grid;gap:4px;font-size:10px;box-shadow:0 4px 12px rgba(0,0,0,.08);pointer-events:none;white-space:nowrap;z-index:2}
+.environment-tooltip strong{color:var(--viz-text-primary)}
+.environment-tooltip span{display:flex;align-items:center;gap:6px}
+.environment-tooltip i{display:inline-block;width:12px;height:2px;border-radius:1px}
+.environment-tooltip b{color:var(--viz-text-primary);font-weight:600}
+.environment-tooltip small{color:var(--viz-text-secondary)}
+.environment-trend-note{font-size:10px;color:var(--viz-text-muted);margin:10px 0 0}
+table.environment-chart-table{width:100%;border-collapse:collapse;font-size:10px;color:var(--viz-text-secondary);margin-top:8px}
+table.environment-chart-table th{color:var(--viz-text-secondary);font-weight:600;text-align:left;padding:4px 8px;border-bottom:1px solid var(--viz-baseline);tabular-nums:1}
+table.environment-chart-table th i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}
+table.environment-chart-table td{padding:4px 8px;border-bottom:1px solid var(--viz-grid)}
+
+@media(max-width:1100px){.environment-grid{grid-template-columns:repeat(2,1fr)}.environment-charts{grid-template-columns:1fr}}
+@media(max-width:440px){.environment-grid{grid-template-columns:1fr}.environment-row{grid-template-columns:80px 1fr}.environment-charts{grid-template-columns:1fr}.environment-tooltip{max-width:180px;white-space:normal}}

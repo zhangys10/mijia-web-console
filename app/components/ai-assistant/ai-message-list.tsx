@@ -48,7 +48,9 @@ function toolSummary(tool: AssistantToolResult) {
 }
 
 function formatReadingValue(value: number) {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+  if (Number.isInteger(value)) return String(value);
+  if (Math.abs(value) < 1) return value.toPrecision(3).replace(/\.?0+$/, "");
+  return value.toFixed(1);
 }
 
 function HomeStatusCard({ status }: { status: AssistantHomeStatus }) {

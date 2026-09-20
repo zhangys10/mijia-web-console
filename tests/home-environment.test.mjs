@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { buildEnvironmentSnapshot, collectHomeEnvironment, matchEnvironmentMetric, planEnvironmentReads } from "../lib/home-environment.ts";
 import { normalizeMiotSpecification } from "../lib/miot-spec.ts";
 
+const CAPTURED_AT = "2026-09-20T08:00:00.000Z";
+
 test("metric matching is conservative: exact semantic names only", () => {
   assert.equal(matchEnvironmentMetric("temperature"), "temperature");
   assert.equal(matchEnvironmentMetric("relative-humidity"), "humidity");
@@ -16,6 +18,37 @@ test("metric matching is conservative: exact semantic names only", () => {
   assert.equal(matchEnvironmentMetric("mode"), null);
   assert.equal(matchEnvironmentMetric("on"), null);
   assert.equal(matchEnvironmentMetric("temperature-range"), null);
+});
+
+test("formaldehyde values are normalized to mg/m³ from declared ppb or µg/m³", () => {
+  // A device declaring ppb: 100 ppb ≈ 0.125 mg/m³, never 100 "mg/m³".
+  const ppb = buildEnvironmentSnapshot({
+    capturedAt: CAPTURED_AT,
+    planned: [{ metric: "formaldehyde", did: "d", siid: 2, piid: 1, sourceLabel: "检测仪", roomName: null, declaredUnit: "ppb" }],
+    values: [{ metric: "formaldehyde", sourceLabel: "检测仪", roomName: null, value: 100, declaredUnit: "ppb" }],
+    specificationFailureCount: 0,
+    failedBatchCount: 0,
+  });
+  assert.equal(ppb.groups[0].unit, "mg/m³");
+  assert.ok(Math.abs(ppb.groups[0].latest.value - 0.1247) < 1e-9, `got ${ppb.groups[0].latest.value}`);
+  // A device declaring µg/m³: 80 µg/m³ = 0.08 mg/m³.
+  const micro = buildEnvironmentSnapshot({
+    capturedAt: CAPTURED_AT,
+    planned: [{ metric: "formaldehyde", did: "d", siid: 2, piid: 1, sourceLabel: "检测仪", roomName: null, declaredUnit: "μg/m3" }],
+    values: [{ metric: "formaldehyde", sourceLabel: "检测仪", roomName: null, value: 80, declaredUnit: "μg/m3" }],
+    specificationFailureCount: 0,
+    failedBatchCount: 0,
+  });
+  assert.ok(Math.abs(micro.groups[0].latest.value - 0.08) < 1e-9, `got ${micro.groups[0].latest.value}`);
+  // mg/m³ passes through unchanged; undeclared units stay raw.
+  const passthrough = buildEnvironmentSnapshot({
+    capturedAt: CAPTURED_AT,
+    planned: [{ metric: "formaldehyde", did: "d", siid: 2, piid: 1, sourceLabel: "检测仪", roomName: null, declaredUnit: "mg/m3" }],
+    values: [{ metric: "formaldehyde", sourceLabel: "检测仪", roomName: null, value: 0.08, declaredUnit: "mg/m3" }],
+    specificationFailureCount: 0,
+    failedBatchCount: 0,
+  });
+  assert.equal(passthrough.groups[0].latest.value, 0.08);
 });
 
 const spec = normalizeMiotSpecification("test.sensor.demo", "urn:test:sensor:demo", {
@@ -49,14 +82,12 @@ test("planning picks one readable sensor property per metric and skips writable 
   const metrics = plans.map(plan => plan.metric);
   assert.deepEqual(metrics, ["temperature", "humidity", "co2", "pm25"]);
   for (const plan of plans) assert.equal(plan.sourceLabel, "客厅温湿度计");
-  assert.deepEqual(plans[0], { metric: "temperature", did: "physical-did-1", siid: 2, piid: 1, sourceLabel: "客厅温湿度计", roomName: "客厅" });
+  assert.deepEqual(plans[0], { metric: "temperature", did: "physical-did-1", siid: 2, piid: 1, sourceLabel: "客厅温湿度计", roomName: "客厅", declaredUnit: "celsius" });
 });
 
 test("planning ignores devices without a did", () => {
   assert.deepEqual(planEnvironmentReads({ model: "test.sensor.demo" }, spec.groups), []);
 });
-
-const CAPTURED_AT = "2026-09-20T08:00:00.000Z";
 
 test("snapshot assembly is sanitized, ordered, and honest about partial data", () => {
   const planned = planEnvironmentReads(DEVICE, spec.groups);
