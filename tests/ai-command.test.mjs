@@ -12,6 +12,11 @@ import { loadAiCommandConfig } from "../lib/ai/config.ts";
 import { allowedScenes, staticAllowedScenes } from "../lib/ai/scenes/catalog.ts";
 import { SceneService } from "../lib/ai/scenes/scene-service.ts";
 
+// Route-level tests here exercise the legacy /api/ai/command internals; that
+// route is disabled by default since phase 2 (mijia-agent owns command
+// handling), so this file explicitly re-enables it.
+process.env.AI_COMMAND_ENABLED = "true";
+
 test("shortcut authentication accepts only the exact bearer token hash", async () => {
   const token = "a".repeat(32);
   const hash = await verifyShortcutAuth(`Bearer ${token}`, (await import("node:crypto")).createHash("sha256").update(token).digest("hex"));

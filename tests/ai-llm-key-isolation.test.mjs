@@ -8,6 +8,10 @@ import { loadAiCommandConfig } from "../lib/ai/config.ts";
 process.env.APP_ENV = "test";
 process.env.XIAOMI_SESSION_SECRET = "test-secret-at-least-32-chars-long-for-isolation-test";
 process.env.AI_AUTOMATION_TOKEN_SECRET = "test-secret-at-least-32-chars-long-for-isolation-test";
+// This file tests the legacy /api/ai/command route internals; the route is
+// disabled by default since phase 2 (mijia-agent owns command handling), so
+// these tests explicitly re-enable it.
+process.env.AI_COMMAND_ENABLED = "true";
 
 const sessionA = {
   userId: "user-alpha",
@@ -170,8 +174,42 @@ test("Command API rejects tampered automation token with 401 AUTOMATION_TOKEN_IN
   assert.equal(json.code, "AUTOMATION_TOKEN_INVALID");
 });
 
-test("Command API rejects request without user LLM key and without global key with 422 LLM_CREDENTIAL_NOT_CONFIGURED", async () => {
+test("Command API stays disabled by default (503 AI_COMMAND_DISABLED) after agent extraction", async () => {
   const { worker, env, context } = await getWorker();
+  const previous = process.env.AI_COMMAND_ENABLED;
+  delete process.env.AI_COMMAND_ENABLED;
+
+  try {
+    const res = await worker.fetch(new Request("http://localhost/api/ai/command", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${await sealAutomationToken({
+          version: 1,
+          purpose: "ai-home-automation",
+          principalId: await computePrincipalId("cn", sessionA.userId),
+          xiaomiSession: sessionA,
+          region: "cn",
+          provider: "qwen-cn",
+          model: "qwen3.7-flash-2026-07-15",
+          apiKey: "sk-alpha-key",
+          issuedAt: Date.now(),
+          expiresAt: Date.now() + 86400000,
+        }, { env: "test" })}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ text: "我回家了" }),
+    }), env, context);
+
+    assert.equal(res.status, 503);
+    const json = await res.json();
+    assert.equal(json.code, "AI_COMMAND_DISABLED");
+  } finally {
+    if (previous === undefined) delete process.env.AI_COMMAND_ENABLED;
+    else process.env.AI_COMMAND_ENABLED = previous;
+  }
+});
+
+test("Command API rejects request without user LLM key and without global key with 422 LLM_CREDENTIAL_NOT_CONFIGURED", async () => {  const { worker, env, context } = await getWorker();
   // Clear any global fallback
   delete process.env.LLM_API_KEY;
 

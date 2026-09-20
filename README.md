@@ -78,7 +78,7 @@ npm run dev
 
 AI Web 助手的 Agent 运行时已迁移到独立的 `mijia-agent` 仓库（EdgeOne Makers Agent + Python agent，独立部署，生产地址 `https://agent.fabloki.xyz`）。本仓库只保留 Cookie 鉴权的 Web Chat / 会话 / 配额 API、principal 派生、密封 session binding 和 `/api/ai/tools` 只读工具 facade；模型调用、场景执行和配额记账全部由远程 Agent 完成。
 
-当前仓库仍保留旧 `/api/ai/command`、Automation Token 和 AI 设置页面作为待迁移兼容实现；它们不代表新架构 contract。新部署在迁移完成前应设置 `AI_COMMAND_ENABLED=false`，不要向用户开放旧模型 Key 流程。
+当前仓库仍保留旧 `/api/ai/command`、Automation Token 和 AI 设置页面作为待迁移兼容实现；它们不代表新架构 contract。`AI_COMMAND_ENABLED` 默认已为 `false`（旧命令路由关闭，命令流量走 Agent 的 automation token 入口），不要向用户开放旧模型 Key 流程。
 
 ### 远程 Makers Agent
 

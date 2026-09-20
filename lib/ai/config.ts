@@ -40,7 +40,7 @@ function bool(value: string | undefined, fallback: boolean) {
 
 export function loadAiCommandConfig(env: NodeJS.ProcessEnv = process.env): AiCommandConfig {
   return {
-    enabled: bool(env.AI_COMMAND_ENABLED, true),
+    enabled: bool(env.AI_COMMAND_ENABLED, false),
     authHash: env.AI_COMMAND_AUTH_TOKEN_HASH ?? "",
     session: env.XIAOMI_AI_SESSION ?? "",
     homeId: env.AI_SCENE_HOME_ID ?? "",
