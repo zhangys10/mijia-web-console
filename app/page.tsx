@@ -743,7 +743,7 @@ function SettingsView({ onOpenLogin, homes, selectedHomeId, selectedHomeName }: 
       <div className="settings-section">
         <Title
           title="AI 自动化配置"
-          sub="配置个人专属的大语言模型 API Key 与 Siri 快捷指令自动化令牌"
+          sub="为当前账号签发 mijia-agent 直连自动化令牌（不含模型凭据）"
         />
         <div className="ai-layout">
           <div className="ai-stack">
@@ -752,9 +752,9 @@ function SettingsView({ onOpenLogin, homes, selectedHomeId, selectedHomeName }: 
           </div>
           <aside className="ai-stack">
             <section className="ai-card">
-              <div className="ai-chip">Siri 快捷指令</div>
-              <h2 style={{ marginTop: "10px" }}>语音直接控制全屋</h2>
-              <p>为当前账号签发专属自动化令牌后，把令牌填入快捷指令的 Authorization 标头（Bearer &lt;Token&gt;），即可随时通过 Siri 唤起回家等智能场景。</p>
+              <div className="ai-chip">外部入口</div>
+              <h2 style={{ marginTop: "10px" }}>Postman / Siri 直连 Agent</h2>
+              <p>为当前账号签发专属自动化令牌后，把令牌填入请求的 Authorization 标头（Bearer &lt;Token&gt;），即可通过 mijia-agent 的 /ai/command 入口发送控制指令。</p>
             </section>
             <section className="ai-card">
               <h2>使用步骤</h2>
@@ -762,22 +762,22 @@ function SettingsView({ onOpenLogin, homes, selectedHomeId, selectedHomeName }: 
                 <div className="ai-suggestion">
                   <span>1</span>
                   <div>
-                    <strong>选择 provider 与模型</strong>
-                    <p>推荐使用通义千问 Flash 系列，具备极快的响应速度和低超时率。</p>
+                    <strong>确认当前家庭</strong>
+                    <p>令牌默认绑定当前选中的家庭；切换后重新签发即可。</p>
                   </div>
                 </div>
                 <div className="ai-suggestion">
                   <span>2</span>
                   <div>
-                    <strong>输入个人 API Key</strong>
-                    <p>仅在签发时与米家会话加密密封，服务端不会以明文持久化。</p>
+                    <strong>选择有效期</strong>
+                    <p>默认 30 天，过期后重新签发；模型访问由 Agent 侧的 Makers Gateway 提供。</p>
                   </div>
                 </div>
                 <div className="ai-suggestion">
                   <span>3</span>
                   <div>
                     <strong>复制 Automation Token</strong>
-                    <p>保存到 iOS 快捷指令中，直接调用 /api/ai/command 发送控制指令。</p>
+                    <p>作为 Bearer Token 调用 mijia-agent 的 POST /ai/command 发送控制指令。</p>
                   </div>
                 </div>
               </div>

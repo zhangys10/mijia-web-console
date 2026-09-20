@@ -7,9 +7,10 @@ export type AutomationTokenPayload = {
   xiaomiSession: XiaomiSession;
   region: string;
   homeId?: string;
-  provider: string;
-  model: string;
-  apiKey: string;
+  /** Phase 3 之后签发的 token 不再携带 BYOK 字段；旧 token 中可能仍存在，读取方一律忽略。 */
+  provider?: string;
+  model?: string;
+  apiKey?: string;
   issuedAt: number;
   expiresAt: number;
 };
@@ -215,10 +216,6 @@ export async function openAutomationToken(
     typeof payload.principalId !== "string" ||
     !payload.principalId ||
     typeof payload.region !== "string" ||
-    typeof payload.provider !== "string" ||
-    typeof payload.model !== "string" ||
-    typeof payload.apiKey !== "string" ||
-    !payload.apiKey ||
     typeof payload.issuedAt !== "number" ||
     typeof payload.expiresAt !== "number" ||
     typeof payload.xiaomiSession !== "object" ||

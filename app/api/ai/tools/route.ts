@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     } finally { reader.releaseLock(); }
     let body: unknown;
     try { body = JSON.parse(raw); } catch { return respond({ code: "AI_INVALID_REQUEST" }, 400); }
-    return respond(await runRemoteTool(body, process.env));
+    return respond(await runRemoteTool(body, process.env, {}, request.headers.get("X-Ai-User-Token") ?? undefined));
   } catch (error) {
     return error instanceof RemoteToolError
       ? respond({ code: error.message }, error.status)
