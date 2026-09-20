@@ -1,10 +1,8 @@
 import { listHomes, readXiaomiSessionWithSecret } from "../../../lib/xiaomi-cloud.ts";
-import type { QuotaStore } from "../../../lib/ai/quota/quota-store.ts";
 import { MakersAgentClient } from "../../../lib/ai/web-chat/agent-client.ts";
 import { AiWebService } from "../../../lib/ai/web-chat/web-chat-service.ts";
 import {
   authenticateXiaomiSession,
-  createQuotaService,
   jsonResponse,
   readJsonBody,
   webApiErrorResponse,
@@ -14,7 +12,6 @@ import {
 type ChatHandlerDependencies = {
   fetchImpl?: typeof fetch;
   loadHomes?: typeof listHomes;
-  quotaStore?: QuotaStore;
   readSession?: typeof readXiaomiSessionWithSecret;
   now?: () => number;
   randomBytes?: (length: number) => Uint8Array;
@@ -35,20 +32,15 @@ export function createChatHandler(dependencies: ChatHandlerDependencies = {}) {
         dependencies.readSession,
       );
       const body = await readJsonBody(context.request, MAX_CHAT_REQUEST_BYTES);
-      const quota = context.env.AI_AGENT_BASE_URL
-        ? undefined
-        : createQuotaService(context.env, {
-          store: dependencies.quotaStore,
-          now: dependencies.now,
-        });
-      const agent = new MakersAgentClient({
-        baseUrl: context.env.AI_AGENT_BASE_URL || new URL("/", context.request.url).toString(),
-        internalSecret: context.env.AI_AGENT_INTERNAL_SECRET,
-        fetchImpl: dependencies.fetchImpl,
-      });
+      const agent = context.env.AI_AGENT_BASE_URL
+        ? new MakersAgentClient({
+          baseUrl: context.env.AI_AGENT_BASE_URL,
+          internalSecret: context.env.AI_AGENT_INTERNAL_SECRET,
+          fetchImpl: dependencies.fetchImpl,
+        })
+        : undefined;
       const service = new AiWebService({
         env: context.env,
-        quota,
         agent,
         loadHomes: dependencies.loadHomes,
         now: dependencies.now,
