@@ -12,6 +12,7 @@ import type { ManualScene } from "../lib/xiaomi-scenes";
 import { groupManualSceneActions, type ManualSceneActionItem } from "../lib/scene-action-groups";
 import SceneEditor from "./scene-editor";
 import AutomationCenter from "./automation-center";
+import AiAssistantButton from "./components/ai-assistant/ai-assistant-button";
 import AutomationTokenForm from "./ai/settings/automation-token-form";
 import PrincipalIdCard from "./ai/settings/principal-id-card";
 import { dashboardAccountLabel, dashboardGreeting, formatDashboardDate } from "../lib/dashboard-display";
@@ -370,6 +371,7 @@ export default function Home({ initialTab = "首页" }: { initialTab?: string } 
     </div></div>}
     {authOpen&&<div className="modal-bg" onMouseDown={()=>{setAuthOpen(false);polling.current=false}}><div className="modal cloud-modal" onMouseDown={event=>event.stopPropagation()}><button className="close" onClick={()=>{setAuthOpen(false);polling.current=false}}>×</button><span className="mi-logo">mi</span><h2>{connection.connected?"米家账号已连接":"扫码登录米家"}</h2><p>{connection.connected?`已连接小米账号 ${connection.userId}，服务器区域：${regionLabels[connection.region||"cn"]}。`:"打开米家 App 或小米账号，扫描二维码完成授权。账号密码不会输入到本站。"}</p>{connection.connected?<><div className="connected-info"><span>✓</span><div><strong>米家云连接正常</strong><small>{devices.length} 台设备已同步</small></div></div><button className="logout" onClick={logout}>断开账号连接</button></>:<><label className="region-picker"><span>设备所在区域</span><select value={region} onChange={event=>{setRegion(event.target.value);setQr({loading:false});polling.current=false}}>{Object.entries(regionLabels).map(([code,name])=><option key={code} value={code}>{name}</option>)}</select></label><div className="qr-box">{qr.loading?<div className="qr-loading"><span/><small>正在向小米获取二维码</small></div>:qr.imageUrl&&!qr.error&&!qr.expired?<img src={qr.imageUrl} alt="小米账号扫码登录二维码"/>:<div className="qr-error"><strong>{qr.expired?"二维码已过期":qr.error?friendlyError(qr.error):"点击生成登录二维码"}</strong><button onClick={startLogin}>{qr.expired?"刷新二维码":"重新获取"}</button></div>}</div>{qr.imageUrl&&!qr.error&&!qr.expired&&<><p className={`qr-countdown ${qrSeconds<=30?"expiring":""}`}>二维码有效期 {String(Math.floor(qrSeconds/60)).padStart(2,"0")}:{String(qrSeconds%60).padStart(2,"0")}</p><p className="scan-tip">扫描后请在手机上确认登录</p></>}{qr.loginUrl&&!qr.expired&&<a className="qr-link" href={qr.loginUrl} target="_blank" rel="noreferrer">无法扫码？在小米官网完成登录 →</a>}<div className="security-note">⌁ 会话使用加密 HttpOnly Cookie 保存，浏览器脚本无法读取。</div></>}</div></div>}
     {toast&&<div className="toast">✓　{toast}</div>}
+    <AiAssistantButton connected={connection.connected} loading={connection.loading} homeId={selectedHome} homeName={currentHome?.name||"当前家庭"} onOpenLogin={openLogin} onMessage={message}/>
   </main>
 }
 
