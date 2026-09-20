@@ -62,8 +62,19 @@ if (!Number.isFinite(days) || days < 1 || days > 90) {
 }
 
 // Decrypts and validates the sealed cookie with the console's own logic.
+// DevTools copies cookie values URL-encoded (e.g. %2B for +) and terminal
+// pastes can wrap; the server-side cookie jar decodes automatically, so the
+// script does the same, tolerating both encoded and raw input.
+let sealedSession = parsed.session.replace(/\s+/g, "");
+if (sealedSession.includes("%")) {
+  try {
+    sealedSession = decodeURIComponent(sealedSession);
+  } catch {
+    // Keep as-is: not actually URL-encoded.
+  }
+}
 const session: XiaomiSession = await unsealWithSecret<XiaomiSession>(
-  parsed.session,
+  sealedSession,
   process.env.XIAOMI_SESSION_SECRET || undefined,
 );
 

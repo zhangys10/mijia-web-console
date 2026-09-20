@@ -13,10 +13,13 @@ const session = {
   userAgent: "test-agent",
 };
 const cookie = await sealWithSecret(session, secrets.XIAOMI_SESSION_SECRET);
+// DevTools copies cookies URL-encoded and pastes can wrap — pass the exact
+// hostile form: encoded, with an embedded newline.
+const devtoolsStyle = encodeURIComponent(cookie).replace("j", "j\n");
 
 const stdout = execFileSync("node", [
   "--experimental-strip-types", "scripts/generate-automation-token.ts",
-  "--session", cookie, "--days", "7",
+  "--session", devtoolsStyle, "--days", "7",
 ], { env: { ...process.env, ...secrets }, encoding: "utf8" });
 const token = stdout.trim().split("\n").at(-1);
 console.log("token prefix:", token.slice(0, 12) + "…");
