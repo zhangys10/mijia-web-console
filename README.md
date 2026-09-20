@@ -133,6 +133,16 @@ Web API 通过 `AI_AGENT_BASE_URL` 指定的远程 Agent origin 的 `/ai-home` �
 
 EdgeOne KV 审批完成前，本地自动化测试使用 `InMemoryQuotaStore`。生产环境应保持 `AI_QUOTA_FAIL_MODE` 默认 `closed`，不得在存储不可用时继续产生共享模型费用。
 
+### AI 助手面板
+
+Phase 6 在主要页面挂载右下角的 AI 助手按钮，打开对话面板调用上述 Web Chat API。四个公开 AI 路由同时以 EdgeOne Edge Function（`edge-functions/api/ai/*`）和 Next 路由（`app/api/ai/*`）两种形式提供：Next 路由是薄委托，直接复用 Edge Function 的 handler 工厂并传入 `process.env`，保证本地开发与 Vercel 部署可访问同一套鉴权、家庭校验、配额与预览逻辑。
+
+- 未登录时点击按钮会引导现有的小米扫码登录；演示家庭（demo）不打开面板。
+- 桌面端为右侧面板，移动端（≤760px）为全屏抽屉；发送中可点"停止"中断本地请求——服务端可能仍在处理该轮对话。
+- "清除会话"只清除 Agent 对话记忆，不影响设备、场景或配额账本。
+- 配额 `mode: "disabled"` 时面板显示"配额已停用/不可用"，不会显示为零剩余；429 时显示恢复时间并禁用重试，绝不自动重试。
+- 本地联调注意：Agent 运行时已迁出本仓库，非预览聊天必须设置 `AI_AGENT_BASE_URL`（否则 502 `AI_AGENT_UNAVAILABLE`）。本地开发请使用 `AI_ENVIRONMENT=preview`（固定 mock）或指向本地/远程 Agent。
+
 本地人工验证需要同时运行本仓库 Edge Functions 和 `mijia-agent` 仓库的本地 Agent：用 `edgeone makers dev` 启动控制台后，将 `AI_AGENT_BASE_URL` 指向本地 Agent origin（或直接使用 `https://agent.fabloki.xyz`），并准备已登录浏览器中的 `xiaomi_session` Cookie。以下命令中的 Secret 和 Cookie 只应保存在当前终端，不要写入仓库或 shell history：
 
 ```bash

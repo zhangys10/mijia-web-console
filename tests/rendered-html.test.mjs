@@ -36,6 +36,8 @@ test("renders the Xiaomi smart home dashboard", async () => {
   assert.match(html, /账号与连接/, "the navigation drawer must retain Xiaomi account settings");
   assert.match(html, /扫码连接米家/);
   assert.match(html, /aria-label="选择家庭"/);
+  assert.match(html, /AI 助手/);
+  assert.match(html, /aria-label="AI 助手"/);
   assert.match(html, /当前家庭/);
   assert.match(html, /当前运行/);
   assert.match(html, /3 台设备正在运行/);
@@ -135,6 +137,34 @@ test("reading, running or writing scenes requires an authenticated Xiaomi sessio
     const response = await worker.fetch(request, env, context);
     assert.equal(response.status, 401);
     assert.deepEqual(await response.json(), { error: "XIAOMI_NOT_CONNECTED" });
+  }
+});
+
+test("the web chat API delegates require an authenticated Xiaomi session", async () => {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("test", `ai-delegates-${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
+  const context = { waitUntil() {}, passThroughOnException() {} };
+
+  for (const request of [
+    new Request("http://localhost/api/ai/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ homeId: "home-1", message: "查看可用场景" }),
+    }),
+    new Request("http://localhost/api/ai/conversations", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ homeId: "home-1" }),
+    }),
+    new Request("http://localhost/api/ai/conversations/cv1_test", { method: "DELETE" }),
+    new Request("http://localhost/api/ai/quota"),
+  ]) {
+    const response = await worker.fetch(request, env, context);
+    assert.equal(response.status, 401, `${request.method} ${new URL(request.url).pathname} must reject anonymous access`);
+    const body = await response.json();
+    assert.deepEqual(body, { code: "AI_UNAUTHENTICATED", message: "请先登录米家账号" });
   }
 });
 
