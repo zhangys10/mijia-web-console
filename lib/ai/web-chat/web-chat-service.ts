@@ -37,6 +37,7 @@ export type WebChatResult = {
   tool?: AgentRunResult["tool"];
   scenes?: Array<{ name: string; description: string; actionCount: number }>;
   homeStatus?: AgentRunResult["homeStatus"];
+  deviceStatus?: AgentRunResult["deviceStatus"];
   quota: PublicQuotaSummary;
 };
 
@@ -271,6 +272,7 @@ export class AiWebService {
         actionCount,
       })),
       homeStatus: agentResult.homeStatus,
+      deviceStatus: agentResult.deviceStatus,
       quota: publicQuota(quotaSummary),
     };
   }

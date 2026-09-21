@@ -24,14 +24,26 @@ type AssistantHomeStatus = {
   warnings: string[];
 };
 
+type AssistantDeviceStatus = {
+  capturedAt: string;
+  completeness: "complete" | "partial" | "empty";
+  poweredOn: number;
+  rooms: Array<{
+    room: string;
+    items: Array<{ name: string; kind: string; state: "on" | "off" | "unknown"; online: boolean }>;
+  }>;
+  warnings: string[];
+};
+
 type ChatResponse = {
   requestId: string;
   conversationId: string;
   message: string;
-  intent: "none" | "list_scenes" | "get_home_status" | "activate_scene";
-  tool?: { name: "list_scenes" | "get_home_status" | "activate_scene"; status: "success" | "partial_success"; sceneName?: string };
+  intent: "none" | "list_scenes" | "get_home_status" | "get_device_status" | "activate_scene";
+  tool?: { name: "list_scenes" | "get_home_status" | "get_device_status" | "activate_scene"; status: "success" | "partial_success"; sceneName?: string };
   scenes?: Array<{ name: string; description: string; actionCount: number }>;
   homeStatus?: AssistantHomeStatus;
+  deviceStatus?: AssistantDeviceStatus;
   quota: AssistantQuota;
 };
 
@@ -175,6 +187,7 @@ export default function AiAssistantPanel({ homeId, homeName, onClose, onOpenLogi
         tool: result.tool,
         scenes: result.scenes && result.scenes.length > 0 ? result.scenes : undefined,
         homeStatus: result.homeStatus,
+        deviceStatus: result.deviceStatus,
       }]);
     } catch (caught) {
       setMessages(list => {

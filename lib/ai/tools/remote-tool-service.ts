@@ -4,6 +4,7 @@ import { verifyAgentBinding, type AgentScope } from "../security/agent-binding.t
 import { derivePrincipalId } from "../security/principal.ts";
 import { AutomationTokenError, openAutomationToken } from "../security/automation-token.ts";
 import { collectHomeEnvironment } from "../../home-environment.ts";
+import { collectDeviceStatus } from "../../device-status.ts";
 import { loadAgentScenes, sceneSummaries, type AgentSceneRecord } from "./agent-scene-catalog.ts";
 
 type Environment = Record<string, string | undefined>;
@@ -11,6 +12,7 @@ type Dependencies = {
   homes?: typeof listHomes;
   scenes?: (input: { principalId: string; homeId: string; session: XiaomiSession }) => Promise<AgentSceneRecord[]>;
   homeStatus?: (input: { session: XiaomiSession; homeId: string }) => Promise<ReturnType<typeof collectHomeEnvironment>>;
+  deviceStatus?: (input: { session: XiaomiSession; homeId: string }) => Promise<ReturnType<typeof collectDeviceStatus>>;
 };
 
 export class RemoteToolError extends Error {
@@ -20,6 +22,8 @@ export class RemoteToolError extends Error {
 
 const defaultHomeStatusCollector = (input: { session: XiaomiSession; homeId: string }) =>
   collectHomeEnvironment(input.session, input.homeId);
+const defaultDeviceStatusCollector = (input: { session: XiaomiSession; homeId: string }) =>
+  collectDeviceStatus(input.session, input.homeId);
 
 const MAX_AUTOMATION_TOKEN_LENGTH = 8192;
 
@@ -67,6 +71,13 @@ export async function runRemoteTool(body: unknown, env: Environment, dependencie
     if (Object.keys(args).length) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
     if (isPreviewEnvironment(env)) throw new RemoteToolError("AI_PREVIEW_READ_ONLY", 403);
     const collector = dependencies.homeStatus ?? defaultHomeStatusCollector;
+    return await collector({ session: binding.session, homeId });
+  }
+  if (input.tool === "get_device_status") {
+    // Read-only: ai:chat alone suffices, no physical-action scope is involved.
+    if (Object.keys(args).length) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
+    if (isPreviewEnvironment(env)) throw new RemoteToolError("AI_PREVIEW_READ_ONLY", 403);
+    const collector = dependencies.deviceStatus ?? defaultDeviceStatusCollector;
     return await collector({ session: binding.session, homeId });
   }
   if (input.tool !== "activate_scene") throw new RemoteToolError("AI_INVALID_REQUEST", 400);
@@ -163,6 +174,12 @@ async function runUserTokenTool(
     if (Object.keys(args).length) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
     if (isPreviewEnvironment(env)) throw new RemoteToolError("AI_PREVIEW_READ_ONLY", 403);
     const collector = dependencies.homeStatus ?? defaultHomeStatusCollector;
+    return await collector({ session: payload.xiaomiSession, homeId });
+  }
+  if (input.tool === "get_device_status") {
+    if (Object.keys(args).length) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
+    if (isPreviewEnvironment(env)) throw new RemoteToolError("AI_PREVIEW_READ_ONLY", 403);
+    const collector = dependencies.deviceStatus ?? defaultDeviceStatusCollector;
     return await collector({ session: payload.xiaomiSession, homeId });
   }
   if (input.tool !== "activate_scene") throw new RemoteToolError("AI_INVALID_REQUEST", 400);
