@@ -86,8 +86,7 @@ Agent 运行时位于独立的 `mijia-agent` 仓库。本仓库的 Web Chat API 
 
 - `AI_AGENT_BASE_URL`：远程 Makers Agent origin，非预览聊天与会话删除的必填配置。生产环境的 `mijia-agent` EdgeOne 部署地址为 `https://agent.fabloki.xyz`；未设置时非预览请求返回 502 `AI_AGENT_UNAVAILABLE` 配置错误。除 `localhost`、`127.0.0.1` 和 IPv6 loopback 的本地开发地址外，HTTP origin 会被拒绝。
 - `AI_AGENT_INTERNAL_SECRET`：Web API 调用 Agent 的内部 Bearer Secret，每个部署环境独立，至少 32 个字符。
-- `AI_SCENE_APPROVED_IDS`：`/api/ai/tools` 场景目录使用的低风险手动场景 ID 审核名单，逗号分隔；默认为空，任何场景都不会被执行。
-- 模型只看到场景别名、名称和描述；小米会话、真实场景 ID、DID 和原始用户 ID 不进入模型上下文。
+- 场景目录不做预置审核名单：`/api/ai/tools` 的 `list_scenes` 返回该家庭下所有已启用的手动场景；模型只看到场景别名、名称和描述；小米会话、真实场景 ID、DID 和原始用户 ID 不进入模型上下文。
 - 连续对话由 Makers Agent 的 `Makers-Conversation-Id` 和服务端 principal/home 派生的存储键隔离。
 - 副作用必须携带 Idempotency-Key；相同请求只执行一次，不同请求复用同一 key 会返回冲突。
 
@@ -168,7 +167,7 @@ curl -i -X DELETE "$BASE/api/ai/conversations/$CONV" \
   -H "Cookie: $COOKIE"
 ```
 
-预期结果：创建会话返回 201；聊天返回 200、相同 `conversationId` 和脱敏 quota；副作用请求只执行审核名单中的低风险场景；删除返回 200，随后使用同一句柄会建立空的 Agent 对话历史。
+预期结果：创建会话返回 201；聊天返回 200、相同 `conversationId` 和脱敏 quota；场景列表返回该家庭下所有已启用的手动场景；删除返回 200，随后使用同一句柄会建立空的 Agent 对话历史。
 
 ## 常用命令
 

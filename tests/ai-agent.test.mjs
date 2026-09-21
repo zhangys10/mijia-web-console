@@ -8,7 +8,6 @@ import {
 } from "../lib/ai/security/agent-binding.ts";
 import {
   buildAgentSceneCatalog,
-  parseApprovedSceneIds,
   safeScenesForModel,
 } from "../lib/ai/tools/agent-scene-catalog.ts";
 
@@ -42,7 +41,6 @@ async function sceneCatalog(principal = principalId, home = homeId) {
     principalId: principal,
     homeId: home,
     scenes,
-    approvedSceneIds: new Set(["real-scene-id", "real-disabled-scene-id", "real-other-home-scene-id"]),
   });
 }
 
@@ -88,27 +86,30 @@ test("agent binding is sealed, scoped, expiring, and mismatch-rejecting", async 
   );
 });
 
-test("scene catalog only exposes reviewed scenes as principal and home-scoped aliases", async () => {
-  const approved = parseApprovedSceneIds(" real-scene-id , real-disabled-scene-id ,, ");
+test("scene catalog exposes every enabled scene of the home as principal-scoped aliases", async () => {
   const catalog = await sceneCatalog();
   const safeScenes = safeScenesForModel(catalog);
   const serialized = JSON.stringify(safeScenes);
 
-  assert.equal(catalog.length, 1);
-  assert.equal(catalog[0].sceneId, "real-scene-id");
-  assert.equal(catalog[0].homeId, homeId);
-  assert.equal(catalog[0].reviewStatus, "approved");
-  assert.equal(catalog[0].riskLevel, "low");
+  assert.equal(catalog.length, 2);
+  assert.deepEqual(catalog.map((scene) => scene.sceneId), ["real-scene-id", "real-other-scene-id"]);
+  assert.equal(catalog.every((scene) => scene.homeId === homeId), true);
   assert.match(catalog[0].alias, /^scene_[0-9a-f]{16}$/);
   assert.equal(serialized.includes("real-scene-id"), false);
+  assert.equal(serialized.includes("real-other-scene-id"), false);
   assert.equal(serialized.includes("raw-user-id"), false);
-  assert.deepEqual(safeScenes, [{
-    id: catalog[0].alias,
-    name: "回家模式",
-    description: "当前家庭已审核的低风险手动场景：回家模式",
-  }]);
-  assert.equal(approved.has("real-scene-id"), true);
-  assert.equal(approved.size, 2);
+  assert.deepEqual(safeScenes, [
+    {
+      id: catalog[0].alias,
+      name: "回家模式",
+      description: "当前家庭的手动场景：回家模式",
+    },
+    {
+      id: catalog[1].alias,
+      name: "观影模式",
+      description: "当前家庭的手动场景：观影模式",
+    },
+  ]);
 
   const otherPrincipalCatalog = await sceneCatalog(otherPrincipalId);
   assert.notEqual(otherPrincipalCatalog[0].alias, catalog[0].alias);
