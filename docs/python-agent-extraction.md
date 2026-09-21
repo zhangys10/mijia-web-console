@@ -17,6 +17,8 @@ conversation storage, agent usage quotas, and forwards bounded turns to Python.
 - Binding is decrypted only here; principal is re-derived and current home access rechecked.
 - `authorize` returns `{ok:true}`; `list_scenes` returns sanitized alias/name/description/actionCount.
 - `get_home_status` returns a sanitized read-only home snapshot; it stays out of preview.
+- `get_device_status` returns a sanitized read-only per-room device on/off snapshot
+  (the same device pipeline and lighting model as the 首页 dashboard); it stays out of preview.
 - `activate_scene` currently returns `AI_SCENE_EXECUTION_DISABLED`; remote control requires
   durable cross-conversation atomic execution claims plus reviewed scene revision/risk checks.
 - Optional `X-Ai-User-Token` header (checked after the service Bearer) adds a user

@@ -280,6 +280,53 @@ test("token path keeps get_home_status read-only", async () => {
   );
 });
 
+test("get_device_status returns the sanitized per-room snapshot", async () => {
+  const snapshot = {
+    capturedAt: "2026-09-21T08:00:00Z",
+    completeness: "complete",
+    poweredOn: 1,
+    rooms: [{ room: "客厅", items: [{ name: "客厅吸顶灯", kind: "light", state: "on", online: true }] }],
+    warnings: [],
+  };
+  const statusDeps = {
+    ...dependencies,
+    deviceStatus: async () => snapshot,
+  };
+  const result = await runRemoteTool({ ...await input(), tool: "get_device_status" }, env, statusDeps);
+  assert.equal(result.completeness, "complete");
+  assert.equal(result.rooms[0].items[0].state, "on");
+  assert.equal(result.poweredOn, 1);
+});
+
+test("get_device_status rejects non-empty arguments and preview environments", async () => {
+  await assert.rejects(
+    runRemoteTool({ ...await input(), tool: "get_device_status", arguments: { room: "客厅" } }, env, dependencies),
+    /AI_INVALID_REQUEST/,
+  );
+  await assert.rejects(
+    runRemoteTool({ ...await input(), tool: "get_device_status" }, { ...env, AI_ENVIRONMENT: "preview" }, dependencies),
+    /AI_PREVIEW_READ_ONLY/,
+  );
+});
+
+test("token path keeps get_device_status read-only", async () => {
+  const seen = [];
+  const deps = {
+    ...tokenDeps(),
+    deviceStatus: async (input) => {
+      seen.push(input);
+      return { completeness: "complete", poweredOn: 0, rooms: [], warnings: [] };
+    },
+  };
+  const result = await runRemoteTool(tokenInput("get_device_status"), tokenEnv, deps, await automationToken());
+  assert.equal(result.completeness, "complete");
+  assert.equal(seen.at(-1)?.homeId, "home-a");
+  await assert.rejects(
+    runRemoteTool(tokenInput("get_device_status", { arguments: { room: "客厅" } }), tokenEnv, deps, await automationToken()),
+    /AI_INVALID_REQUEST/,
+  );
+});
+
 test("token path activation stays disabled and requires an idempotency key", async () => {
   const token = await automationToken();
   await assert.rejects(

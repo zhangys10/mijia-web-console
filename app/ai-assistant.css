@@ -8,3 +8,11 @@
 .ai-message-metric-label{font-size:11px;color:#5c6673}
 .ai-message-metric-count{font-size:10px;color:#9aa2ad}
 .ai-message-home-warning{grid-column:1/-1;font-size:10px;color:#b14e2d}
+.ai-message-device-status{display:grid;gap:10px;margin-top:10px;padding:11px;border-radius:14px;background:#fff;border:1px solid #e7edf3}
+.ai-message-device-room{display:grid;gap:6px}
+.ai-message-device-room>header{font-size:11px;font-weight:600;color:#5c6673}
+.ai-message-device-room ul{margin:0;padding:0;list-style:none;display:grid;gap:4px}
+.ai-message-device{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:#26303b}
+.ai-message-device-state{font-size:11px;color:#8b95a1}
+.ai-message-device-on .ai-message-device-state{color:#1c8c4e;font-weight:600}
+.ai-message-device-unknown .ai-message-device-state{color:#b14e2d}

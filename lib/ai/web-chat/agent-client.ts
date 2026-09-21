@@ -1,6 +1,7 @@
 import { withTimeout } from "../../abort-signals.ts";
 import type { AgentSceneSummary } from "../tools/agent-scene-catalog.ts";
 import type { EnvironmentSnapshot } from "../../home-environment.ts";
+import type { DeviceStatus } from "../../device-status.ts";
 import type { ModelUsage } from "../types.ts";
 import type { QuotaSummary } from "../quota/quota-service.ts";
 import type { AgentScope } from "../security/agent-binding.ts";
@@ -9,11 +10,12 @@ export type AgentRunResult = {
   requestId: string;
   conversationId: string;
   message: string;
-  intent: "none" | "list_scenes" | "get_home_status" | "activate_scene";
+  intent: "none" | "list_scenes" | "get_home_status" | "get_device_status" | "activate_scene";
   scenes?: AgentSceneSummary[];
   homeStatus?: EnvironmentSnapshot;
+  deviceStatus?: DeviceStatus;
   tool?: {
-    name: "list_scenes" | "get_home_status" | "activate_scene";
+    name: "list_scenes" | "get_home_status" | "get_device_status" | "activate_scene";
     status: "success" | "partial_success";
     sceneName?: string;
   };
@@ -85,9 +87,10 @@ type MakersAgentClientOptions = {
   fetchImpl?: typeof fetch;
 };
 
-const knownIntent = new Set(["none", "list_scenes", "get_home_status", "activate_scene"]);
-const knownTool = new Set(["list_scenes", "get_home_status", "activate_scene"]);
+const knownIntent = new Set(["none", "list_scenes", "get_home_status", "get_device_status", "activate_scene"]);
+const knownTool = new Set(["list_scenes", "get_home_status", "get_device_status", "activate_scene"]);
 const knownToolStatus = new Set(["success", "partial_success"]);
+const knownDeviceState = new Set(["on", "off", "unknown"]);
 const knownEnvironmentMetric = new Set([
   "temperature",
   "humidity",
@@ -295,6 +298,71 @@ function normalizeHomeStatus(value: unknown): NormalizedHomeStatus | undefined {
   };
 }
 
+type NormalizedDeviceStatus = NonNullable<AgentRunResult["deviceStatus"]>;
+
+function normalizeDeviceStatus(value: unknown): NormalizedDeviceStatus | undefined {
+  const status = objectRecord(value);
+  if (
+    !status
+    || typeof status.capturedAt !== "string"
+    || status.capturedAt.length > 40
+    || typeof status.completeness !== "string"
+    || !["complete", "partial", "empty"].includes(status.completeness)
+    || !Number.isSafeInteger(status.poweredOn)
+    || (status.poweredOn as number) < 0
+    || !Array.isArray(status.rooms)
+    || status.rooms.length > 20
+  ) {
+    return undefined;
+  }
+  const rooms = status.rooms.flatMap((item): NormalizedDeviceStatus["rooms"] => {
+    const room = objectRecord(item);
+    if (
+      !room
+      || typeof room.room !== "string"
+      || !room.room
+      || room.room.length > 200
+      || !Array.isArray(room.items)
+      || room.items.length > 40
+    ) {
+      return [];
+    }
+    const items = room.items.flatMap((entry): NormalizedDeviceStatus["rooms"][number]["items"] => {
+      const device = objectRecord(entry);
+      if (
+        !device
+        || typeof device.name !== "string"
+        || !device.name
+        || device.name.length > 200
+        || typeof device.kind !== "string"
+        || device.kind.length > 40
+        || typeof device.state !== "string"
+        || !knownDeviceState.has(device.state)
+        || typeof device.online !== "boolean"
+      ) {
+        return [];
+      }
+      return [{
+        name: device.name,
+        kind: device.kind,
+        state: device.state as NormalizedDeviceStatus["rooms"][number]["items"][number]["state"],
+        online: device.online,
+      }];
+    });
+    return items.length ? [{ room: room.room, items }] : [];
+  });
+  const warnings = Array.isArray(status.warnings)
+    ? status.warnings.flatMap((entry): string[] => (typeof entry === "string" && entry ? [entry.slice(0, 200)] : []))
+    : [];
+  return {
+    capturedAt: status.capturedAt,
+    completeness: status.completeness as NormalizedDeviceStatus["completeness"],
+    poweredOn: status.poweredOn as number,
+    rooms,
+    warnings: warnings.slice(0, 8),
+  };
+}
+
 function normalizeAgentResult(
   body: Record<string, unknown> | null,
   expected: Pick<AgentClientRunInput, "requestId" | "conversationId">,
@@ -339,6 +407,9 @@ function normalizeAgentResult(
   // Malformed status payloads are dropped (undefined), never partially trusted.
   if (body.homeStatus !== undefined) {
     result.homeStatus = normalizeHomeStatus(body.homeStatus);
+  }
+  if (body.deviceStatus !== undefined) {
+    result.deviceStatus = normalizeDeviceStatus(body.deviceStatus);
   }
   const tool = objectRecord(body.tool);
   if (
