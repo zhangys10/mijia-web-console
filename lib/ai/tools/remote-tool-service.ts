@@ -4,12 +4,12 @@ import { verifyAgentBinding, type AgentScope } from "../security/agent-binding.t
 import { derivePrincipalId } from "../security/principal.ts";
 import { AutomationTokenError, openAutomationToken } from "../security/automation-token.ts";
 import { collectHomeEnvironment } from "../../home-environment.ts";
-import { loadAgentScenes, parseApprovedSceneIds, sceneSummaries, type AgentSceneRecord } from "./agent-scene-catalog.ts";
+import { loadAgentScenes, sceneSummaries, type AgentSceneRecord } from "./agent-scene-catalog.ts";
 
 type Environment = Record<string, string | undefined>;
 type Dependencies = {
   homes?: typeof listHomes;
-  scenes?: (input: { principalId: string; homeId: string; session: XiaomiSession; approvedSceneIds: ReadonlySet<string> }) => Promise<AgentSceneRecord[]>;
+  scenes?: (input: { principalId: string; homeId: string; session: XiaomiSession }) => Promise<AgentSceneRecord[]>;
   homeStatus?: (input: { session: XiaomiSession; homeId: string }) => Promise<ReturnType<typeof collectHomeEnvironment>>;
 };
 
@@ -59,7 +59,7 @@ export async function runRemoteTool(body: unknown, env: Environment, dependencie
   if (input.tool === "authorize" || input.tool === "list_scenes") {
     if (Object.keys(args).length) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
     if (input.tool === "authorize") return { ok: true };
-    const scenes = await (dependencies.scenes ?? loadAgentScenes)({ principalId, homeId, session: binding.session, approvedSceneIds: parseApprovedSceneIds(env.AI_SCENE_APPROVED_IDS) });
+    const scenes = await (dependencies.scenes ?? loadAgentScenes)({ principalId, homeId, session: binding.session });
     return { scenes: sceneSummaries(scenes) };
   }
   if (input.tool === "get_home_status") {
@@ -156,7 +156,7 @@ async function runUserTokenTool(
   if (input.tool === "authorize" || input.tool === "list_scenes") {
     if (Object.keys(args).length) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
     if (input.tool === "authorize") return { ok: true };
-    const scenes = await (dependencies.scenes ?? loadAgentScenes)({ principalId, homeId, session: payload.xiaomiSession, approvedSceneIds: parseApprovedSceneIds(env.AI_SCENE_APPROVED_IDS) });
+    const scenes = await (dependencies.scenes ?? loadAgentScenes)({ principalId, homeId, session: payload.xiaomiSession });
     return { scenes: sceneSummaries(scenes) };
   }
   if (input.tool === "get_home_status") {

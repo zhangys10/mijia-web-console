@@ -9,8 +9,6 @@ export type AgentSceneRecord = {
   name: string;
   description: string;
   enabled: boolean;
-  reviewStatus: "approved";
-  riskLevel: "low";
   actionCount: number;
 };
 
@@ -27,10 +25,6 @@ export type AgentSceneSummary = {
   actionCount: number;
 };
 
-export function parseApprovedSceneIds(value: string | undefined) {
-  return new Set((value ?? "").split(",").map((item) => item.trim()).filter(Boolean));
-}
-
 async function sceneAlias(principalId: string, homeId: string, sceneId: string) {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -45,22 +39,18 @@ export async function buildAgentSceneCatalog(
     principalId: string;
     homeId: string;
     scenes: readonly ManualScene[];
-    approvedSceneIds: ReadonlySet<string>;
   },
 ): Promise<AgentSceneRecord[]> {
   const records: AgentSceneRecord[] = [];
   for (const scene of input.scenes) {
     if (scene.homeId !== input.homeId || !scene.enabled) continue;
-    if (!input.approvedSceneIds.has(scene.id)) continue;
     records.push({
       alias: await sceneAlias(input.principalId, input.homeId, scene.id),
       sceneId: scene.id,
       homeId: scene.homeId,
       name: scene.name,
-      description: `当前家庭已审核的低风险手动场景：${scene.name}`,
+      description: `当前家庭的手动场景：${scene.name}`,
       enabled: scene.enabled,
-      reviewStatus: "approved",
-      riskLevel: "low",
       actionCount: scene.actionCount,
     });
   }
@@ -72,7 +62,6 @@ export async function loadAgentScenes(
     principalId: string;
     homeId: string;
     session: XiaomiSession;
-    approvedSceneIds: ReadonlySet<string>;
     request?: XiaomiRequester;
   },
 ): Promise<AgentSceneRecord[]> {
@@ -81,7 +70,6 @@ export async function loadAgentScenes(
     principalId: input.principalId,
     homeId: input.homeId,
     scenes,
-    approvedSceneIds: input.approvedSceneIds,
   });
 }
 
