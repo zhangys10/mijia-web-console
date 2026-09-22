@@ -25,6 +25,7 @@ function args(argv: string[]) {
   const parsed: Record<string, string | undefined> = {};
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--session") parsed.session = argv[++i];
+    else if (argv[i] === "--session-file") parsed.sessionFile = argv[++i];
     else if (argv[i] === "--home") parsed.home = argv[++i];
     else if (argv[i] === "--days") parsed.days = argv[++i];
     else if (argv[i] === "--out") parsed.out = argv[++i];
@@ -38,14 +39,35 @@ function args(argv: string[]) {
 }
 
 const parsed = args(process.argv.slice(2));
-if (parsed.help || !parsed.session) {
+if (parsed.help || (!parsed.session && !parsed.sessionFile)) {
   console.log(`Usage: node --experimental-strip-types scripts/generate-automation-token.ts \\
-  --session '<xiaomi_session cookie value>' \\
+  (--session '<xiaomi_session cookie value>' | --session-file '<cookie file>') \\
   [--home <homeId>] [--days 1-90, default 30] [--out <file>]
 
+--session-file reads the pasted cookie from a file (avoids argv/history
+exposure; should be owner-only, mode 0600).
 Reads AI_AUTOMATION_TOKEN_SECRET (and optionally XIAOMI_SESSION_SECRET) from env.
 `);
   process.exit(parsed.help ? 0 : 2);
+}
+if (parsed.session && parsed.sessionFile) {
+  console.error("Use either --session or --session-file, not both.");
+  process.exit(2);
+}
+
+let sessionInput = parsed.session ?? "";
+if (parsed.sessionFile) {
+  const { readFile } = await import("node:fs/promises");
+  try {
+    sessionInput = (await readFile(parsed.sessionFile, "utf8")).trim();
+  } catch (error) {
+    console.error(`Cannot read session file: ${error instanceof Error ? error.message : error}`);
+    process.exit(1);
+  }
+  if (!sessionInput) {
+    console.error("Session file is empty.");
+    process.exit(1);
+  }
 }
 
 const secret = process.env.AI_AUTOMATION_TOKEN_SECRET;
@@ -64,7 +86,7 @@ if (!Number.isFinite(days) || days < 1 || days > 90) {
 // DevTools copies cookie values URL-encoded (e.g. %2B for +) and terminal
 // pastes can wrap; the server-side cookie jar decodes automatically, so the
 // script does the same, tolerating both encoded and raw input.
-let sealedSession = parsed.session.replace(/\s+/g, "");
+let sealedSession = sessionInput.replace(/\s+/g, "");
 if (sealedSession.includes("%")) {
   try {
     sealedSession = decodeURIComponent(sealedSession);
