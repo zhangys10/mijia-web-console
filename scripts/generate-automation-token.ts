@@ -13,11 +13,14 @@
  *     [--home <homeId>] [--days 30] [--out /tmp/token.txt]
  *
  * Env: AI_AUTOMATION_TOKEN_SECRET must match the secret the verifying console
- * runs with (prod console for prod-token verification).
- * Optional env XIAOMI_SESSION_SECRET if the cookie was sealed with a custom
- * secret.
+ * runs with (prod console for prod-token verification). Secrets are auto-loaded
+ * from the console project's own `.env` (explicit environment variables win);
+ * `--env-file <path>` overrides the location. Optional XIAOMI_SESSION_SECRET if
+ * the cookie was sealed with a custom secret.
  */
 
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { unsealWithSecret, type XiaomiSession } from "../lib/xiaomi-cloud.ts";
 import { computePrincipalId, sealAutomationToken } from "../lib/ai/security/automation-token.ts";
 
@@ -25,6 +28,8 @@ function args(argv: string[]) {
   const parsed: Record<string, string | undefined> = {};
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--session") parsed.session = argv[++i];
+    else if (argv[i] === "--session-file") parsed.sessionFile = argv[++i];
+    else if (argv[i] === "--env-file") parsed.envFile = argv[++i];
     else if (argv[i] === "--home") parsed.home = argv[++i];
     else if (argv[i] === "--days") parsed.days = argv[++i];
     else if (argv[i] === "--out") parsed.out = argv[++i];
@@ -38,14 +43,48 @@ function args(argv: string[]) {
 }
 
 const parsed = args(process.argv.slice(2));
-if (parsed.help || !parsed.session) {
+if (parsed.help || (!parsed.session && !parsed.sessionFile)) {
   console.log(`Usage: node --experimental-strip-types scripts/generate-automation-token.ts \\
-  --session '<xiaomi_session cookie value>' \\
-  [--home <homeId>] [--days 1-90, default 30] [--out <file>]
+  (--session '<xiaomi_session cookie value>' | --session-file '<cookie file>') \\
+  [--env-file <path, default console .env>] [--home <homeId>] [--days 1-90, default 30] [--out <file>]
 
-Reads AI_AUTOMATION_TOKEN_SECRET (and optionally XIAOMI_SESSION_SECRET) from env.
+--session-file reads the pasted cookie from a file (avoids argv/history
+exposure; should be owner-only, mode 0600).
+Secrets are auto-loaded from the console project's .env; explicit env vars win.
 `);
   process.exit(parsed.help ? 0 : 2);
+}
+if (parsed.session && parsed.sessionFile) {
+  console.error("Use either --session or --session-file, not both.");
+  process.exit(2);
+}
+
+// Auto-load the console project's own .env so no manual exports are needed.
+// loadEnvFile never overrides variables already present in the environment.
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+try {
+  process.loadEnvFile(parsed.envFile ?? join(repoRoot, ".env"));
+} catch (error) {
+  if (parsed.envFile) {
+    console.error(`Cannot read env file: ${error instanceof Error ? error.message : error}`);
+    process.exit(1);
+  }
+  // Default .env is optional: secrets may come from explicit env vars instead.
+}
+
+let sessionInput = parsed.session ?? "";
+if (parsed.sessionFile) {
+  const { readFile } = await import("node:fs/promises");
+  try {
+    sessionInput = (await readFile(parsed.sessionFile, "utf8")).trim();
+  } catch (error) {
+    console.error(`Cannot read session file: ${error instanceof Error ? error.message : error}`);
+    process.exit(1);
+  }
+  if (!sessionInput) {
+    console.error("Session file is empty.");
+    process.exit(1);
+  }
 }
 
 const secret = process.env.AI_AUTOMATION_TOKEN_SECRET;
@@ -64,7 +103,7 @@ if (!Number.isFinite(days) || days < 1 || days > 90) {
 // DevTools copies cookie values URL-encoded (e.g. %2B for +) and terminal
 // pastes can wrap; the server-side cookie jar decodes automatically, so the
 // script does the same, tolerating both encoded and raw input.
-let sealedSession = parsed.session.replace(/\s+/g, "");
+let sealedSession = sessionInput.replace(/\s+/g, "");
 if (sealedSession.includes("%")) {
   try {
     sealedSession = decodeURIComponent(sealedSession);
