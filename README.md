@@ -76,19 +76,20 @@ npm run dev
 
 ### AI Home
 
-AI Web 助手的 Agent 运行时已迁移到独立的 `mijia-agent` 仓库（EdgeOne Makers Agent + Python agent，独立部署，生产地址 `https://agent.fabloki.xyz`）。本仓库只保留 Cookie 鉴权的 Web Chat / 会话 / 配额 API、principal 派生、密封 session binding 和 `/api/ai/tools` 只读工具 facade；模型调用、场景执行和配额记账全部由远程 Agent 完成。
+AI Web 助手的 Agent 运行时已迁移到独立的 `mijia-agent` 仓库（EdgeOne Makers Agent + Python agent，独立部署，生产地址 `https://agent.fabloki.xyz`）。本仓库只保留 Cookie 鉴权的 Web Chat / 会话 / 配额 API、principal 派生、短期 Automation Token 和 `/api/ai/tools` 只读工具 facade；模型调用、场景执行和配额记账全部由远程 Agent 完成。
 
 旧嵌入式 `/api/ai/command` 编排已下线：该路由现在返回 `410 AI_COMMAND_RETIRED`，命令流量由 mijia-agent 的 `POST /ai/command`（automation token 直连入口）承接。本仓库保留 AI 设置页的 Automation Token 签发（不含 BYOK 模型字段，令牌只封装米家会话与可选绑定家庭）；模型访问统一由 Agent 侧的 Makers Gateway 提供。
 
 ### 远程 Makers Agent
 
-Agent 运行时位于独立的 `mijia-agent` 仓库。本仓库的 Web Chat API 在完成小米登录、家庭归属和会话校验后，使用密封 session binding 携带内部鉴权调用远程 Agent；Agent 端点不是公开 Web API。
+Agent 运行时位于独立的 `mijia-agent` 仓库。本仓库的 Web Chat API 在完成小米登录、家庭归属和会话校验后，签发短期 Automation Token 并携带内部鉴权调用远程 Agent；Agent 端点不是公开 Web API。Makers adapter 会先通过 `/api/ai/tools` 重新解析 token 并比对 principal/home，再读取对话或调用 Python；Python 仅在模型选择家居能力时原样转发 token。
 
 - `AI_AGENT_BASE_URL`：远程 Makers Agent origin，非预览聊天与会话删除的必填配置。生产环境的 `mijia-agent` EdgeOne 部署地址为 `https://agent.fabloki.xyz`；未设置时非预览请求返回 502 `AI_AGENT_UNAVAILABLE` 配置错误。除 `localhost`、`127.0.0.1` 和 IPv6 loopback 的本地开发地址外，HTTP origin 会被拒绝。
 - `AI_AGENT_INTERNAL_SECRET`：Web API 调用 Agent 的内部 Bearer Secret，每个部署环境独立，至少 32 个字符。
+- `AI_AUTOMATION_TOKEN_SECRET`：签发和验证短期 Automation Token 的独立高熵密钥；Web Chat、Siri 和本地生产验证使用同一 token 工具信封。缺失时非预览聊天会安全失败，不会回退到 session binding。
 - 场景目录不做预置审核名单：`/api/ai/tools` 的 `list_scenes` 返回该家庭下所有已启用的手动场景；模型只看到场景别名、名称和描述；小米会话、真实场景 ID、DID 和原始用户 ID 不进入模型上下文。
 - 连续对话由 Makers Agent 的 `Makers-Conversation-Id` 和服务端 principal/home 派生的存储键隔离。
-- 副作用必须携带 Idempotency-Key；相同请求只执行一次，不同请求复用同一 key 会返回冲突。
+- `idempotencyKey` 是请求/回执标识，不是授权；Phase 1 的 Web Chat 固定为 `ai:chat`，不会因为客户端提供 key 而获得 `scene:activate`。未来物理动作必须同时满足服务器签发的 action scope、暴露/修订校验、durable action ledger 和幂等 claim。
 
 ### `AI_PRINCIPAL_SECRET`
 
@@ -123,7 +124,7 @@ Phase 5 提供 Cookie 鉴权的非流式 Web Chat API，浏览器不提交 princ
 - `POST /api/ai/conversations`：body 为 `{ "homeId": "..." }`，签发绑定当前登录用户和家庭的不透明 `conversationId`。
 - `POST /api/ai/chat`：body 为 `{ "conversationId"?, "homeId", "message", "idempotencyKey"? }`，统一执行 principal 派生、家庭校验和远程 Agent 调用；配额摘要由 Agent adapter 返回，`AI_QUOTA_ENABLED=false` 时由控制台返回固定的停用摘要。
 - `DELETE /api/ai/conversations/:conversationId`：只清除当前用户、当前家庭对应的 Agent 对话记忆，不修改米家设备、场景或配额账本。
-- 未提供 `idempotencyKey` 时，请求只拥有 `ai:chat` scope，不能执行 `activate_scene`；需要设备副作用的请求必须提供 16–128 字符的幂等键。
+- Phase 1 请求固定只拥有 `ai:chat` scope；`idempotencyKey` 仍会传给 Agent 用于回执和重复请求检测，但不能授予 `activate_scene`。未来设备副作用除 16–128 字符的幂等键外，还必须有服务端签发的 action scope、暴露/修订校验和 durable action ledger claim。
 - 所有响应均为 JSON 并设置 `Cache-Control: no-store`；首期不提供 SSE。
 
 Web API 通过 `AI_AGENT_BASE_URL` 指定的远程 Agent origin 的 `/ai-home` 与 `/ai-home/delete` 路由通信；未设置该变量时，非预览聊天与删除返回 502 `AI_AGENT_UNAVAILABLE`。内部请求使用 `Makers-Conversation-Id` 与 `Authorization: Bearer <AI_AGENT_INTERNAL_SECRET>`。客户端响应不会返回 Agent usage 明细、真实场景 ID、DID、原始 Xiaomi userId 或任何 Secret。

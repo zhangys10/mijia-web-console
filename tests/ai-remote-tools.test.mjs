@@ -4,6 +4,7 @@ import { authorizeRemoteTool, runRemoteTool } from "../lib/ai/tools/remote-tool-
 import { createAgentBinding } from "../lib/ai/security/agent-binding.ts";
 import { derivePrincipalId } from "../lib/ai/security/principal.ts";
 import { sealAutomationToken } from "../lib/ai/security/automation-token.ts";
+import { AiWebService } from "../lib/ai/web-chat/web-chat-service.ts";
 
 const env = { XIAOMI_SESSION_SECRET: "test-session-secret-not-real-123456789", AI_PRINCIPAL_SECRET: "test-principal-secret-not-real-123456789" };
 const session = { userId: "test-user", serviceToken: "fake-token", ssecurity: "fake-security", region: "cn" };
@@ -183,6 +184,66 @@ test("token payload principal and BYOK fields are never trusted or echoed", asyn
   for (const secret of ["byok-secret-key", "byok-model", "forged-principal-ignored", "fake-token", "fake-security"]) {
     assert.ok(!serialized.includes(secret), `${secret} must not leak`);
   }
+});
+
+test("token authorize returns only the server-derived context for the Makers adapter", async () => {
+  const result = await runRemoteTool(
+    tokenInput("authorize"),
+    tokenEnv,
+    tokenDeps(),
+    await automationToken({ homeId: "home-b" }),
+  );
+  assert.deepEqual(result, {
+    ok: true,
+    principalId: await derivePrincipalId(session, tokenEnv),
+    homeId: "home-b",
+    scopes: ["ai:chat"],
+  });
+});
+
+test("web-issued token opens with the request environment rather than global process state", async () => {
+  const integrationEnv = {
+    ...tokenEnv,
+    APP_ENV: "edge-context-only",
+    AI_QUOTA_ENABLED: "false",
+  };
+  let authorized;
+  const agent = {
+    async run(input) {
+      authorized = await runRemoteTool(
+        tokenInput("authorize"),
+        integrationEnv,
+        tokenDeps(),
+        input.automationToken,
+      );
+      return {
+        requestId: input.requestId,
+        conversationId: input.conversationId,
+        message: "ok",
+        intent: "none",
+      };
+    },
+    async deleteConversation() {
+      return { deleted: true };
+    },
+  };
+  const service = new AiWebService({
+    env: integrationEnv,
+    agent,
+    loadHomes: async () => tokenHomes,
+    now: () => Date.now(),
+    randomBytes: length => new Uint8Array(length).fill(7),
+    randomUuid: () => "00000000-0000-4000-8000-000000000007",
+  });
+
+  await service.chat(session, { homeId: "home-a", message: "查看家里情况" });
+
+  assert.deepEqual(authorized, {
+    ok: true,
+    principalId: await derivePrincipalId(session, integrationEnv),
+    homeId: "home-a",
+    scopes: ["ai:chat"],
+  });
 });
 
 test("explicit request home wins over the token-bound homeId", async () => {

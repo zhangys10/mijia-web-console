@@ -54,6 +54,10 @@ next-env.d.ts
 # local agent tooling
 /.codex/
 
+# local IDE state
+/.idea/
+*.iml
+
 # Tencent Cloud EdgeOne
 .env
 .edgeone/*

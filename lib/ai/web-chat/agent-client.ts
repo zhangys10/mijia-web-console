@@ -30,7 +30,7 @@ export type AgentClientRunInput = {
   message: string;
   idempotencyKey: string;
   scopes: AgentScope[];
-  sessionBinding: string;
+  automationToken: string;
   locale: string;
   timezone: string;
   signal?: AbortSignal;
@@ -42,7 +42,7 @@ export type AgentClientDeleteInput = {
   principalId: string;
   homeId: string;
   scopes: AgentScope[];
-  sessionBinding: string;
+  automationToken: string;
   signal?: AbortSignal;
 };
 
@@ -586,7 +586,7 @@ export class MakersAgentClient implements WebAgentClient {
       message: input.message,
       idempotencyKey: input.idempotencyKey,
       scopes: input.scopes,
-      sessionBinding: input.sessionBinding,
+      automationToken: input.automationToken,
       locale: input.locale,
       timezone: input.timezone,
     }, input.signal);
@@ -601,7 +601,7 @@ export class MakersAgentClient implements WebAgentClient {
       principalId: input.principalId,
       homeId: input.homeId,
       scopes: input.scopes,
-      sessionBinding: input.sessionBinding,
+      automationToken: input.automationToken,
     }, input.signal);
     if (!body || body.ok !== true || typeof body.deleted !== "boolean") {
       throw new AgentClientError("AI_AGENT_UNAVAILABLE", "AI 助手返回无效响应", 502);

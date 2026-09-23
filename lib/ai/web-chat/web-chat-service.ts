@@ -3,7 +3,8 @@ import type { AgentRunResult } from "./agent-client.ts";
 import { isPreviewEnvironment } from "../config.ts";
 import { isQuotaEnabled } from "../quota/policy.ts";
 import { disabledQuotaSummary, type QuotaSummary } from "../quota/quota-service.ts";
-import { createAgentBinding, type AgentScope } from "../security/agent-binding.ts";
+import type { AgentScope } from "../security/agent-binding.ts";
+import { sealAutomationToken } from "../security/automation-token.ts";
 import { derivePrincipalId } from "../security/principal.ts";
 import type { WebAgentClient } from "./agent-client.ts";
 import {
@@ -161,6 +162,28 @@ export class AiWebService {
     return this.agent;
   }
 
+  private async issueAutomationToken(
+    principalId: string,
+    homeId: string,
+    session: XiaomiSession,
+    now: number,
+  ) {
+    try {
+      return await sealAutomationToken({
+        version: 1,
+        purpose: "ai-home-automation",
+        principalId,
+        xiaomiSession: session,
+        region: session.region || "cn",
+        homeId,
+        issuedAt: now,
+        expiresAt: now + 5 * 60_000,
+      }, { secret: this.env.AI_AUTOMATION_TOKEN_SECRET, env: this.env.APP_ENV });
+    } catch {
+      throw new WebChatError("AI_AGENT_UNAVAILABLE", "AI 助手鉴权暂时不可用", 502);
+    }
+  }
+
   async createConversation(session: XiaomiSession, rawHomeId: unknown) {
     const homeId = requireField(rawHomeId, "homeId", 100);
     const { principalId, homes } = await this.identity(session);
@@ -183,21 +206,14 @@ export class AiWebService {
     }
     const scopes: AgentScope[] = ["ai:chat"];
     const now = this.now();
-    const sessionBinding = await createAgentBinding({
-      principalId,
-      homeId,
-      scopes,
-      session,
-      issuedAt: now,
-      expiresAt: now + 5 * 60_000,
-    }, this.env.XIAOMI_SESSION_SECRET);
+    const automationToken = await this.issueAutomationToken(principalId, homeId, session, now);
     const result = await this.requireAgent().deleteConversation({
       conversationId,
       requestId: id,
       principalId,
       homeId,
       scopes,
-      sessionBinding,
+      automationToken,
       signal,
     });
     return { requestId: id, conversationId, deleted: result.deleted };
@@ -227,18 +243,11 @@ export class AiWebService {
     }
 
     const id = requestId(this.randomUuid);
-    const scopes: AgentScope[] = input.idempotencyKey
-      ? ["ai:chat", "scene:activate"]
-      : ["ai:chat"];
+    // Phase 1 registers read capabilities only.  Do not let a caller-provided
+    // idempotency key grant a future write capability.
+    const scopes: AgentScope[] = ["ai:chat"];
     const now = this.now();
-    const sessionBinding = await createAgentBinding({
-      principalId,
-      homeId: input.homeId,
-      scopes,
-      session,
-      issuedAt: now,
-      expiresAt: now + 5 * 60_000,
-    }, this.env.XIAOMI_SESSION_SECRET);
+    const automationToken = await this.issueAutomationToken(principalId, input.homeId, session, now);
     const remoteQuotaDisabled = !isQuotaEnabled(this.env);
     const agentResult = await this.requireAgent().run({
       conversationId,
@@ -248,7 +257,7 @@ export class AiWebService {
       message: input.message,
       idempotencyKey: input.idempotencyKey ?? `readonly_${id}`,
       scopes,
-      sessionBinding,
+      automationToken,
       locale: "zh-CN",
       timezone: "Asia/Shanghai",
       signal,
