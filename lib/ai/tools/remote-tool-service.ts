@@ -134,11 +134,16 @@ async function runUserTokenTool(
   ) {
     throw new RemoteToolError("AI_INVALID_REQUEST", 400);
   }
+  const tokenEnvironment = env.APP_ENV?.trim();
+  if (!tokenEnvironment) {
+    throw new RemoteToolError("AI_AUTOMATION_TOKEN_ENV_NOT_CONFIGURED", 500);
+  }
   let payload;
   try {
     payload = await openAutomationToken(userToken, {
       secret: env.AI_AUTOMATION_TOKEN_SECRET || undefined,
-      env: env.APP_ENV,
+      expectedKeyId: env.AI_AUTOMATION_TOKEN_KEY_ID || undefined,
+      env: tokenEnvironment,
     });
   } catch (error) {
     if (error instanceof AutomationTokenError) {

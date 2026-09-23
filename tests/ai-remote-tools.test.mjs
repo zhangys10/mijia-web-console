@@ -125,7 +125,12 @@ test("get_home_status rejects non-empty arguments and preview environments", asy
 
 // --- automation-token ingress (X-Ai-User-Token) -------------------------------
 
-const tokenEnv = { ...env, AI_AUTOMATION_TOKEN_SECRET: "test-automation-secret-not-real-12345" };
+const tokenEnv = {
+  ...env,
+  AI_AUTOMATION_TOKEN_SECRET: "test-automation-secret-not-real-12345",
+  AI_AUTOMATION_TOKEN_KEY_ID: "test-key-2026-09",
+  APP_ENV: "test",
+};
 const tokenHomes = [{ id: "home-a", name: "我的家" }, { id: "home-b", name: "度假屋" }];
 
 async function automationToken(overrides = {}) {
@@ -141,7 +146,11 @@ async function automationToken(overrides = {}) {
     issuedAt: Date.now() - 1000,
     expiresAt: Date.now() + 60000,
     ...overrides,
-  }, { secret: tokenEnv.AI_AUTOMATION_TOKEN_SECRET });
+  }, {
+    secret: tokenEnv.AI_AUTOMATION_TOKEN_SECRET,
+    keyId: tokenEnv.AI_AUTOMATION_TOKEN_KEY_ID,
+    env: tokenEnv.APP_ENV,
+  });
 }
 
 function tokenInput(tool = "list_scenes", extra = {}) {
@@ -205,6 +214,7 @@ test("web-issued token opens with the request environment rather than global pro
   const integrationEnv = {
     ...tokenEnv,
     APP_ENV: "edge-context-only",
+    AI_AUTOMATION_TOKEN_KEY_ID: "edge-key-2026-09",
     AI_QUOTA_ENABLED: "false",
   };
   let authorized;
@@ -236,7 +246,18 @@ test("web-issued token opens with the request environment rather than global pro
     randomUuid: () => "00000000-0000-4000-8000-000000000007",
   });
 
-  await service.chat(session, { homeId: "home-a", message: "查看家里情况" });
+  const processDescriptor = Object.getOwnPropertyDescriptor(globalThis, "process");
+  try {
+    Object.defineProperty(globalThis, "process", {
+      configurable: true,
+      value: undefined,
+      writable: true,
+    });
+    await service.chat(session, { homeId: "home-a", message: "查看家里情况" });
+  } finally {
+    if (processDescriptor) Object.defineProperty(globalThis, "process", processDescriptor);
+    else Reflect.deleteProperty(globalThis, "process");
+  }
 
   assert.deepEqual(authorized, {
     ok: true,
@@ -298,8 +319,17 @@ test("expired and malformed tokens are rejected without secret leakage", async (
     /AUTOMATION_TOKEN_INVALID/,
   );
   await assert.rejects(
-    runRemoteTool(tokenInput(), env, tokenDeps(), await automationToken()),
+    runRemoteTool(tokenInput(), { ...env, APP_ENV: "test" }, tokenDeps(), await automationToken()),
     /AI_AUTOMATION_TOKEN_SECRET_NOT_CONFIGURED/,
+  );
+  await assert.rejects(
+    runRemoteTool(
+      tokenInput(),
+      { ...tokenEnv, APP_ENV: undefined },
+      tokenDeps(),
+      await automationToken(),
+    ),
+    /AI_AUTOMATION_TOKEN_ENV_NOT_CONFIGURED/,
   );
 });
 

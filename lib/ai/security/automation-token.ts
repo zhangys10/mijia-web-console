@@ -37,6 +37,10 @@ const MAX_TOKEN_LENGTH = 8192;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+function nodeEnvironment(): NodeJS.ProcessEnv | undefined {
+  return typeof process === "undefined" ? undefined : process.env;
+}
+
 function bytesToBase64Url(bytes: Uint8Array): string {
   if (typeof Buffer !== "undefined") {
     return Buffer.from(bytes).toString("base64url");
@@ -77,7 +81,7 @@ export type OpenTokenOptions = {
 };
 
 function resolveSecret(customSecret?: string): string {
-  const secret = customSecret || process.env.AI_AUTOMATION_TOKEN_SECRET;
+  const secret = customSecret || nodeEnvironment()?.AI_AUTOMATION_TOKEN_SECRET;
   if (!secret) {
     throw new AutomationTokenError(
       "AI_AUTOMATION_TOKEN_SECRET_NOT_CONFIGURED",
@@ -88,11 +92,12 @@ function resolveSecret(customSecret?: string): string {
 }
 
 function resolveKeyId(customKeyId?: string): string {
-  return customKeyId || process.env.AI_AUTOMATION_TOKEN_KEY_ID || DEFAULT_KEY_ID;
+  return customKeyId || nodeEnvironment()?.AI_AUTOMATION_TOKEN_KEY_ID || DEFAULT_KEY_ID;
 }
 
 function resolveEnv(customEnv?: string): string {
-  return customEnv || process.env.APP_ENV || process.env.NODE_ENV || "development";
+  const environment = nodeEnvironment();
+  return customEnv || environment?.APP_ENV || environment?.NODE_ENV || "development";
 }
 
 async function deriveCryptoKey(secret: string): Promise<CryptoKey> {
@@ -157,7 +162,7 @@ export async function openAutomationToken(
     throw new AutomationTokenError("AUTOMATION_TOKEN_INVALID", "自动化凭据段结构错误");
   }
 
-  const expectedKeyId = options?.expectedKeyId || process.env.AI_AUTOMATION_TOKEN_KEY_ID;
+  const expectedKeyId = options?.expectedKeyId || nodeEnvironment()?.AI_AUTOMATION_TOKEN_KEY_ID;
   if (expectedKeyId && keyId !== expectedKeyId) {
     throw new AutomationTokenError("AUTOMATION_TOKEN_INVALID", "自动化凭据密钥标识不匹配");
   }

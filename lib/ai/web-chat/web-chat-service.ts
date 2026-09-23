@@ -122,6 +122,14 @@ function previewQuota(): PublicQuotaSummary {
   };
 }
 
+function automationTokenEnvironment(env: WebChatEnvironment) {
+  const environment = env.APP_ENV?.trim();
+  if (!environment) {
+    throw new WebChatError("AI_AGENT_UNAVAILABLE", "AI 助手鉴权环境尚未配置", 502);
+  }
+  return environment;
+}
+
 export class AiWebService {
   private readonly env: WebChatEnvironment;
   private readonly agent: WebAgentClient | undefined;
@@ -178,7 +186,11 @@ export class AiWebService {
         homeId,
         issuedAt: now,
         expiresAt: now + 5 * 60_000,
-      }, { secret: this.env.AI_AUTOMATION_TOKEN_SECRET, env: this.env.APP_ENV });
+      }, {
+        secret: this.env.AI_AUTOMATION_TOKEN_SECRET,
+        keyId: this.env.AI_AUTOMATION_TOKEN_KEY_ID,
+        env: automationTokenEnvironment(this.env),
+      });
     } catch {
       throw new WebChatError("AI_AGENT_UNAVAILABLE", "AI 助手鉴权暂时不可用", 502);
     }
