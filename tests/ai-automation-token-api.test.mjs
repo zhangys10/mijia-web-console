@@ -122,6 +122,7 @@ test("automation token API issues a session-only token without leaking secrets",
     secret: process.env.AI_AUTOMATION_TOKEN_SECRET,
     env: process.env.NODE_ENV || "development",
   });
+  assert.equal(opened.audience, "mijia-agent");
   assert.equal(opened.xiaomiSession.userId, "user-test-1");
   assert.equal(opened.xiaomiSession.ssecurity, "mock-ssec");
   assert.equal(opened.apiKey, undefined);

@@ -137,6 +137,7 @@ async function automationToken(overrides = {}) {
   return sealAutomationToken({
     version: 1,
     purpose: "ai-home-automation",
+    audience: "mijia-agent",
     principalId: "forged-principal-ignored",
     xiaomiSession: session,
     region: "cn",
@@ -208,6 +209,19 @@ test("token authorize returns only the server-derived context for the Makers ada
     homeId: "home-b",
     scopes: ["ai:chat"],
   });
+});
+
+test("automation tokens without the mijia-agent audience cannot authorize direct assistant ingress", async () => {
+  const token = await automationToken({ audience: undefined });
+  await assert.rejects(
+    runRemoteTool(
+      tokenInput("authorize"),
+      tokenEnv,
+      tokenDeps(),
+      token,
+    ),
+    error => error.message === "AUTOMATION_TOKEN_INVALID",
+  );
 });
 
 test("web-issued token opens with the request environment rather than global process state", async () => {

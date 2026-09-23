@@ -80,6 +80,17 @@ AI Web 助手的 Agent 运行时已迁移到独立的 `mijia-agent` 仓库（Edg
 
 旧嵌入式 `/api/ai/command` 编排已下线：该路由现在返回 `410 AI_COMMAND_RETIRED`，命令流量由 mijia-agent 的 `POST /ai/command`（automation token 直连入口）承接。本仓库保留 AI 设置页的 Automation Token 签发（不含 BYOK 模型字段，令牌只封装米家会话与可选绑定家庭）；模型访问统一由 Agent 侧的 Makers Gateway 提供。
 
+Phase 2 的家庭读取通过 `/api/internal/assistant/v1/capabilities` 与
+`/api/internal/assistant/v1/tools:invoke` 提供。在「设置 → AI 助手访问权限」中，家庭成员
+逐房间开放环境指标、逐设备开放只读状态；初始状态全部关闭。生产授权配置保存在
+EdgeOne Makers Blob 的 `mijia-ai-assistant-exposure-v1` 命名空间，并使用强一致读取。该授权配置按哈希化的 `homeId` 保存，不绑定某个米家 `userId`；每次读取前仍会校验当前登录会话是否属于该家庭。因此同一家庭的授权对有权访问该家庭的成员共享，不会改变米家账号本身的权限。
+EdgeOne Pages 运行时，Blob SDK 使用平台提供的部署凭据。Node/Next 本地开发在
+`AI_ENVIRONMENT=development` 时将配置读写到 `AI_ASSISTANT_EXPOSURE_DIR` 指定的本地文件目录；
+其他环境不会使用此开发存储，Blob 不可用时返回 `503 AI_EXPOSURE_STORE_UNAVAILABLE`，不会回退到内存或 KV。
+可运行 `scripts/local-integration.py start` 自动生成本地 `.env.local` 并启动端到端联调，
+无需 Pages Blob 凭据。生产 Edge Function 仍使用 Blob namespace 和强一致读取。
+敏感设备类别不会列为可开放项，读取过滤只会减少已授权数据。
+
 ### 远程 Makers Agent
 
 Agent 运行时位于独立的 `mijia-agent` 仓库。本仓库的 Web Chat API 在完成小米登录、家庭归属和会话校验后，签发短期 Automation Token 并携带内部鉴权调用远程 Agent；Agent 端点不是公开 Web API。Makers adapter 会先通过 `/api/ai/tools` 重新解析 token 并比对 principal/home，再读取对话或调用 Python；Python 仅在模型选择家居能力时原样转发 token。

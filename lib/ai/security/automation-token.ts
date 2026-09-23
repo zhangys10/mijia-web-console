@@ -3,6 +3,7 @@ import type { XiaomiSession } from "../../xiaomi-cloud.ts";
 export type AutomationTokenPayload = {
   version: 1;
   purpose: "ai-home-automation";
+  audience?: "mijia-agent";
   principalId: string;
   xiaomiSession: XiaomiSession;
   region: string;
@@ -223,6 +224,7 @@ export async function openAutomationToken(
     typeof payload.region !== "string" ||
     typeof payload.issuedAt !== "number" ||
     typeof payload.expiresAt !== "number" ||
+    (payload.audience !== undefined && payload.audience !== "mijia-agent") ||
     typeof payload.xiaomiSession !== "object" ||
     payload.xiaomiSession === null ||
     typeof payload.xiaomiSession.userId !== "string" ||
