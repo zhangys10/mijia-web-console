@@ -87,6 +87,8 @@ Agent 运行时位于独立的 `mijia-agent` 仓库。本仓库的 Web Chat API 
 - `AI_AGENT_BASE_URL`：远程 Makers Agent origin，非预览聊天与会话删除的必填配置。生产环境的 `mijia-agent` EdgeOne 部署地址为 `https://agent.fabloki.xyz`；未设置时非预览请求返回 502 `AI_AGENT_UNAVAILABLE` 配置错误。除 `localhost`、`127.0.0.1` 和 IPv6 loopback 的本地开发地址外，HTTP origin 会被拒绝。
 - `AI_AGENT_INTERNAL_SECRET`：Web API 调用 Agent 的内部 Bearer Secret，每个部署环境独立，至少 32 个字符。
 - `AI_AUTOMATION_TOKEN_SECRET`：签发和验证短期 Automation Token 的独立高熵密钥；Web Chat、Siri 和本地生产验证使用同一 token 工具信封。缺失时非预览聊天会安全失败，不会回退到 session binding。
+- `APP_ENV`：Automation Token 的 AES-GCM AAD 环境边界。生产环境必须显式设为 `production`；签发 token 的 `/api/ai/chat`、验证 token 的 `/api/ai/tools` 和离线 token 生成器必须使用相同值。
+- `AI_AUTOMATION_TOKEN_KEY_ID`：可选的 token 密钥版本标签；未设置时使用内置默认值。开始密钥轮换后，所有签发方和验证方必须同时配置相同标签。
 - 场景目录不做预置审核名单：`/api/ai/tools` 的 `list_scenes` 返回该家庭下所有已启用的手动场景；模型只看到场景别名、名称和描述；小米会话、真实场景 ID、DID 和原始用户 ID 不进入模型上下文。
 - 连续对话由 Makers Agent 的 `Makers-Conversation-Id` 和服务端 principal/home 派生的存储键隔离。
 - `idempotencyKey` 是请求/回执标识，不是授权；Phase 1 的 Web Chat 固定为 `ai:chat`，不会因为客户端提供 key 而获得 `scene:activate`。未来物理动作必须同时满足服务器签发的 action scope、暴露/修订校验、durable action ledger 和幂等 claim。
@@ -198,7 +200,21 @@ npm run build
 
 仓库中的 `edgeone.json` 会让 EdgeOne Makers 执行原生 Next.js 构建并使用 `.next` 产物。不要把 EdgeOne 的构建命令改回 `npm run build`：该命令面向 Cloudflare Workers，生成的是 Vinext `dist`，不包含 EdgeOne 的 OpenNext 插件所需的 `.next/required-server-files.json`。
 
-部署前，在 EdgeOne Makers 项目的 Environment Variables 中安全设置高熵的 `XIAOMI_SESSION_SECRET`。配置修改后重新部署。
+部署前，在 EdgeOne Makers 项目的 Production Environment Variables 中配置以下变量；Secret 只保存在平台的加密配置中：
+
+| 变量 | 要求 | 用途 |
+| --- | --- | --- |
+| `APP_ENV` | 必填，固定为 `production` | 绑定 Automation Token 的加密环境，签发与验证必须一致 |
+| `XIAOMI_SESSION_SECRET` | 必填，独立高熵 Secret | 加密登录会话 Cookie |
+| `AI_PRINCIPAL_SECRET` | 必填，至少 32 字符 | 从服务端会话派生稳定 principalId |
+| `AI_AUTOMATION_TOKEN_SECRET` | 必填，独立高熵 Secret | 加密 Web Chat 与工具调用间的短期 token |
+| `AI_AGENT_BASE_URL` | 必填，HTTPS origin | 远程 `mijia-agent` 地址，不包含路径 |
+| `AI_AGENT_INTERNAL_SECRET` | 必填，至少 32 字符 | Web Console 调用 Agent 的内部 Bearer 鉴权 |
+| `AI_TOOLS_INTERNAL_SECRET` | 必填，至少 32 字符 | Agent 回调 `/api/ai/tools` 的内部 Bearer 鉴权 |
+| `AI_AUTOMATION_TOKEN_KEY_ID` | 可选 | token 密钥版本；设置后签发方和验证方必须一致 |
+| `AI_QUOTA_ENABLED` | 建议显式设置 | `false` 完全停用配额；其他合法配置见 AI Quota 一节 |
+
+Production 不得设置 `AI_ENVIRONMENT=preview`。环境变量新增或修改后必须重新部署；仅保存变量但继续运行旧部署，可能仍使用旧的绑定快照。部署后先验证 Web Chat 能签发 token，再确认 Agent 可通过 `/api/ai/tools` 打开同一 token。
 
 ### Vercel
 
