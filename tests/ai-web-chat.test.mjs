@@ -4,7 +4,7 @@ import test from "node:test";
 import { createChatHandler } from "../edge-functions/api/ai/chat.ts";
 import { createConversationHandler } from "../edge-functions/api/ai/conversations.ts";
 import { createDeleteConversationHandler } from "../edge-functions/api/ai/conversations/[conversationId].ts";
-import { verifyAgentBinding } from "../lib/ai/security/agent-binding.ts";
+import { openAutomationToken } from "../lib/ai/security/automation-token.ts";
 import { derivePrincipalId } from "../lib/ai/security/principal.ts";
 import { AgentClientError, MakersAgentClient } from "../lib/ai/web-chat/agent-client.ts";
 import { seal } from "../lib/xiaomi-cloud.ts";
@@ -12,6 +12,7 @@ import { seal } from "../lib/xiaomi-cloud.ts";
 const sessionSecret = "web-chat-session-secret-at-least-32-characters";
 const principalSecret = "web-chat-principal-secret-at-least-32-chars";
 const internalSecret = "web-chat-agent-secret-at-least-32-characters";
+const automationTokenSecret = "web-chat-automation-secret-at-least-32-chars";
 const fixedTime = Date.parse("2026-09-17T12:00:00+08:00");
 const fixedUuid = "00000000-0000-4000-8000-000000000001";
 const home = { id: "home-web-1", name: "我的家" };
@@ -36,6 +37,7 @@ function env(overrides = {}) {
     XIAOMI_SESSION_SECRET: sessionSecret,
     AI_PRINCIPAL_SECRET: principalSecret,
     AI_AGENT_INTERNAL_SECRET: internalSecret,
+    AI_AUTOMATION_TOKEN_SECRET: automationTokenSecret,
     AI_QUOTA_ENABLED: "true",
     AI_QUOTA_DEFAULT_REQUESTS_PER_MINUTE: "10",
     AI_QUOTA_DEFAULT_REQUESTS_PER_DAY: "10",
@@ -143,15 +145,16 @@ test("web chat derives principal, issues a bound conversation, and exposes only 
   assert.equal(call.body.principalId, await derivePrincipalId(sessionA, { AI_PRINCIPAL_SECRET: principalSecret }));
   assert.equal(call.body.homeId, home.id);
   assert.equal(call.body.message, "我回家了");
-  assert.deepEqual(call.body.scopes, ["ai:chat", "scene:activate"]);
+  assert.deepEqual(call.body.scopes, ["ai:chat"]);
   assert.equal(JSON.stringify(call.body).includes(sessionA.userId), false);
   assert.equal(JSON.stringify(call.body).includes(sessionA.serviceToken), false);
-  await verifyAgentBinding(call.body.sessionBinding, {
-    principalId: call.body.principalId,
-    homeId: home.id,
-    scopes: call.body.scopes,
+  const token = await openAutomationToken(call.body.automationToken, {
+    secret: automationTokenSecret,
+    env: "test",
     now: fixedTime,
-  }, sessionSecret);
+  });
+  assert.equal(token.homeId, home.id);
+  assert.equal(token.xiaomiSession.userId, sessionA.userId);
 
   const serialized = JSON.stringify(data);
   for (const secret of [sessionSecret, principalSecret, internalSecret, sessionA.userId, sessionA.serviceToken]) {
@@ -159,7 +162,7 @@ test("web chat derives principal, issues a bound conversation, and exposes only 
   }
 });
 
-test("web chat without a client idempotency key remains read-only", async () => {
+test("web chat remains read-only even with a client idempotency key", async () => {
   const calls = [];
   const handler = createChatHandler(handlerOptions({
     fetchImpl: successFetch(calls, {

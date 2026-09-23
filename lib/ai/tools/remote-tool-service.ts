@@ -98,12 +98,12 @@ export async function runRemoteTool(body: unknown, env: Environment, dependencie
 }
 
 /**
- * Automation-token ingress for the Python agent's /ai/command pipeline.
+ * Automation-token ingress for the canonical assistant pipeline.
  *
  * The token is opaque to the agent: only this console decrypts it, re-derives
  * the principal from the embedded Xiaomi session, and resolves the home the
- * same way /api/ai/command does — explicit request home (ID, exact name, then
- * substring), the token-bound home, then the account's first home. The token's
+ * same way the automation ingress does — explicit request home (ID, exact name,
+ * then substring), the token-bound home, then the account's first home. The token's
  * provider/model/apiKey fields are deliberately ignored: model access stays
  * with the console-issued gateway. The body carries `home` (name or ID); the
  * binding-only fields are rejected here so the two envelopes cannot be mixed.
@@ -136,7 +136,10 @@ async function runUserTokenTool(
   }
   let payload;
   try {
-    payload = await openAutomationToken(userToken, { secret: env.AI_AUTOMATION_TOKEN_SECRET || undefined });
+    payload = await openAutomationToken(userToken, {
+      secret: env.AI_AUTOMATION_TOKEN_SECRET || undefined,
+      env: env.APP_ENV,
+    });
   } catch (error) {
     if (error instanceof AutomationTokenError) {
       if (error.code === "AUTOMATION_TOKEN_EXPIRED") throw new RemoteToolError("AUTOMATION_TOKEN_EXPIRED", 401);
@@ -166,7 +169,9 @@ async function runUserTokenTool(
   if (!args || typeof args !== "object" || Array.isArray(args)) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
   if (input.tool === "authorize" || input.tool === "list_scenes") {
     if (Object.keys(args).length) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
-    if (input.tool === "authorize") return { ok: true };
+    // The Makers adapter compares this server-derived context with its inbound
+    // metadata before it can load conversation state or call Python.
+    if (input.tool === "authorize") return { ok: true, principalId, homeId, scopes: ["ai:chat"] };
     const scenes = await (dependencies.scenes ?? loadAgentScenes)({ principalId, homeId, session: payload.xiaomiSession });
     return { scenes: sceneSummaries(scenes) };
   }
