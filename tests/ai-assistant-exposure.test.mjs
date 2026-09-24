@@ -105,6 +105,33 @@ test("home exposure update rejects an entity reference that is not in the select
   }), error => error.code === "AI_INVALID_REQUEST");
 });
 
+test("home exposure update drops grants for rooms absent from the current inventory", async () => {
+  let stored = {
+    version: 1,
+    enabled: true,
+    roomMetrics: { "已删除房间": ["temperature"], "客厅": ["humidity"] },
+    deviceDids: [],
+    updatedAt: null,
+    revision: "exp_existing",
+  };
+  const store = {
+    async get() { return stored; },
+    async setJSON(_key, value, options) { if (!options?.onlyIfNew) stored = value; },
+  };
+  const result = await updateAssistantExposure({ userId: "test" }, "home-id", {
+    enabled: true,
+    roomMetrics: { "已删除房间": ["temperature"], "客厅": ["humidity"] },
+    deviceRefs: [],
+  }, "usr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
+    store,
+    homes: async () => [{ id: "home-id", name: "我的家" }],
+    devices: async () => ({ homes: [{ id: "home-id", name: "我的家" }], devices: [{ homeId: "home-id", did: "light.did.private", name: "客厅灯", roomName: "客厅", model: "yeelink.light.test" }] }),
+  });
+
+  assert.deepEqual(result.exposure.roomMetrics, { "客厅": ["humidity"] });
+  assert.deepEqual(stored.roomMetrics, { "客厅": ["humidity"] });
+});
+
 test("per-room metric rules prevent a filter from exposing a metric granted only in another room", () => {
   const snapshot = {
     capturedAt: "2026-09-23T00:00:00Z",

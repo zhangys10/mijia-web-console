@@ -194,9 +194,12 @@ export async function updateAssistantExposure(
   }
   const deviceDids = [...requestedRefs].map(ref => validRefs.get(ref));
   if (deviceDids.some(did => !did)) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
-  for (const room of Object.keys(parsed.roomMetrics)) if (!inventory.rooms.includes(room)) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
+  const roomMetrics = Object.fromEntries(
+    Object.entries(parsed.roomMetrics).filter(([room]) => inventory.rooms.includes(room)),
+  );
+  const normalized = { ...parsed, roomMetrics };
   const changedAt = new Date().toISOString();
-  const next: AssistantExposure = { ...parsed, deviceDids: deviceDids as string[], updatedAt: changedAt, revision: await exposureRevision({ ...parsed, deviceDids: deviceDids as string[] }) };
+  const next: AssistantExposure = { ...normalized, deviceDids: deviceDids as string[], updatedAt: changedAt, revision: await exposureRevision({ ...normalized, deviceDids: deviceDids as string[] }) };
   try {
     const store = dependencies.store ?? blobStore(dependencies.env);
     const baseKey = await homeKey(homeId);
