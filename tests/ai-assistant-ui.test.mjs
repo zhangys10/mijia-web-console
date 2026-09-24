@@ -90,6 +90,20 @@ test("assistant styles cover the mobile drawer, safe areas, and the overlay ladd
   assert.match(styles, /height:100dvh/, "the mobile drawer must fill the dynamic viewport");
 });
 
+test("assistant exposure settings use compact filterable rows and select only filtered permissions", async () => {
+  const source = await read("../app/components/ai-assistant/assistant-exposure-settings.tsx");
+  const styles = await read("../app/ai-assistant.css");
+  assert.match(source, /<table className="assistant-exposure-table">/);
+  assert.match(source, /value=\{roomFilter\}/, "room filtering must be available");
+  assert.match(source, /value=\{kindFilter\}/, "reading and device types must be filterable");
+  assert.match(source, /value=\{search\}/, "rows must support text search");
+  assert.match(source, /全选当前筛选结果/);
+  assert.match(source, /for \(const row of filteredRows\)/, "bulk selection must only visit visible filtered rows");
+  assert.match(source, /current\.filter\(ref => !refs\.has\(ref\)\)/, "deselecting filtered rows must preserve selected devices outside the filter");
+  assert.match(source, /data-label="房间"/, "small screens must retain the table's field labels");
+  assert.match(styles, /@media\(max-width:600px\).*\.assistant-exposure-table tbody tr\{display:grid/s);
+});
+
 test("next routes delegate to the shared edge-function handlers without duplicating boundary logic", async () => {
   const chat = await read("../app/api/ai/chat/route.ts");
   const conversations = await read("../app/api/ai/conversations/route.ts");
