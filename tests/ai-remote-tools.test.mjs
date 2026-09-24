@@ -57,6 +57,47 @@ test("new remote execution stays closed until durable executor claims exist", as
   await assert.rejects(runRemoteTool(body, env, dependencies), /AI_SCENE_EXECUTION_DISABLED/);
 });
 
+test("scene action grants require a signed server binding and Console-only ticket key", async () => {
+  const idempotencyKey = "valid-idempotency-key-0001";
+  const requestHash = "a".repeat(64);
+  const actionEnv = {
+    ...env,
+    AI_SCENE_EXECUTION_ENABLED: "true",
+    AI_SCENE_ACTION_AUTHORIZATION_SECRET: "test-console-action-ticket-secret-32chars",
+  };
+  const binding = await input(["ai:chat", "scene:activate"]);
+  const grant = await runRemoteTool({
+    ...binding,
+    idempotencyKey,
+    requestHash,
+    tool: "authorize_scene_action",
+    arguments: { sceneId: approvedScene.alias, revision: sceneRevision },
+  }, actionEnv, dependencies);
+  assert.equal(typeof grant.actionAuthorization, "string");
+  assert.ok(grant.actionAuthorization.length > 32);
+  const ticketPayload = JSON.parse(Buffer.from(grant.actionAuthorization.split(".")[0], "base64url").toString("utf8"));
+  assert.equal(ticketPayload.sceneAlias, approvedScene.alias);
+  assert.equal("sceneId" in ticketPayload, false);
+
+  const readOnlyBinding = await input(["ai:chat"]);
+  await assert.rejects(runRemoteTool({
+    ...readOnlyBinding,
+    idempotencyKey,
+    requestHash,
+    tool: "authorize_scene_action",
+    arguments: { sceneId: approvedScene.alias, revision: sceneRevision },
+  }, actionEnv, dependencies), /AI_SCOPE_FORBIDDEN/);
+
+  await assert.rejects(runRemoteTool({
+    ...binding,
+    idempotencyKey,
+    requestHash,
+    tool: "activate_scene",
+    actionAuthorization: grant.actionAuthorization,
+    arguments: { sceneId: approvedScene.alias, revision: sceneRevision },
+  }, { ...actionEnv, AI_SCENE_ACTION_AUTHORIZATION_SECRET: "wrong-console-ticket-secret-32chars" }, dependencies), /AI_SCOPE_FORBIDDEN/);
+});
+
 test("remote execution requires a valid idempotency key and strict scene argument", async () => {
   const base = {
     ...await input(["ai:chat", "scene:activate"]),
@@ -447,19 +488,21 @@ test("token path keeps get_device_status read-only", async () => {
   );
 });
 
-test("token path activation stays disabled and requires an idempotency key", async () => {
+test("automation-token activation stays blocked without a server-issued action scope", async () => {
   const token = await automationToken();
+  const runScene = [];
   await assert.rejects(
     runRemoteTool(
       tokenInput("activate_scene", { arguments: { sceneId: "scene_0123456789abcdef", revision: sceneRevision }, idempotencyKey: "valid-idempotency-key-0001", requestHash: "a".repeat(64) }),
-      tokenEnv,
-      tokenDeps(),
+      { ...tokenEnv, AI_SCENE_EXECUTION_ENABLED: "true" },
+      { ...tokenDeps(), runScene: async () => { runScene.push(true); } },
       token,
     ),
-    /AI_SCENE_EXECUTION_DISABLED/,
+    /AI_SCOPE_FORBIDDEN/,
   );
+  assert.deepEqual(runScene, []);
   await assert.rejects(
     runRemoteTool(tokenInput("activate_scene", { arguments: { sceneId: "scene_0123456789abcdef", revision: sceneRevision } }), tokenEnv, tokenDeps(), token),
-    /AI_INVALID_REQUEST/,
+    /AI_SCOPE_FORBIDDEN/,
   );
 });

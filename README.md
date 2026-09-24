@@ -226,6 +226,7 @@ npm run build
 | `AI_AGENT_BASE_URL` | 必填，HTTPS origin | 远程 `mijia-agent` 地址，不包含路径 |
 | `AI_AGENT_INTERNAL_SECRET` | 必填，至少 32 字符 | Web Console 调用 Agent 的内部 Bearer 鉴权 |
 | `AI_TOOLS_INTERNAL_SECRET` | 必填，至少 32 字符 | Agent 回调 `/api/ai/tools` 的内部 Bearer 鉴权 |
+| `AI_SCENE_ACTION_AUTHORIZATION_SECRET` | 保持 unset，若执行门禁全部通过且服务端 scope 流程上线时，配置一个独立的 32 字符以上随机密钥；不要提供给 Agent | Console 签发与校验短时、绑定家庭/场景 revision/幂等请求的动作授权票据 |
 | `AI_AUTOMATION_TOKEN_KEY_ID` | 可选 | token 密钥版本；设置后签发方和验证方必须一致 |
 | `AI_QUOTA_ENABLED` | 建议显式设置 | `false` 完全停用配额；其他合法配置见 AI Quota 一节 |
 | `AI_SCENE_EXECUTION_ENABLED` | 保持 unset/`false`，直到 agent `docs/TODO.md` 中的 Phase 3 部署门禁全部完成 | 允许已授权的低风险灯光场景进入执行路径 |

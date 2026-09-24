@@ -8,8 +8,10 @@ import {
 } from "../lib/ai/security/agent-binding.ts";
 import {
   buildAgentSceneCatalog,
+  loadAgentScenes,
   safeScenesForModel,
 } from "../lib/ai/tools/agent-scene-catalog.ts";
+import { parseManualScenes, sceneDeviceCapabilityKey } from "../lib/xiaomi-scenes.ts";
 
 const sessionSecret = "agent-binding-test-secret-at-least-32-characters";
 const now = Date.now();
@@ -56,6 +58,69 @@ async function sceneCatalog(principal = principalId, home = homeId) {
   });
 }
 
+test("parsed scene revisions bind hidden target identifiers without exposing them", async () => {
+  async function revision(targetDid) {
+    const devices = [{ did: targetDid, homeId, roomName: "客厅", name: "客厅灯" }];
+    const capabilities = new Map([[sceneDeviceCapabilityKey(homeId, targetDid), [{
+      name: "light",
+      properties: [{ name: "on", label: "电源", siid: 2, piid: 1, format: "bool", readable: true, writable: true }],
+    }]]]);
+    const [scene] = parseManualScenes({ result: [{
+      scene_id: "private-real-id",
+      home_id: homeId,
+      name: "回家模式",
+      enable: 1,
+      scene_trigger: { triggers: [{ src: "user" }] },
+      scene_action: { actions: [{
+        order: 1,
+        name: "开灯",
+        payload_json: { command: "set_properties", device_name: "客厅灯", did: targetDid, value: [{ siid: 2, piid: 1, value: true }] },
+      }] },
+    }] }, homeId, devices, capabilities);
+    return buildAgentSceneCatalog({
+      principalId,
+      homeId,
+      scenes: [scene],
+      devices: [{ name: "客厅灯", room: "客厅", kind: "light" }],
+    });
+  }
+  const first = await revision("private-target-a");
+  const replacement = await revision("private-target-b");
+  assert.notEqual(first[0].revision, replacement[0].revision);
+  assert.equal(first[0].risk, "low");
+  assert.doesNotMatch(JSON.stringify(safeScenesForModel(first)), /private-target-a|private-real-id/);
+});
+
+test("live catalog loader enriches manual scenes before risk classification", async () => {
+  const rawScene = {
+    scene_id: "private-real-id",
+    home_id: homeId,
+    name: "回家模式",
+    enable: 1,
+    scene_trigger: { triggers: [{ src: "user" }] },
+    scene_action: { actions: [{
+      order: 1,
+      name: "开灯",
+      payload_json: { command: "set_properties", device_name: "客厅灯", did: "private-target", value: [{ siid: 2, piid: 1, value: true }] },
+    }] },
+  };
+  const catalog = await loadAgentScenes({
+    principalId,
+    homeId,
+    session,
+    request: async () => ({ result: [rawScene] }),
+    loadDevices: async () => ({ devices: [{ did: "private-target", homeId, roomName: "客厅", name: "客厅灯", model: "test.light" }] }),
+    loadCapabilities: async () => ({ groups: [{
+      name: "light",
+      properties: [{ name: "on", label: "电源", siid: 2, piid: 1, format: "bool", readable: true, writable: true }],
+    }] }),
+  });
+  assert.equal(catalog.length, 1);
+  assert.equal(catalog[0].risk, "low");
+  assert.deepEqual(catalog[0].actionSummaries[0], { room: "客厅", device: "客厅灯", actions: [{ label: "电源", value: "开启" }] });
+  assert.doesNotMatch(JSON.stringify(safeScenesForModel(catalog)), /private-target|private-real-id/);
+});
+
 test("agent binding is sealed, scoped, expiring, and mismatch-rejecting", async () => {
   const token = await createAgentBinding(
     { principalId, homeId, scopes: ["scene:activate", "ai:chat"], session, issuedAt: now - 60_000, expiresAt: now + 300_000 },
@@ -95,6 +160,19 @@ test("agent binding is sealed, scoped, expiring, and mismatch-rejecting", async 
   await assert.rejects(
     () => createAgentBinding({ principalId, homeId, session, issuedAt: now, expiresAt: now }, sessionSecret),
     (error) => error instanceof AgentBindingError && error.code === "AI_AGENT_BINDING_INVALID",
+  );
+});
+
+test("agent bindings default to read-only scope", async () => {
+  const token = await createAgentBinding(
+    { principalId, homeId, session, issuedAt: now - 60_000, expiresAt: now + 300_000 },
+    sessionSecret,
+  );
+  const payload = await verifyAgentBinding(token, { principalId, homeId, now }, sessionSecret);
+  assert.deepEqual(payload.scopes, ["ai:chat"]);
+  await assert.rejects(
+    verifyAgentBinding(token, { principalId, homeId, scopes: ["ai:chat", "scene:activate"], now }, sessionSecret),
+    /AI_AGENT_BINDING_MISMATCH/,
   );
 });
 

@@ -21,6 +21,17 @@ type Dependencies = {
   actionLedgerStore?: SceneActionLedgerStore;
 };
 
+type SceneActionAuthorization = {
+  version: 1;
+  principalId: string;
+  homeId: string;
+  sceneAlias: string;
+  revision: string;
+  idempotencyKey: string;
+  requestHash: string;
+  expiresAt: number;
+};
+
 export class RemoteToolError extends Error {
   readonly status: number;
   constructor(code: string, status: number) { super(code); this.status = status; }
@@ -41,6 +52,53 @@ async function currentExposure(homeId: string, store?: AssistantExposureStore, e
   }
 }
 
+function base64Url(bytes: Uint8Array) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+function fromBase64Url(value: string) {
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+  const binary = atob(base64 + "=".repeat((4 - base64.length % 4) % 4));
+  return Uint8Array.from(binary, char => char.charCodeAt(0));
+}
+
+async function issueSceneActionAuthorization(payload: Omit<SceneActionAuthorization, "version" | "expiresAt">, secret: string | undefined) {
+  if (!secret || secret.length < 32) throw new RemoteToolError("AI_AGENT_UNAVAILABLE", 502);
+  const ticket: SceneActionAuthorization = { version: 1, ...payload, expiresAt: Date.now() + 60_000 };
+  const encoded = base64Url(new TextEncoder().encode(JSON.stringify(ticket)));
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(encoded)));
+  return `${encoded}.${base64Url(signature)}`;
+}
+
+async function verifySceneActionAuthorization(
+  value: unknown,
+  expected: Omit<SceneActionAuthorization, "version" | "expiresAt">,
+  secret: string | undefined,
+) {
+  if (typeof value !== "string" || value.length > 2048 || !secret || secret.length < 32) return false;
+  const [encoded, signature, extra] = value.split(".");
+  if (!encoded || !signature || extra !== undefined) return false;
+  try {
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+    if (!await crypto.subtle.verify("HMAC", key, fromBase64Url(signature), new TextEncoder().encode(encoded))) return false;
+    const payload = JSON.parse(new TextDecoder().decode(fromBase64Url(encoded))) as Record<string, unknown>;
+    return payload.version === 1
+      && typeof payload.expiresAt === "number"
+      && payload.expiresAt > Date.now()
+      && payload.principalId === expected.principalId
+      && payload.homeId === expected.homeId
+      && payload.sceneAlias === expected.sceneAlias
+      && payload.revision === expected.revision
+      && payload.idempotencyKey === expected.idempotencyKey
+      && payload.requestHash === expected.requestHash;
+  } catch {
+    return false;
+  }
+}
+
 async function executeApprovedScene(input: {
   principalId: string;
   homeId: string;
@@ -48,12 +106,22 @@ async function executeApprovedScene(input: {
   scene: AgentSceneRecord;
   idempotencyKey: string;
   requestHash: string;
+  actionAuthorization: unknown;
   env: Environment;
   dependencies: Dependencies;
 }) {
+  if (isPreviewEnvironment(input.env)) throw new RemoteToolError("AI_PREVIEW_READ_ONLY", 403);
   if (input.env.AI_SCENE_EXECUTION_ENABLED !== "true") throw new RemoteToolError("AI_SCENE_EXECUTION_DISABLED", 403);
   const exposure = await currentExposure(input.homeId, input.dependencies.exposureStore, input.env);
   if (!exposure.enabled || !exposure.sceneActionsEnabled || exposure.sceneApprovals[input.scene.sceneId] !== input.scene.revision) throw new RemoteToolError("AI_SCENE_NOT_EXPOSED", 403);
+  if (!await verifySceneActionAuthorization(input.actionAuthorization, {
+    principalId: input.principalId,
+    homeId: input.homeId,
+    sceneAlias: input.scene.alias,
+    revision: input.scene.revision,
+    idempotencyKey: input.idempotencyKey,
+    requestHash: input.requestHash,
+  }, input.env.AI_SCENE_ACTION_AUTHORIZATION_SECRET)) throw new RemoteToolError("AI_SCOPE_FORBIDDEN", 403);
   const requestHashBytes = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(JSON.stringify({ requestHash: input.requestHash, homeId: input.homeId, sceneId: input.scene.sceneId, revision: input.scene.revision })),
@@ -83,11 +151,55 @@ async function executeApprovedScene(input: {
   }
 }
 
+async function authorizeSceneAction(input: {
+  principalId: string;
+  homeId: string;
+  session: XiaomiSession;
+  args: Record<string, unknown>;
+  idempotencyKey: string;
+  requestHash: string;
+  env: Environment;
+  dependencies: Dependencies;
+}) {
+  if (input.env.AI_SCENE_EXECUTION_ENABLED !== "true") throw new RemoteToolError("AI_SCENE_EXECUTION_DISABLED", 403);
+  if (isPreviewEnvironment(input.env)) throw new RemoteToolError("AI_PREVIEW_READ_ONLY", 403);
+  const sceneId = input.args.sceneId;
+  const revision = input.args.revision;
+  if (
+    Object.keys(input.args).length !== 2
+    || typeof sceneId !== "string"
+    || !/^scene_[a-f0-9]{16}$/.test(sceneId)
+    || typeof revision !== "string"
+    || !/^rev_[a-f0-9]{24}$/.test(revision)
+  ) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
+  const scenes = await (input.dependencies.scenes ?? loadAgentScenes)({
+    principalId: input.principalId,
+    homeId: input.homeId,
+    session: input.session,
+  });
+  const scene = scenes.find(item => item.alias === sceneId);
+  if (!scene || scene.revision !== revision) throw new RemoteToolError("AI_SCENE_REVISION_CHANGED", 409);
+  if (scene.risk !== "low") throw new RemoteToolError("AI_SCENE_RISK_BLOCKED", 403);
+  const exposure = await currentExposure(input.homeId, input.dependencies.exposureStore, input.env);
+  if (!exposure.enabled || !exposure.sceneActionsEnabled || exposure.sceneApprovals[scene.sceneId] !== scene.revision) {
+    throw new RemoteToolError("AI_SCENE_NOT_EXPOSED", 403);
+  }
+  const actionAuthorization = await issueSceneActionAuthorization({
+    principalId: input.principalId,
+    homeId: input.homeId,
+    sceneAlias: scene.alias,
+    revision: scene.revision,
+    idempotencyKey: input.idempotencyKey,
+    requestHash: input.requestHash,
+  }, input.env.AI_SCENE_ACTION_AUTHORIZATION_SECRET);
+  return { actionAuthorization };
+}
+
 export async function runRemoteTool(body: unknown, env: Environment, dependencies: Dependencies = {}, userToken?: string) {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
   const input = body as Record<string, unknown>;
   if (userToken) return runUserTokenTool(input, userToken, env, dependencies);
-  const allowed = new Set(["requestId", "principalId", "homeId", "scopes", "sessionBinding", "idempotencyKey", "requestHash", "tool", "arguments"]);
+  const allowed = new Set(["requestId", "principalId", "homeId", "scopes", "sessionBinding", "idempotencyKey", "requestHash", "actionAuthorization", "tool", "arguments"]);
   if (Object.keys(input).some(key => !allowed.has(key))) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
   for (const key of ["requestId", "principalId", "homeId", "sessionBinding", "tool"]) {
     if (typeof input[key] !== "string" || !input[key] || (input[key] as string).length > (key === "sessionBinding" ? 16384 : 128)) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
@@ -98,6 +210,7 @@ export async function runRemoteTool(body: unknown, env: Environment, dependencie
   const homeId = input.homeId as string;
   const idempotencyKey = input.idempotencyKey;
   const requestHash = input.requestHash;
+  const actionAuthorization = input.actionAuthorization;
   if (
     idempotencyKey !== undefined
     && (
@@ -125,6 +238,11 @@ export async function runRemoteTool(body: unknown, env: Environment, dependencie
     const exposure = await currentExposure(homeId, dependencies.exposureStore, env);
     const exposedScenes = exposure.enabled && exposure.sceneActionsEnabled ? scenes.filter(scene => scene.risk === "low" && exposure.sceneApprovals[scene.sceneId] === scene.revision) : [];
     return { scenes: sceneSummaries(exposedScenes) };
+  }
+  if (input.tool === "authorize_scene_action") {
+    if (!scopes.includes("scene:activate")) throw new RemoteToolError("AI_SCOPE_FORBIDDEN", 403);
+    if (!idempotencyKey || !requestHash || Object.keys(args).length !== 2) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
+    return authorizeSceneAction({ principalId, homeId, args: args as Record<string, unknown>, idempotencyKey, requestHash, env, dependencies, session: binding.session });
   }
   if (input.tool === "get_home_status") {
     // Read-only: ai:chat alone suffices, no physical-action scope is involved.
@@ -160,7 +278,7 @@ export async function runRemoteTool(body: unknown, env: Environment, dependencie
   const approvedScene = scenes.find(scene => scene.alias === sceneId);
   if (!approvedScene || approvedScene.revision !== revision) throw new RemoteToolError("AI_SCENE_REVISION_CHANGED", 409);
   if (approvedScene.risk !== "low") throw new RemoteToolError("AI_SCENE_RISK_BLOCKED", 403);
-  return executeApprovedScene({ principalId, homeId, session: binding.session, scene: approvedScene, idempotencyKey, requestHash, env, dependencies });
+  return executeApprovedScene({ principalId, homeId, session: binding.session, scene: approvedScene, idempotencyKey, requestHash, actionAuthorization, env, dependencies });
 }
 
 /**
@@ -263,26 +381,12 @@ async function runUserTokenTool(
     const collector = dependencies.deviceStatus ?? defaultDeviceStatusCollector;
     return await collector({ session: payload.xiaomiSession, homeId });
   }
-  if (input.tool !== "activate_scene") throw new RemoteToolError("AI_INVALID_REQUEST", 400);
-  if (!idempotencyKey) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
-  if (!requestHash) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
-  const sceneId = (args as Record<string, unknown>).sceneId;
-  const revision = (args as Record<string, unknown>).revision;
-  if (
-    Object.keys(args).length !== 2
-    || typeof sceneId !== "string"
-    || !/^scene_[a-f0-9]{16}$/.test(sceneId)
-    || typeof revision !== "string"
-    || !/^rev_[a-f0-9]{24}$/.test(revision)
-  ) {
-    throw new RemoteToolError("AI_INVALID_REQUEST", 400);
+  if (input.tool === "activate_scene") {
+    // Automation-token requests do not carry a console-issued action scope.
+    // Keep this canonical ingress read-only until that authorization flow exists.
+    throw new RemoteToolError("AI_SCOPE_FORBIDDEN", 403);
   }
-  if (isPreviewEnvironment(env)) throw new RemoteToolError("AI_PREVIEW_READ_ONLY", 403);
-  const scenes = await (dependencies.scenes ?? loadAgentScenes)({ principalId, homeId, session: payload.xiaomiSession });
-  const approvedScene = scenes.find(scene => scene.alias === sceneId);
-  if (!approvedScene || approvedScene.revision !== revision) throw new RemoteToolError("AI_SCENE_REVISION_CHANGED", 409);
-  if (approvedScene.risk !== "low") throw new RemoteToolError("AI_SCENE_RISK_BLOCKED", 403);
-  return executeApprovedScene({ principalId, homeId, session: payload.xiaomiSession, scene: approvedScene, idempotencyKey, requestHash, env, dependencies });
+  throw new RemoteToolError("AI_INVALID_REQUEST", 400);
 }
 
 export async function authorizeRemoteTool(authorization: string | null, secret: string | undefined) {

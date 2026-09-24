@@ -1,8 +1,16 @@
 import type { ManualScene } from "../../xiaomi-scenes.ts";
 import type { XiaomiSession } from "../../xiaomi-cloud.ts";
-import { listManualScenes, type XiaomiRequester } from "../../xiaomi-scenes.ts";
+import {
+  listRawManualScenes,
+  loadSceneActionCapabilities,
+  loadSceneDeviceCapabilities,
+  manualSceneRevisionMaterial,
+  parseManualScenes,
+  type XiaomiRequester,
+} from "../../xiaomi-scenes.ts";
 import { listDevices } from "../../xiaomi-cloud.ts";
 import { classifyDeviceKind } from "../../device-views.ts";
+import { getMiotCapabilities } from "../../miot-spec.ts";
 
 export type AgentSceneRecord = {
   alias: string;
@@ -40,16 +48,7 @@ const BLOCKED_ACTION = /lock|camera|doorbell|security|alarm|intercom|gas|access|
 const LOW_RISK_ACTIONS = new Set(["power", "brightness", "color-temperature"]);
 
 async function sceneRevision(scene: ManualScene) {
-  const content = JSON.stringify({
-    name: scene.name,
-    enabled: scene.enabled,
-    actions: scene.actions.map(action => ({
-      label: action.label,
-      deviceName: action.deviceName ?? null,
-      room: action.room ?? null,
-      details: action.details.map(detail => ({ kind: detail.kind, label: detail.label, value: detail.value, state: detail.state ?? null })),
-    })),
-  });
+  const content = JSON.stringify(manualSceneRevisionMaterial(scene));
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content));
   const hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
   return `rev_${hex.slice(0, 24)}`;
@@ -116,10 +115,25 @@ export async function loadAgentScenes(
     homeId: string;
     session: XiaomiSession;
     request?: XiaomiRequester;
+    deviceRequest?: Parameters<typeof listDevices>[1];
+    loadDevices?: typeof listDevices;
+    loadCapabilities?: typeof getMiotCapabilities;
   },
 ): Promise<AgentSceneRecord[]> {
-  const scenes = await listManualScenes(input.session, input.homeId, input.request);
-  const deviceList = await listDevices(input.session);
+  const rawScenes = await listRawManualScenes(input.session, input.homeId, input.request);
+  const deviceList = await (input.loadDevices ?? listDevices)(input.session, input.deviceRequest);
+  const sceneCapabilities = await loadSceneActionCapabilities(
+    rawScenes,
+    input.homeId,
+    await loadSceneDeviceCapabilities(deviceList.devices, input.homeId, input.loadCapabilities),
+    input.loadCapabilities,
+  );
+  const scenes = parseManualScenes(
+    { result: rawScenes },
+    input.homeId,
+    deviceList.devices,
+    sceneCapabilities,
+  );
   const devices = deviceList.devices.flatMap(device => {
     if (String(device.homeId ?? "") !== input.homeId) return [];
     const name = typeof device.name === "string" ? device.name : "";
