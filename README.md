@@ -88,7 +88,7 @@ EdgeOne Pages 运行时，Blob SDK 使用平台提供的部署凭据。Node/Next
 `AI_ENVIRONMENT=development` 时将配置读写到 `AI_ASSISTANT_EXPOSURE_DIR` 指定的本地文件目录；
 其他环境不会使用此开发存储，Blob 不可用时返回 `503 AI_EXPOSURE_STORE_UNAVAILABLE`，不会回退到内存或 KV。
 可运行 `scripts/local-integration.py start` 自动生成本地 `.env.local` 并启动端到端联调，
-无需 Pages Blob 凭据。生产 Edge Function 仍使用 Blob namespace 和强一致读取。
+无需 Pages Blob 凭据。生产 Next Route Handler 使用 Blob namespace 和强一致读取；EdgeOne 部署切换后需在 staging 单独验证现有 namespace 的读取与写入。
 敏感设备类别不会列为可开放项，读取过滤只会减少已授权数据。
 
 ### 远程 Makers Agent
@@ -117,16 +117,13 @@ Agent 运行时位于独立的 `mijia-agent` 仓库。本仓库的 Web Chat API 
 
 ### AI Quota
 
-Phase 3 提供 `GET /api/ai/quota`（EdgeOne Edge Function），只返回当前 Cookie 会话对应 principal 的额度摘要。摘要由远程 Agent adapter 负责 reserve/commit 和返回，控制台只做身份鉴权与代理，不运行第二套账本。
+Phase 3 提供 `GET /api/ai/quota`（Next Route Handler），只返回当前 Cookie 会话对应 principal 的额度摘要。摘要由远程 Agent adapter 负责 reserve/commit 和返回，控制台只做身份鉴权与代理，不运行第二套账本。
 
 - `AI_QUOTA_ENABLED`：默认 `true`。设为 `false` 时配额完全停用：不要求 adapter 返回配额摘要，也不调用 `POST /api/internal/quota`，由控制台直接合成 principal 绑定的 `mode: "disabled"` 摘要。停用状态没有请求/Token 限额、没有 usage 记账、没有应用层 429，也没有模型费用保护，只适用于开发联调。该取值会被校验，非法值返回 500 `AI_QUOTA_CONFIG_INVALID`。
 - `AI_QUOTA_DEFAULT_REQUESTS_PER_MINUTE` / `AI_QUOTA_DEFAULT_REQUESTS_PER_DAY` / `AI_QUOTA_DEFAULT_TOKENS_PER_MONTH`：默认 `10` / `50` / `100000`。
 - `AI_QUOTA_UNLIMITED_IDS`：逗号分隔的服务端 principalId，优先级最高，仍记录 usage。
 - `AI_QUOTA_OVERRIDES_JSON`：按 principalId 覆盖部分额度，未覆盖字段继承默认值。
-- `AI_QUOTA_FAIL_MODE`：`closed`（默认）或 `open`；存储不可用时默认阻断请求。
-- `AI_QUOTA_KV_BINDING`：EdgeOne KV 全局绑定名，默认 `ai_quota_kv`；Edge Function 只从 `globalThis` 读取该绑定。
-
-EdgeOne KV 没有原子自增/CAS，且跨节点传播最长约 60 秒。日/月额度是软限额，并发或传播窗口内可能少量超额；不要将其作为精确硬限额或商业计费依据。
+- Console 不配置配额存储；`AI_QUOTA_ENABLED` 仅控制是否由 Console 返回本地 `mode: "disabled"` 摘要，启用时由远程 Agent 提供摘要。
 
 配额 reserve/commit/release 与错误结算由远程 Agent adapter 负责（`AI_QUOTA_ENABLED=false` 时整体停用，见上文）；控制台在聊天路径不读写任何本地账本。
 
@@ -144,11 +141,11 @@ Web API 通过 `AI_AGENT_BASE_URL` 指定的远程 Agent origin 的 `/ai-home` �
 
 `AI_ENVIRONMENT=preview` 时，聊天在完成 Cookie 鉴权、家庭归属和会话句柄校验后直接返回固定 mock 文本 `预览模式：不会调用模型或控制真实设备。`，配额模式为 `disabled`。该路径不创建执行 scope、不调用 Makers Agent，也不预留或消耗配额；删除会话返回本地幂等成功。预览判定只读取 `AI_ENVIRONMENT`，不读取 `VERCEL_ENV` 等平台特定变量；各平台的预览部署需显式设置该变量。Preview 部署应保持 `AI_AGENT_BASE_URL` 未设置，避免在进入服务层 mock 之前因无效远程配置失败。
 
-EdgeOne KV 审批完成前，本地自动化测试使用 `InMemoryQuotaStore`。生产环境应保持 `AI_QUOTA_FAIL_MODE` 默认 `closed`，不得在存储不可用时继续产生共享模型费用。
+配额数据由远程 Agent 持有；Console 在 Agent 缺失或请求失败时 fail closed，不维护 KV 或内存配额账本。
 
 ### AI 助手面板
 
-Phase 6 在主要页面挂载右下角的 AI 助手按钮，打开对话面板调用上述 Web Chat API。四个公开 AI 路由同时以 EdgeOne Edge Function（`edge-functions/api/ai/*`）和 Next 路由（`app/api/ai/*`）两种形式提供：Next 路由是薄委托，直接复用 Edge Function 的 handler 工厂并传入 `process.env`，保证本地开发与 Vercel 部署可访问同一套鉴权、家庭校验、配额与预览逻辑。
+Phase 6 在主要页面挂载右下角的 AI 助手按钮，打开对话面板调用上述 Web Chat API。Console API 统一由 `app/api/**/route.ts` 提供 Next Route Handlers，并调用 `lib/ai/api` 中的共享 handler；EdgeOne、Vercel 与本地 Next 运行时使用相同 URL 和鉴权、家庭校验、配额及预览逻辑。
 
 - 未登录时点击按钮会引导现有的小米扫码登录；演示家庭（demo）不打开面板。
 - 桌面端为右侧面板，移动端（≤760px）为全屏抽屉；发送中可点"停止"中断本地请求——服务端可能仍在处理该轮对话。
@@ -156,7 +153,7 @@ Phase 6 在主要页面挂载右下角的 AI 助手按钮，打开对话面板�
 - 配额 `mode: "disabled"` 时面板显示"配额已停用/不可用"，不会显示为零剩余；429 时显示恢复时间并禁用重试，绝不自动重试。
 - 本地联调注意：Agent 运行时已迁出本仓库，非预览聊天必须设置 `AI_AGENT_BASE_URL`（否则 502 `AI_AGENT_UNAVAILABLE`）。本地开发请使用 `AI_ENVIRONMENT=preview`（固定 mock）或指向本地/远程 Agent。
 
-本地人工验证需要同时运行本仓库 Edge Functions 和 `mijia-agent` 仓库的本地 Agent：用 `edgeone makers dev` 启动控制台后，将 `AI_AGENT_BASE_URL` 指向本地 Agent origin（或直接使用 `https://agent.fabloki.xyz`），并准备已登录浏览器中的 `xiaomi_session` Cookie。以下命令中的 Secret 和 Cookie 只应保存在当前终端，不要写入仓库或 shell history：
+本地人工验证通过 Next 路由运行 Console，并连接 `mijia-agent` 仓库的本地 Agent：运行 `npm run dev`（或本地集成脚本）启动控制台后，将 `AI_AGENT_BASE_URL` 指向本地 Agent origin（或直接使用 `https://agent.fabloki.xyz`），并准备已登录浏览器中的 `xiaomi_session` Cookie。以下命令中的 Secret 和 Cookie 只应保存在当前终端，不要写入仓库或 shell history：
 
 ```bash
 export BASE=http://localhost:8088

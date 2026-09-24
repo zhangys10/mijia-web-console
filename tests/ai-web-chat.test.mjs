@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createChatHandler } from "../edge-functions/api/ai/chat.ts";
-import { createConversationHandler } from "../edge-functions/api/ai/conversations.ts";
-import { createDeleteConversationHandler } from "../edge-functions/api/ai/conversations/[conversationId].ts";
+import { createChatHandler } from "../lib/ai/api/chat.ts";
+import { createConversationHandler } from "../lib/ai/api/conversations.ts";
+import { createDeleteConversationHandler } from "../lib/ai/api/delete-conversation.ts";
 import { openAutomationToken } from "../lib/ai/security/automation-token.ts";
 import { derivePrincipalId } from "../lib/ai/security/principal.ts";
 import { AgentClientError, MakersAgentClient } from "../lib/ai/web-chat/agent-client.ts";

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { sealWithSecret } from "../lib/xiaomi-cloud.ts";
-import { onRequest as exposureHandler } from "../edge-functions/api/ai/exposure.ts";
+import { onRequest as exposureHandler } from "../lib/ai/api/exposure.ts";
 import {
   assistantExposureProjection,
   readAssistantExposure,
@@ -167,7 +167,9 @@ test("assistant environment response stays within the Python reading and body li
     groups: metrics.map(metric => ({ metric, label: "读数", unit: "°C", latest: readings[0], readings })),
     warnings: [],
   };
-  const filtered = filterEnvironmentByExposure(snapshot, { "客厅": metrics });
+  let truncation;
+  const filtered = filterEnvironmentByExposure(snapshot, { "客厅": metrics }, details => { truncation = details; });
+  assert.deepEqual(truncation, { readingLimitReached: true, responseSizeLimitReached: false });
   assert.equal(filtered.groups.length, metrics.length);
   assert.ok(filtered.groups.every(group => group.readings.length <= 20));
   assert.equal(filtered.groups[0].latest.value, 0);

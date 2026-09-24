@@ -262,10 +262,23 @@ export function buildEnvironmentSnapshot(input: {
   return { capturedAt: input.capturedAt, completeness, groups, warnings };
 }
 
+export type HomeEnvironmentDiagnostics = {
+  candidateDevices: number;
+  specifications: number;
+  specificationFailures: number;
+  plannedReads: number;
+  failedBatches: number;
+  missingResults: number;
+  nonzeroResults: number;
+  invalidValues: number;
+  acceptedValues: number;
+};
+
 export type HomeEnvironmentDependencies = {
   listDevices?: typeof listDevices;
   getCapabilities?: typeof getMiotCapabilities;
   readProperties?: (session: XiaomiSession, params: Array<{ did: string; siid: number; piid: number }>) => Promise<Array<Record<string, unknown>>>;
+  onDiagnostics?: (diagnostics: HomeEnvironmentDiagnostics) => void;
 };
 
 export async function collectHomeEnvironment(
@@ -311,6 +324,17 @@ export async function collectHomeEnvironment(
       .filter(read => !filter?.roomMetrics || (filter.roomMetrics[text(device.roomName) || "未分配"] ?? []).includes(read.metric)),
   );
   if (!planned.length) {
+    dependencies.onDiagnostics?.({
+      candidateDevices: candidates.length,
+      specifications: specKeys.size,
+      specificationFailures,
+      plannedReads: 0,
+      failedBatches: 0,
+      missingResults: 0,
+      nonzeroResults: 0,
+      invalidValues: 0,
+      acceptedValues: 0,
+    });
     return buildEnvironmentSnapshot({
       capturedAt: new Date().toISOString(),
       planned,
@@ -340,12 +364,17 @@ export async function collectHomeEnvironment(
       value: item.value,
     });
   }
+  let missingResults = 0;
+  let nonzeroResults = 0;
+  let invalidValues = 0;
   const values = planned
     .map(plan => ({ plan, raw: returned.get(`${plan.did}:${plan.siid}:${plan.piid}`) }))
     .flatMap(({ plan, raw }) => {
-      if (!raw || raw.code !== 0) return [];
+      if (!raw) { missingResults += 1; return []; }
+      if (raw.code !== 0) { nonzeroResults += 1; return []; }
       const value = sanitizeNumber(raw.value);
-      return value === null ? [] : [{
+      if (value === null) { invalidValues += 1; return []; }
+      return [{
         metric: plan.metric,
         sourceLabel: plan.sourceLabel,
         roomName: plan.roomName,
@@ -353,6 +382,18 @@ export async function collectHomeEnvironment(
         declaredUnit: plan.declaredUnit,
       }];
     });
+
+  dependencies.onDiagnostics?.({
+    candidateDevices: candidates.length,
+    specifications: specKeys.size,
+    specificationFailures,
+    plannedReads: planned.length,
+    failedBatches: failedBatches,
+    missingResults,
+    nonzeroResults,
+    invalidValues,
+    acceptedValues: values.length,
+  });
 
   return buildEnvironmentSnapshot({
     capturedAt: new Date().toISOString(),

@@ -4,10 +4,10 @@ import {
   readJsonBody,
   webApiErrorResponse,
   type AiWebContext,
-} from "../../../lib/ai/web-chat/web-api-boundary.ts";
-import { listDevices, listHomes } from "../../../lib/xiaomi-cloud.ts";
-import { derivePrincipalId } from "../../../lib/ai/security/principal.ts";
-import { AssistantExposureError, listAssistantExposureInventory, readAssistantExposure, updateAssistantExposure, type AssistantExposureStore } from "../../../lib/ai/tools/assistant-exposure.ts";
+} from "../web-chat/web-api-boundary.ts";
+import { listDevices, listHomes } from "../../xiaomi-cloud.ts";
+import { derivePrincipalId } from "../security/principal.ts";
+import { AssistantExposureError, listAssistantExposureInventory, readAssistantExposure, updateAssistantExposure, type AssistantExposureStore } from "../tools/assistant-exposure.ts";
 
 const MAX_BODY_BYTES = 32768;
 
