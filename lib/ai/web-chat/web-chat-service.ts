@@ -180,6 +180,7 @@ export class AiWebService {
       return await sealAutomationToken({
         version: 1,
         purpose: "ai-home-automation",
+        audience: "mijia-agent",
         principalId,
         xiaomiSession: session,
         region: session.region || "cn",

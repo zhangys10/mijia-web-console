@@ -13,6 +13,7 @@ import { groupManualSceneActions, type ManualSceneActionItem } from "../lib/scen
 import SceneEditor from "./scene-editor";
 import AutomationCenter from "./automation-center";
 import AiAssistantButton from "./components/ai-assistant/ai-assistant-button";
+import AssistantExposureSettings from "./components/ai-assistant/assistant-exposure-settings";
 import AutomationTokenForm from "./ai/settings/automation-token-form";
 import PrincipalIdCard from "./ai/settings/principal-id-card";
 import { dashboardAccountLabel, dashboardGreeting, formatDashboardDate } from "../lib/dashboard-display";
@@ -745,6 +746,7 @@ function SettingsView({ onOpenLogin, homes, selectedHomeId, selectedHomeName }: 
           title="AI 自动化配置"
           sub="为当前账号签发 mijia-agent 直连自动化令牌（不含模型凭据）"
         />
+        <AssistantExposureSettings homeId={selectedHomeId} homeName={selectedHomeName} />
         <div className="ai-layout">
           <div className="ai-stack">
             <PrincipalIdCard />

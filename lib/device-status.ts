@@ -128,6 +128,7 @@ export async function collectDeviceStatus(
   session: XiaomiSession,
   homeId: string,
   dependencies: DeviceStatusDependencies = {},
+  exposedDids?: readonly string[],
 ): Promise<DeviceStatus> {
   const discovery = await (dependencies.listDevices ?? listDevices)(session);
   const targetHomeId = homeId || String(discovery.homes[0]?.id ?? "");
@@ -138,6 +139,7 @@ export async function collectDeviceStatus(
   // The dashboard scopes every view by homeId first; this collector does the same.
   const homeDevices: ManagedDevice[] = sync.devices
     .filter(device => device.homeId === targetHomeId)
+    .filter(device => !exposedDids || exposedDids.includes(device.did))
     .map((device, index) => ({
       id: index + 100,
       did: device.did,

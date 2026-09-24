@@ -17,6 +17,7 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .claude --ignore-pattern .edgeone"
   },
   "dependencies": {
+    "@edgeone/pages-blob": "^0.0.16",
     "next": "16.2.6",
     "react": "19.2.6",
     "react-dom": "19.2.6"
@@ -39,5 +40,5 @@
     "wrangler": "4.92.0"
   },
   "type": "module",
-  "displayName": "\u7c73\u5bb6 Web \u63a7\u5236\u53f0"
+  "displayName": "米家 Web 控制台"
 }

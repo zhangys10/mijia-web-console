@@ -152,6 +152,7 @@ async function runUserTokenTool(
     }
     throw new RemoteToolError("AUTOMATION_TOKEN_INVALID", 401);
   }
+  if (payload.audience !== "mijia-agent") throw new RemoteToolError("AUTOMATION_TOKEN_INVALID", 401);
   const principalId = await derivePrincipalId(payload.xiaomiSession, env);
   const homes = await (dependencies.homes ?? listHomes)(payload.xiaomiSession);
   if (!homes.length) throw new RemoteToolError("AI_HOME_NOT_FOUND", 404);

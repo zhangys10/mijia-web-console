@@ -118,6 +118,7 @@ export async function POST(request: NextRequest) {
     const payload: AutomationTokenPayload = {
       version: 1,
       purpose: "ai-home-automation",
+      audience: "mijia-agent",
       principalId,
       xiaomiSession: session,
       region: session.region || "cn",
