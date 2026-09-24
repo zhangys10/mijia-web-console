@@ -4,7 +4,7 @@ import { derivePrincipalId } from "../security/principal.ts";
 import { AutomationTokenError, openAutomationToken } from "../security/automation-token.ts";
 import { collectDeviceStatus, type DeviceStatus } from "../../device-status.ts";
 import { classifyDeviceKind } from "../../device-views.ts";
-import { collectHomeEnvironment, type EnvironmentMetric, type EnvironmentSnapshot } from "../../home-environment.ts";
+import { collectHomeEnvironment, type EnvironmentMetric, type EnvironmentSnapshot, type HomeEnvironmentDiagnostics } from "../../home-environment.ts";
 import {
   AssistantExposureError,
   assistantExposureProjection,
@@ -27,6 +27,7 @@ export type AssistantV1Dependencies = {
   homeInventory?: typeof listAssistantExposureInventory;
   exposure?: typeof readAssistantExposure;
   exposureStore?: AssistantExposureStore;
+  diagnosticLogger?: (record: Record<string, unknown>) => void;
 };
 
 const NO_STORE = { "Cache-Control": "no-store" };
@@ -115,6 +116,11 @@ export async function getAssistantCapabilitiesV1(
   };
 }
 
+function statusIsPartial(diagnostics: HomeEnvironmentDiagnostics) {
+  return diagnostics.specificationFailures > 0 || diagnostics.failedBatches > 0
+    || diagnostics.missingResults > 0 || diagnostics.nonzeroResults > 0 || diagnostics.invalidValues > 0;
+}
+
 function stringFilter(args: Record<string, unknown>, name: string, allowed: readonly string[], max: number): string[] | undefined {
   const value = args[name];
   if (value === undefined) return undefined;
@@ -135,7 +141,7 @@ function validateArguments(operation: unknown, value: unknown, projection: Retur
   return { rooms, metrics: metrics as EnvironmentMetric[] | undefined, kinds, states };
 }
 
-export function filterEnvironmentByExposure(status: EnvironmentSnapshot, roomMetrics: Record<string, readonly EnvironmentMetric[]>): EnvironmentSnapshot {
+export function filterEnvironmentByExposure(status: EnvironmentSnapshot, roomMetrics: Record<string, readonly EnvironmentMetric[]>, onTruncation?: (details: { readingLimitReached: boolean; responseSizeLimitReached: boolean }) => void): EnvironmentSnapshot {
   let truncated = false;
   const groups = status.groups.flatMap(group => {
     const readings = group.readings.filter(item => item.roomName !== null && (roomMetrics[item.roomName] ?? []).includes(group.metric));
@@ -150,16 +156,21 @@ export function filterEnvironmentByExposure(status: EnvironmentSnapshot, roomMet
     completeness: "partial",
     warnings: [...status.warnings.slice(0, 7), truncationWarning],
   })).byteLength;
-  while (byteLength() > 60_000) {
+  let responseSizeLimitReached = byteLength() > 60_000;
+  while (responseSizeLimitReached) {
     const largest = snapshot.groups.filter(group => group.readings.length > 1)
       .sort((left, right) => right.readings.length - left.readings.length)[0];
     if (!largest) break;
     largest.readings.pop();
     truncated = true;
+    responseSizeLimitReached = byteLength() > 60_000;
   }
   if (truncated) {
     snapshot.completeness = "partial";
     snapshot.warnings = [...status.warnings.slice(0, 7), truncationWarning];
+  }
+  if (truncated || responseSizeLimitReached) {
+    onTruncation?.({ readingLimitReached: truncated, responseSizeLimitReached });
   }
   return snapshot;
 }
@@ -197,7 +208,16 @@ export async function invokeAssistantToolV1(
     const exposedRooms = operationProjection.rooms;
     const exposedRoomMetrics = Object.fromEntries(exposedRooms.map(room => [room, context.exposure.roomMetrics[room] ?? []]));
     const exposedMetrics = [...new Set(Object.values(exposedRoomMetrics).flat())];
-    const status = await (dependencies.environment ?? collectHomeEnvironment)(context.session, context.homeId, { listDevices: async () => context.discovery }, {
+    const requestId = typeof input.requestId === "string" && /^[A-Za-z0-9_.-]{6,128}$/.test(input.requestId) ? input.requestId : undefined;
+    const logDiagnostic = dependencies.diagnosticLogger ?? (record => console.info(JSON.stringify(record)));
+    const status = await (dependencies.environment ?? collectHomeEnvironment)(context.session, context.homeId, {
+      listDevices: async () => context.discovery,
+      onDiagnostics: (diagnostics: HomeEnvironmentDiagnostics) => {
+        if (statusIsPartial(diagnostics)) {
+          logDiagnostic({ event: "assistant_environment_partial", requestId, route: "/api/internal/assistant/v1/tools:invoke", stage: "PROPERTY_COLLECTION", httpStatus: 200, category: "PARTIAL_READ", ...diagnostics });
+        }
+      },
+    }, {
       rooms: exposedRooms,
       metrics: exposedMetrics,
       roomMetrics: exposedRoomMetrics,
@@ -209,7 +229,9 @@ export async function invokeAssistantToolV1(
       const selected = requestedMetrics ? exposed.filter(metric => requestedMetrics.includes(metric)) : exposed;
       return selected.length ? [[room, selected]] : [];
     }));
-    return filterEnvironmentByExposure(status, roomMetrics);
+    return filterEnvironmentByExposure(status, roomMetrics, details => {
+      logDiagnostic({ event: "assistant_environment_partial", requestId, route: "/api/internal/assistant/v1/tools:invoke", stage: "EXPOSURE_FILTER", httpStatus: 200, category: "RESPONSE_TRUNCATED", ...details });
+    });
   }
   const rooms = filters.rooms ?? projection.rooms;
   const selectedDids = context.selectedDids;
@@ -225,6 +247,7 @@ export function createAssistantV1Handler(
     const headers = { ...NO_STORE, "Content-Type": "application/json" };
     const respond = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
     let stage: "AUTHORIZATION" | "REQUEST_BODY" | "CAPABILITIES" | "TOOL_INVOKE" = "AUTHORIZATION";
+    let requestId: string | undefined;
     try {
       if (context.request.method !== "POST") return respond({ code: "AI_INVALID_REQUEST" }, 405);
       if (!await authorizeRemoteTool(context.request.headers.get("Authorization"), context.env.AI_TOOLS_INTERNAL_SECRET)) return respond({ code: "AI_UNAUTHENTICATED" }, 401);
@@ -239,6 +262,10 @@ export function createAssistantV1Handler(
         body = JSON.parse(text);
       } catch { return respond({ code: "AI_INVALID_REQUEST" }, 400); }
 
+      requestId = body && typeof body === "object" && !Array.isArray(body)
+        && typeof (body as Record<string, unknown>).requestId === "string"
+        && /^[A-Za-z0-9_.-]{6,128}$/.test((body as Record<string, string>).requestId)
+        ? (body as Record<string, string>).requestId : undefined;
       stage = operation === "capabilities" ? "CAPABILITIES" : "TOOL_INVOKE";
       const result = operation === "capabilities"
         ? await getAssistantCapabilitiesV1(body, token, context.env, dependencies)
@@ -247,6 +274,14 @@ export function createAssistantV1Handler(
     } catch (error) {
       if (error instanceof AssistantExposureError) return respond({ code: error.code }, error.status);
       if (error instanceof RemoteToolError) return respond({ code: error.message }, error.status);
+      (dependencies.diagnosticLogger ?? (record => console.error(JSON.stringify(record))))({
+        event: "assistant_api_exception",
+        requestId: requestId ?? crypto.randomUUID(),
+        route: `/api/internal/assistant/v1/${operation === "capabilities" ? "capabilities" : "tools:invoke"}`,
+        stage,
+        httpStatus: 502,
+        category: "UNEXPECTED_EXCEPTION",
+      });
       return respond({
         code: "AI_AGENT_UNAVAILABLE",
         diagnosticCode: `ASSISTANT_${stage}_EXCEPTION`,

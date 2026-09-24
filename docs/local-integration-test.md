@@ -26,11 +26,11 @@
 python3 scripts/local-integration.py start
 ```
 
-`start` 会自动创建/更新 Console 根目录的 `.local-integration.env`、`.env.local`，启动 fake Gateway、Python、Makers shim 与 Console，并在 Ctrl-C 时一起关闭。密钥为本机生成的随机开发值，文件权限为仅当前用户可读写；已生成的本地密钥会在重复运行时复用。也可以运行 `python3 scripts/local-integration.py setup` 只生成配置，或运行 `python3 scripts/local-integration.py setup --reset` 轮换本地密钥。
+`start` 会自动创建/更新 Console 根目录的 `.local-integration.env`、`.env.local`，启动 fake Gateway、Python、Makers shim 与 Next/Vinext Console，并在 Ctrl-C 时一起关闭。密钥为本机生成的随机开发值，文件权限为仅当前用户可读写；已生成的本地密钥会在重复运行时复用。也可以运行 `python3 scripts/local-integration.py setup` 只生成配置，或运行 `python3 scripts/local-integration.py setup --reset` 轮换本地密钥。
 
 Console 原有 `.env.local` 中其他未托管的配置行会保留；脚本管理的 AI 本地联调变量会更新为 loopback 地址和随机本地密钥。不会配置 `PAGES_PROJECT_ID` 或 `PAGES_BLOB_API_TOKEN`，也不会读取或覆盖 `adapters/edgeone/.env`。
 
-本地 `/api/ai/exposure` 和 assistant v1 API 在 `AI_ENVIRONMENT=development` 时使用 `.local/assistant-exposure/` 文件存储；默认拒绝和曝光过滤逻辑与 Blob 实现相同。部署到 EdgeOne 时 Next 本地路由不参与部署，Edge Function 继续使用 Pages Blob。
+本地 `/api/ai/exposure` 和 assistant v1 API 在 `AI_ENVIRONMENT=development` 时使用 `.local/assistant-exposure/` 文件存储；默认拒绝和曝光过滤逻辑与 Blob 实现相同。本地与 EdgeOne 部署均由 Next Route Handler 处理；生产路径继续使用现有 Pages Blob namespace。部署迁移后需在 staging 验证 SSR 运行时能够读取/写入该 namespace。
 
 打开 `http://127.0.0.1:3000`，登录米家账号，选择用于测试的家庭，再到「设置 → AI 助手访问权限」开放所需的只读指标/设备。
 

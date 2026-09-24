@@ -1,5 +1,4 @@
-import { onRequest as quotaHandler } from "../../../../edge-functions/api/ai/quota";
-
-export async function GET(request: Request) {
-  return quotaHandler({ request, env: process.env });
-}
+import { withRouteDiagnostics } from "../../../../lib/ai/api/diagnostics.ts";
+import { onRequest as quotaHandler } from "../../../../lib/ai/api/quota.ts";
+const handler = withRouteDiagnostics("/api/ai/quota", request => quotaHandler({ request, env: process.env }));
+export async function GET(request: Request) { return handler(request); }

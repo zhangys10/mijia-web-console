@@ -1,55 +1,44 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { POST as capabilities } from "../app/api/internal/assistant/v1/capabilities/route.ts";
+import { POST as invoke } from "../app/api/internal/assistant/v1/tools:invoke/route.ts";
 
-test("assistant Edge entrypoints load and reject unauthenticated requests without Node process", () => {
-  const result = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", `
-    import assert from "node:assert/strict";
-    // Initialize Node's Web API shims before simulating the Edge global scope.
-    new Request("https://console.test");
-    new Response();
-    delete globalThis.process;
-    globalThis.fetch = () => { throw new Error("Unexpected network access before authorization"); };
-
-    for (const endpoint of ["capabilities", "tools:invoke"]) {
-      const { onRequest } = await import("./edge-functions/api/internal/assistant/v1/" + endpoint + ".ts");
-      for (const method of ["GET", "POST"]) {
-        const response = await onRequest({
-          request: new Request("https://console.test/api/internal/assistant/v1/" + endpoint, { method }),
-          env: { AI_TOOLS_INTERNAL_SECRET: "fake-tools-secret-at-least-32-characters" },
-        });
-        assert.equal(response.status, method === "POST" ? 401 : 405);
-        assert.equal(response.headers.get("Cache-Control"), "no-store");
-        assert.deepEqual(await response.json(), {
-          code: method === "POST" ? "AI_UNAUTHENTICATED" : "AI_INVALID_REQUEST",
-        });
-      }
+test("Next assistant routes reject unauthenticated requests without side effects", async () => {
+  const original = process.env.AI_TOOLS_INTERNAL_SECRET;
+  delete process.env.AI_TOOLS_INTERNAL_SECRET;
+  try {
+    for (const route of [capabilities, invoke]) {
+      const response = await route(new Request("https://console.test/api/internal/assistant/v1", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+      }));
+      assert.equal(response.status, 401);
+      assert.equal(response.headers.get("Cache-Control"), "no-store");
+      assert.deepEqual(await response.json(), { code: "AI_UNAUTHENTICATED" });
     }
+  } finally {
+    if (original === undefined) delete process.env.AI_TOOLS_INTERNAL_SECRET;
+    else process.env.AI_TOOLS_INTERNAL_SECRET = original;
+  }
+});
 
-    const { createAssistantV1Handler } = await import("./lib/ai/tools/assistant-v1-service.ts");
-    const faultyEnv = {};
-    Object.defineProperty(faultyEnv, "AI_TOOLS_INTERNAL_SECRET", {
-      get() { throw new Error("sensitive runtime detail"); },
-    });
-    const response = await createAssistantV1Handler("invoke")({
-      request: new Request("https://console.test/api/internal/assistant/v1/tools:invoke", {
-        method: "POST",
-        headers: { Authorization: "Bearer fake-token" },
-        body: "{}",
-      }),
-      env: faultyEnv,
-    });
-    assert.equal(response.status, 502);
-    assert.deepEqual(await response.json(), {
-      code: "AI_AGENT_UNAVAILABLE",
-      diagnosticCode: "ASSISTANT_AUTHORIZATION_EXCEPTION",
-    });
-  `], {
-    cwd: fileURLToPath(new URL("..", import.meta.url)),
-    env: {},
-    encoding: "utf8",
-    timeout: 10000,
+test("unexpected assistant failures log only bounded, sanitized metadata", async () => {
+  const { createAssistantV1Handler } = await import("../lib/ai/tools/assistant-v1-service.ts");
+  const logs = [];
+  const env = {};
+  Object.defineProperty(env, "AI_TOOLS_INTERNAL_SECRET", { get() { throw new Error("secret runtime value"); } });
+  const response = await createAssistantV1Handler("invoke", { diagnosticLogger: record => logs.push(record) })({
+    request: new Request("https://console.test/api/internal/assistant/v1/tools:invoke", {
+      method: "POST", headers: { Authorization: "Bearer fake-token" }, body: JSON.stringify({ requestId: "req_safe_test", operation: "get_home_environment" }),
+    }),
+    env,
   });
-  assert.equal(result.status, 0, result.stderr);
+  assert.equal(response.status, 502);
+  assert.deepEqual(await response.json(), { code: "AI_AGENT_UNAVAILABLE", diagnosticCode: "ASSISTANT_AUTHORIZATION_EXCEPTION" });
+  assert.equal(logs.length, 1);
+  assert.match(logs[0].requestId, /^[0-9a-f-]{36}$/);
+  assert.deepEqual({ ...logs[0], requestId: undefined }, {
+    event: "assistant_api_exception", requestId: undefined,
+    route: "/api/internal/assistant/v1/tools:invoke", stage: "AUTHORIZATION", httpStatus: 502, category: "UNEXPECTED_EXCEPTION",
+  });
+  assert.equal(JSON.stringify(logs).includes("secret runtime value"), false);
 });

@@ -144,6 +144,7 @@ test("multi-device readings stay per-device and mark the newest as headline", ()
 
 test("collector keeps successful readings and reports per-item failures as partial", async () => {
   const session = { userId: "test-user", serviceToken: "fake-token", ssecurity: "fake-security", region: "cn" };
+  let diagnostics;
   const snapshot = await collectHomeEnvironment(session, "test-home", {
     listDevices: async () => ({
       homes: [{ id: "test-home", name: "我的家" }],
@@ -161,7 +162,14 @@ test("collector keeps successful readings and reports per-item failures as parti
       // Device rejects the humidity property; other readings stay missing.
       { did: params[1].did, siid: params[1].siid, piid: params[1].piid, code: -701007, value: null },
     ],
+    onDiagnostics: value => { diagnostics = value; },
   });
+  assert.deepEqual({
+    planned: diagnostics.plannedReads,
+    accepted: diagnostics.acceptedValues,
+    nonzero: diagnostics.nonzeroResults,
+    missing: diagnostics.missingResults,
+  }, { planned: 4, accepted: 1, nonzero: 1, missing: 2 });
   assert.equal(snapshot.completeness, "partial");
   assert.equal(snapshot.groups[0].metric, "temperature");
   assert.equal(snapshot.groups[0].latest.value, 25.5);
