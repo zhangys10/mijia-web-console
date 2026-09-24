@@ -8,6 +8,7 @@ import "./scene-editor.css";
 import "./automation-center.css";
 import "./ai-assistant.css";
 import "./typography.css";
+import "./design-contract.css";
 
 export const viewport: Viewport = {
   width: "device-width",
