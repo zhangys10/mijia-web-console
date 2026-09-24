@@ -15,7 +15,7 @@ import type {
 import { QuotaExceededError, QuotaStoreError } from "./quota-store.ts";
 
 type InMemoryQuotaStoreOptions = {
-  env?: string;
+  env: string;
   now?: () => number;
 };
 
@@ -43,8 +43,8 @@ export class InMemoryQuotaStore implements QuotaStore {
   private readonly records = new Map<string, QuotaUsage>();
   private readonly leases = new Map<string, QuotaLease>();
 
-  constructor(options: InMemoryQuotaStoreOptions = {}) {
-    this.env = options.env ?? process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
+  constructor(options: InMemoryQuotaStoreOptions) {
+    this.env = options.env;
     this.now = options.now ?? Date.now;
   }
 

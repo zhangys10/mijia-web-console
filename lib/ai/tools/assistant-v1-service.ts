@@ -224,17 +224,22 @@ export function createAssistantV1Handler(
   return async function onRequest(context: { request: Request; env: Environment }) {
     const headers = { ...NO_STORE, "Content-Type": "application/json" };
     const respond = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
-    if (context.request.method !== "POST") return respond({ code: "AI_INVALID_REQUEST" }, 405);
-    if (!await authorizeRemoteTool(context.request.headers.get("Authorization"), context.env.AI_TOOLS_INTERNAL_SECRET)) return respond({ code: "AI_UNAUTHENTICATED" }, 401);
-    const token = context.request.headers.get("X-Ai-User-Token") ?? "";
-    if (!token) return respond({ code: "AI_UNAUTHENTICATED" }, 401);
-    let body: unknown;
+    let stage: "AUTHORIZATION" | "REQUEST_BODY" | "CAPABILITIES" | "TOOL_INVOKE" = "AUTHORIZATION";
     try {
-      const text = await context.request.text();
-      if (new TextEncoder().encode(text).byteLength > 32768) return respond({ code: "AI_INVALID_REQUEST" }, 400);
-      body = JSON.parse(text);
-    } catch { return respond({ code: "AI_INVALID_REQUEST" }, 400); }
-    try {
+      if (context.request.method !== "POST") return respond({ code: "AI_INVALID_REQUEST" }, 405);
+      if (!await authorizeRemoteTool(context.request.headers.get("Authorization"), context.env.AI_TOOLS_INTERNAL_SECRET)) return respond({ code: "AI_UNAUTHENTICATED" }, 401);
+      const token = context.request.headers.get("X-Ai-User-Token") ?? "";
+      if (!token) return respond({ code: "AI_UNAUTHENTICATED" }, 401);
+
+      stage = "REQUEST_BODY";
+      let body: unknown;
+      try {
+        const text = await context.request.text();
+        if (new TextEncoder().encode(text).byteLength > 32768) return respond({ code: "AI_INVALID_REQUEST" }, 400);
+        body = JSON.parse(text);
+      } catch { return respond({ code: "AI_INVALID_REQUEST" }, 400); }
+
+      stage = operation === "capabilities" ? "CAPABILITIES" : "TOOL_INVOKE";
       const result = operation === "capabilities"
         ? await getAssistantCapabilitiesV1(body, token, context.env, dependencies)
         : await invokeAssistantToolV1(body, token, context.env, dependencies);
@@ -242,7 +247,10 @@ export function createAssistantV1Handler(
     } catch (error) {
       if (error instanceof AssistantExposureError) return respond({ code: error.code }, error.status);
       if (error instanceof RemoteToolError) return respond({ code: error.message }, error.status);
-      return respond({ code: "AI_AGENT_UNAVAILABLE" }, 502);
+      return respond({
+        code: "AI_AGENT_UNAVAILABLE",
+        diagnosticCode: `ASSISTANT_${stage}_EXCEPTION`,
+      }, 502);
     }
   };
 }

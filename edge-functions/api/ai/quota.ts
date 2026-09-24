@@ -110,7 +110,7 @@ export async function onRequest(context: EdgeOneQuotaContext) {
   const binding = resolveKvBinding(context.env);
   const store = binding
     ? new EdgeOneKvQuotaStore(binding, {
-      env: context.env.APP_ENV ?? context.env.NODE_ENV ?? "development",
+      env: context.env.APP_ENV ?? context.env.NODE_ENV ?? "production",
     })
     : unavailableStore;
   const service = new QuotaService(store, policy);

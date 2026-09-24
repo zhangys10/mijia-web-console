@@ -156,7 +156,11 @@ const payload = {
   expiresAt: now + days * 86_400_000,
 };
 
-const token = await sealAutomationToken(payload, { secret });
+const token = await sealAutomationToken(payload, {
+  secret,
+  keyId: process.env.AI_AUTOMATION_TOKEN_KEY_ID,
+  env: process.env.APP_ENV ?? process.env.NODE_ENV ?? "development",
+});
 
 if (parsed.out) {
   const { writeFile } = await import("node:fs/promises");

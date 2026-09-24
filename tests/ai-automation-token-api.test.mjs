@@ -24,13 +24,18 @@ async function getWorker() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `ai-auto-token-${process.pid}-${Date.now()}-${Math.random()}`);
   const { default: worker } = await import(workerUrl.href);
-  const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
+  const env = {
+    ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
+    XIAOMI_SESSION_SECRET: process.env.XIAOMI_SESSION_SECRET,
+    AI_AUTOMATION_TOKEN_SECRET: process.env.AI_AUTOMATION_TOKEN_SECRET,
+    APP_ENV: "test",
+  };
   const context = { waitUntil() {}, passThroughOnException() {} };
   return { worker, env, context };
 }
 
 async function createCookieHeader(session) {
-  const sealed = await seal(session);
+  const sealed = await seal(session, process.env.XIAOMI_SESSION_SECRET);
   return `xiaomi_session=${sealed}`;
 }
 

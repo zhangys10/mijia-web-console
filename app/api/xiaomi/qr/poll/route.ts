@@ -6,10 +6,10 @@ export async function GET() {
   try {
     const value = (await cookies()).get("xiaomi_qr")?.value;
     if (!value) return NextResponse.json({ error: "XIAOMI_QR_MISSING" }, { status: 401 });
-    const result = await pollQrLogin(await unseal<XiaomiQrState>(value));
+    const result = await pollQrLogin(await unseal<XiaomiQrState>(value, process.env.XIAOMI_SESSION_SECRET));
     if (result.pending) return NextResponse.json({ pending: true });
     const response = NextResponse.json({ pending: false, connected: true, region: result.session.region, userId: result.session.userId.slice(-4) });
-    response.cookies.set("xiaomi_session", await seal(result.session), { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 7 * 24 * 60 * 60 });
+    response.cookies.set("xiaomi_session", await seal(result.session, process.env.XIAOMI_SESSION_SECRET), { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 7 * 24 * 60 * 60 });
     response.cookies.delete("xiaomi_qr");
     return response;
   } catch (error) {

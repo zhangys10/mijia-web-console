@@ -49,7 +49,7 @@ function env(overrides = {}) {
 }
 
 async function cookie(session = sessionA) {
-  return `xiaomi_session=${await seal(session)}`;
+  return `xiaomi_session=${await seal(session, process.env.XIAOMI_SESSION_SECRET)}`;
 }
 
 async function chatRequest(body, session = sessionA, headers = {}) {

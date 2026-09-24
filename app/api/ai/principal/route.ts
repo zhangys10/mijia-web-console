@@ -18,13 +18,13 @@ export async function GET() {
 
   let session;
   try {
-    session = await readXiaomiSession(cookieValue);
+    session = await readXiaomiSession(cookieValue, process.env.XIAOMI_SESSION_SECRET);
   } catch {
     return unauthenticated();
   }
 
   try {
-    const principalId = await derivePrincipalId(session);
+    const principalId = await derivePrincipalId(session, process.env);
     return NextResponse.json({ principalId }, { headers: NO_STORE });
   } catch (error) {
     if (error instanceof PrincipalError) {

@@ -26,6 +26,25 @@ test("assistant Edge entrypoints load and reject unauthenticated requests withou
         });
       }
     }
+
+    const { createAssistantV1Handler } = await import("./lib/ai/tools/assistant-v1-service.ts");
+    const faultyEnv = {};
+    Object.defineProperty(faultyEnv, "AI_TOOLS_INTERNAL_SECRET", {
+      get() { throw new Error("sensitive runtime detail"); },
+    });
+    const response = await createAssistantV1Handler("invoke")({
+      request: new Request("https://console.test/api/internal/assistant/v1/tools:invoke", {
+        method: "POST",
+        headers: { Authorization: "Bearer fake-token" },
+        body: "{}",
+      }),
+      env: faultyEnv,
+    });
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), {
+      code: "AI_AGENT_UNAVAILABLE",
+      diagnosticCode: "ASSISTANT_AUTHORIZATION_EXCEPTION",
+    });
   `], {
     cwd: fileURLToPath(new URL("..", import.meta.url)),
     env: {},
