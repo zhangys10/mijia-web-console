@@ -1,4 +1,4 @@
-import { listDevices, listHomes, type XiaomiSession } from "../../xiaomi-cloud.ts";
+import { listDevices, listHomes, type XiaomiDeviceList, type XiaomiSession } from "../../xiaomi-cloud.ts";
 import { isPreviewEnvironment } from "../config.ts";
 import { derivePrincipalId } from "../security/principal.ts";
 import { AutomationTokenError, openAutomationToken } from "../security/automation-token.ts";
@@ -6,6 +6,7 @@ import { collectDeviceStatus, type DeviceStatus } from "../../device-status.ts";
 import { classifyDeviceKind } from "../../device-views.ts";
 import { collectHomeEnvironment, type EnvironmentMetric, type EnvironmentSnapshot } from "../../home-environment.ts";
 import {
+  AssistantExposureError,
   assistantExposureProjection,
   listAssistantExposureInventory,
   readAssistantExposure,
@@ -16,7 +17,7 @@ import {
 import { authorizeRemoteTool, RemoteToolError } from "./remote-tool-service.ts";
 
 type Environment = Record<string, string | undefined>;
-type HomeContext = { session: XiaomiSession; homeId: string; exposure: AssistantExposure; inventory: ExposureInventory; selectedDids: string[] };
+type HomeContext = { session: XiaomiSession; homeId: string; discovery: XiaomiDeviceList; exposure: AssistantExposure; inventory: ExposureInventory; selectedDids: string[] };
 
 export type AssistantV1Dependencies = {
   homes?: typeof listHomes;
@@ -65,7 +66,8 @@ async function resolveHomeContext(
   if (payload.audience !== "mijia-agent") throw new RemoteToolError("AUTOMATION_TOKEN_INVALID", 401);
   try { await derivePrincipalId(payload.xiaomiSession, env); }
   catch { throw new RemoteToolError("AI_UNAUTHENTICATED", 401); }
-  const homes = await (dependencies.homes ?? listHomes)(payload.xiaomiSession);
+  const discovery = await (dependencies.discovery ?? listDevices)(payload.xiaomiSession);
+  const homes = dependencies.homes ? await dependencies.homes(payload.xiaomiSession) : discovery.homes;
   if (!homes.length) throw new RemoteToolError("AI_HOME_NOT_FOUND", 404);
   const selector = typeof input.home === "string" ? input.home.trim() : "";
   const home = selector
@@ -73,9 +75,13 @@ async function resolveHomeContext(
     : payload.homeId ? homes.find(item => item.id === payload.homeId) : homes[0];
   if (!home) throw new RemoteToolError("AI_HOME_NOT_FOUND", 404);
   const exposure = await (dependencies.exposure ?? readAssistantExposure)(home.id, dependencies.exposureStore, env);
-  const inventory = await (dependencies.homeInventory ?? listAssistantExposureInventory)(payload.xiaomiSession, home.id, exposure);
-  const deviceList = await (dependencies.discovery ?? listDevices)(payload.xiaomiSession);
-  const eligibleDids = new Set(deviceList.devices.flatMap(device => {
+  const inventory = dependencies.homeInventory
+    ? await dependencies.homeInventory(payload.xiaomiSession, home.id, exposure)
+    : await listAssistantExposureInventory(payload.xiaomiSession, home.id, exposure, {
+      homes: async () => homes,
+      devices: async () => discovery,
+    });
+  const eligibleDids = new Set(discovery.devices.flatMap(device => {
     if (String(device.homeId ?? "") !== home.id) return [];
     const name = typeof device.name === "string" ? device.name : "";
     const model = typeof device.model === "string" ? device.model : "";
@@ -84,7 +90,7 @@ async function resolveHomeContext(
     return did && !/(?:lock|camera|doorbell|security|alarm|intercom)/i.test(`${kind} ${model} ${name}`) ? [did] : [];
   }));
   const selectedDids = exposure.enabled ? exposure.deviceDids.filter(did => eligibleDids.has(did)) : [];
-  return { session: payload.xiaomiSession, homeId: home.id, exposure, inventory, selectedDids };
+  return { session: payload.xiaomiSession, homeId: home.id, discovery, exposure, inventory, selectedDids };
 }
 
 export async function getAssistantCapabilitiesV1(
@@ -130,12 +136,32 @@ function validateArguments(operation: unknown, value: unknown, projection: Retur
 }
 
 export function filterEnvironmentByExposure(status: EnvironmentSnapshot, roomMetrics: Record<string, readonly EnvironmentMetric[]>): EnvironmentSnapshot {
+  let truncated = false;
   const groups = status.groups.flatMap(group => {
     const readings = group.readings.filter(item => item.roomName !== null && (roomMetrics[item.roomName] ?? []).includes(group.metric));
     const latest = group.latest && group.latest.roomName !== null && (roomMetrics[group.latest.roomName] ?? []).includes(group.metric) ? group.latest : readings[0] ?? null;
-    return readings.length || latest ? [{ ...group, latest, readings }] : [];
+    if (readings.length > 20) truncated = true;
+    return readings.length || latest ? [{ ...group, latest, readings: readings.slice(0, 20) }] : [];
   });
-  return { ...status, groups, completeness: groups.length ? status.completeness : "empty" };
+  const snapshot: EnvironmentSnapshot = { ...status, groups, completeness: groups.length ? status.completeness : "empty" };
+  const truncationWarning = "部分读数未展示。";
+  const byteLength = () => new TextEncoder().encode(JSON.stringify({
+    ...snapshot,
+    completeness: "partial",
+    warnings: [...status.warnings.slice(0, 7), truncationWarning],
+  })).byteLength;
+  while (byteLength() > 60_000) {
+    const largest = snapshot.groups.filter(group => group.readings.length > 1)
+      .sort((left, right) => right.readings.length - left.readings.length)[0];
+    if (!largest) break;
+    largest.readings.pop();
+    truncated = true;
+  }
+  if (truncated) {
+    snapshot.completeness = "partial";
+    snapshot.warnings = [...status.warnings.slice(0, 7), truncationWarning];
+  }
+  return snapshot;
 }
 
 export function filterDeviceStatus(status: DeviceStatus, rooms: readonly string[], kinds: readonly string[] | undefined, states: readonly string[] | undefined): DeviceStatus {
@@ -168,20 +194,26 @@ export async function invokeAssistantToolV1(
   if (isPreviewEnvironment(env)) throw new RemoteToolError("AI_PREVIEW_READ_ONLY", 403);
   if (operation === "get_home_environment") {
     if (!projection.capabilities.some(item => item.name === "get_home_environment")) throw new RemoteToolError("AI_CAPABILITY_UNAVAILABLE", 403);
-    const rooms = filters.rooms ?? operationProjection.rooms;
+    const exposedRooms = operationProjection.rooms;
+    const exposedRoomMetrics = Object.fromEntries(exposedRooms.map(room => [room, context.exposure.roomMetrics[room] ?? []]));
+    const exposedMetrics = [...new Set(Object.values(exposedRoomMetrics).flat())];
+    const status = await (dependencies.environment ?? collectHomeEnvironment)(context.session, context.homeId, { listDevices: async () => context.discovery }, {
+      rooms: exposedRooms,
+      metrics: exposedMetrics,
+      roomMetrics: exposedRoomMetrics,
+    });
+    const rooms = filters.rooms ?? exposedRooms;
     const requestedMetrics = filters.metrics;
     const roomMetrics = Object.fromEntries(rooms.flatMap(room => {
       const exposed = context.exposure.roomMetrics[room] ?? [];
       const selected = requestedMetrics ? exposed.filter(metric => requestedMetrics.includes(metric)) : exposed;
       return selected.length ? [[room, selected]] : [];
     }));
-    const metrics = [...new Set(Object.values(roomMetrics).flat())];
-    const status = await (dependencies.environment ?? collectHomeEnvironment)(context.session, context.homeId, {}, { rooms, metrics, roomMetrics });
     return filterEnvironmentByExposure(status, roomMetrics);
   }
   const rooms = filters.rooms ?? projection.rooms;
   const selectedDids = context.selectedDids;
-  const status = await (dependencies.devices ?? collectDeviceStatus)(context.session, context.homeId, {}, selectedDids);
+  const status = await (dependencies.devices ?? collectDeviceStatus)(context.session, context.homeId, { listDevices: async () => context.discovery }, selectedDids);
   return filterDeviceStatus(status, rooms, filters.kinds, filters.states);
 }
 
@@ -208,9 +240,9 @@ export function createAssistantV1Handler(
         : await invokeAssistantToolV1(body, token, context.env, dependencies);
       return respond(result);
     } catch (error) {
-      return error instanceof RemoteToolError
-        ? respond({ code: error.message }, error.status)
-        : respond({ code: "AI_AGENT_UNAVAILABLE" }, 502);
+      if (error instanceof AssistantExposureError) return respond({ code: error.code }, error.status);
+      if (error instanceof RemoteToolError) return respond({ code: error.message }, error.status);
+      return respond({ code: "AI_AGENT_UNAVAILABLE" }, 502);
     }
   };
 }
