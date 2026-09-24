@@ -50,8 +50,8 @@ export function createLocalAssistantExposureStore(directory: string): AssistantE
   };
 }
 
-export function localAssistantExposureStore() {
-  const directory = process.env.AI_ASSISTANT_EXPOSURE_DIR?.trim();
+export function localAssistantExposureStore(directoryValue?: string) {
+  const directory = directoryValue?.trim();
   if (!directory) throw new Error("AI_ASSISTANT_EXPOSURE_DIR is required for local exposure storage");
   return createLocalAssistantExposureStore(directory);
 }

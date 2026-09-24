@@ -213,14 +213,14 @@ test("cloud errors expose stable HTTP and retry semantics", () => {
 test("legacy cookies without the newer session fields force a fresh login", async () => {
   process.env.XIAOMI_SESSION_SECRET = "cloud-sync-test-secret-with-at-least-32-characters";
   const { readXiaomiSession, seal } = await import("../lib/xiaomi-cloud.ts");
-  const legacy = await seal({ userId: "fake-user", ssecurity: "ZmFrZQ==", serviceToken: "fake-token", region: "cn", createdAt: 0 });
-  await assert.rejects(readXiaomiSession(legacy), /XIAOMI_RELOGIN_REQUIRED/);
+  const legacy = await seal({ userId: "fake-user", ssecurity: "ZmFrZQ==", serviceToken: "fake-token", region: "cn", createdAt: 0 }, process.env.XIAOMI_SESSION_SECRET);
+  await assert.rejects(readXiaomiSession(legacy, process.env.XIAOMI_SESSION_SECRET), /XIAOMI_RELOGIN_REQUIRED/);
   assert.deepEqual(xiaomiErrorInfo(new Error("XIAOMI_RELOGIN_REQUIRED")), { message: "XIAOMI_RELOGIN_REQUIRED", status: 401, retryable: false });
 
   const complete = await seal({
     userId: "fake-user", cUserId: "fake-cuser", ssecurity: "ZmFrZQ==", serviceToken: "fake-token", region: "cn", deviceId: "fake-device", userAgent: "fake-agent", createdAt: 0,
-  });
-  const session = await readXiaomiSession(complete);
+  }, process.env.XIAOMI_SESSION_SECRET);
+  const session = await readXiaomiSession(complete, process.env.XIAOMI_SESSION_SECRET);
   assert.equal(session.deviceId, "fake-device");
   assert.equal(session.cUserId, "fake-cuser");
 });

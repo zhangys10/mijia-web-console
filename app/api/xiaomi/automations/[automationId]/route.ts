@@ -49,7 +49,7 @@ async function context(request: NextRequest, automationId: string) {
   if (!value) return { response: NextResponse.json({ error: "XIAOMI_NOT_CONNECTED" }, { status: 401 }) };
   const homeId = request.nextUrl.searchParams.get("homeId");
   if (!validIdentifier(homeId) || !validIdentifier(automationId)) return { response: NextResponse.json({ error: "INVALID_AUTOMATION_COMMAND" }, { status: 400 }) };
-  const session = await readXiaomiSession(value);
+  const session = await readXiaomiSession(value, process.env.XIAOMI_SESSION_SECRET);
   const homes = await listHomes(session);
   try { assertHomeAccess(homes, homeId!); }
   catch { return { response: NextResponse.json({ error: "XIAOMI_HOME_NOT_FOUND" }, { status: 404 }) }; }

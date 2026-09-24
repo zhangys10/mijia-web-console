@@ -150,8 +150,8 @@ function completeSession(session: XiaomiSession) {
   return session;
 }
 
-export async function readXiaomiSession(value: string): Promise<XiaomiSession> {
-  return readXiaomiSessionWithSecret(value);
+export async function readXiaomiSession(value: string, secret?: string): Promise<XiaomiSession> {
+  return readXiaomiSessionWithSecret(value, secret);
 }
 
 export async function readXiaomiSessionWithSecret(value: string, secret?: string): Promise<XiaomiSession> {
@@ -196,7 +196,7 @@ async function digest(algorithm: "SHA-1" | "SHA-256", data: Uint8Array) {
   return new Uint8Array(await crypto.subtle.digest(algorithm, data as BufferSource));
 }
 
-async function sessionKey(secret = process.env.XIAOMI_SESSION_SECRET) {
+async function sessionKey(secret?: string) {
   if (!secret) throw new Error("SESSION_SECRET_NOT_CONFIGURED");
   const keyBytes = await digest("SHA-256", encoder.encode(secret));
   return crypto.subtle.importKey("raw", keyBytes as BufferSource, "AES-GCM", false, ["encrypt", "decrypt"]);
@@ -210,8 +210,8 @@ export async function sealWithSecret(value: object, secret?: string) {
   return `${bytesToBase64(iv)}.${bytesToBase64(encrypted)}`;
 }
 
-export async function seal(value: object) {
-  return sealWithSecret(value);
+export async function seal(value: object, secret?: string) {
+  return sealWithSecret(value, secret);
 }
 
 export async function unsealWithSecret<T>(value: string, secret?: string): Promise<T> {
@@ -222,8 +222,8 @@ export async function unsealWithSecret<T>(value: string, secret?: string): Promi
   return JSON.parse(decoder.decode(plain)) as T;
 }
 
-export async function unseal<T>(value: string): Promise<T> {
-  return unsealWithSecret<T>(value);
+export async function unseal<T>(value: string, secret?: string): Promise<T> {
+  return unsealWithSecret<T>(value, secret);
 }
 
 function parseXiaomiJson(text: string) {

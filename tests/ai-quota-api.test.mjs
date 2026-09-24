@@ -47,7 +47,7 @@ function baseEnv(overrides = {}) {
 }
 
 async function createCookieHeader(session) {
-  return `xiaomi_session=${await seal(session)}`;
+  return `xiaomi_session=${await seal(session, process.env.XIAOMI_SESSION_SECRET)}`;
 }
 
 test("quota API returns only the current session principal summary", async () => {

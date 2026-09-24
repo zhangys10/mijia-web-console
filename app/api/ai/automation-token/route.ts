@@ -19,7 +19,7 @@ export async function GET() {
 
   if (sessionCookie) {
     try {
-      const session = await readXiaomiSession(sessionCookie);
+      const session = await readXiaomiSession(sessionCookie, process.env.XIAOMI_SESSION_SECRET);
       loggedIn = true;
       userId = session.userId;
     } catch {
@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const session = await readXiaomiSession(sessionCookie);
+    const session = await readXiaomiSession(sessionCookie, process.env.XIAOMI_SESSION_SECRET);
 
     let body: Record<string, unknown>;
     try {
@@ -127,7 +127,11 @@ export async function POST(request: NextRequest) {
       expiresAt,
     };
 
-    const token = await sealAutomationToken(payload);
+    const token = await sealAutomationToken(payload, {
+      secret: process.env.AI_AUTOMATION_TOKEN_SECRET,
+      keyId: process.env.AI_AUTOMATION_TOKEN_KEY_ID,
+      env: process.env.APP_ENV ?? process.env.NODE_ENV ?? "development",
+    });
 
     return NextResponse.json(
       {

@@ -4,7 +4,7 @@ async function invoke(request: Request) {
   const context = { request, env: process.env };
   if (process.env.AI_ENVIRONMENT === "development") {
     const { localAssistantExposureStore } = await import("../../../../lib/ai/tools/local-assistant-exposure-store.ts");
-    return handler(context, { store: localAssistantExposureStore() });
+    return handler(context, { store: localAssistantExposureStore(process.env.AI_ASSISTANT_EXPOSURE_DIR) });
   }
   return handler(context);
 }
