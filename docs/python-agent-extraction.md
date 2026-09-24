@@ -15,12 +15,11 @@ conversation storage, agent usage quotas, and forwards bounded turns to Python.
 - Envelope: requestId, principalId, homeId, scopes, sessionBinding, optional idempotencyKey,
   tool and arguments. No new Xiaomi credentials leave the console.
 - Binding is decrypted only here; principal is re-derived and current home access rechecked.
-- `authorize` returns `{ok:true}`; `list_scenes` returns sanitized alias/name/description/actionCount.
+- `authorize` returns `{ok:true}`. `list_scenes` returns only scenes approved for the current home whose content still matches the approved revision and whose normalized actions pass the conservative low-risk policy; summaries use opaque aliases and contain no real scene IDs or DIDs.
 - `get_home_status` returns a sanitized read-only home snapshot; it stays out of preview.
 - `get_device_status` returns a sanitized read-only per-room device on/off snapshot
   (the same device pipeline and lighting model as the 首页 dashboard); it stays out of preview.
-- `activate_scene` currently returns `AI_SCENE_EXECUTION_DISABLED`; remote control requires
-  durable cross-conversation atomic execution claims plus reviewed scene revision/risk checks.
+- `activate_scene` revalidates the home-scoped alias, approval, scene revision and risk, then requires a durable cross-conversation Blob claim before dispatch. Remote execution remains disabled by default until the deployed concurrency, recovery and end-to-end gates in the agent repo's `docs/TODO.md` pass.
 - Optional `X-Ai-User-Token` header (checked after the service Bearer) adds a user
   automation-token ingress for the Python agent's `/ai/command` pipeline. The token is
   opaque to the agent; only this console opens it (`AI_AUTOMATION_TOKEN_SECRET`),

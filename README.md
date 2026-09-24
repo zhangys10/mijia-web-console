@@ -107,9 +107,9 @@ Agent 运行时位于独立的 `mijia-agent` 仓库。本仓库的 Web Chat API 
 - `AI_AUTOMATION_TOKEN_SECRET`：签发和验证短期 Automation Token 的独立高熵密钥；Web Chat、Siri 和本地生产验证使用同一 token 工具信封。缺失时非预览聊天会安全失败，不会回退到 session binding。
 - `APP_ENV`：Automation Token 的 AES-GCM AAD 环境边界。生产环境必须显式设为 `production`；签发 token 的 `/api/ai/chat`、验证 token 的 `/api/ai/tools` 和离线 token 生成器必须使用相同值。
 - `AI_AUTOMATION_TOKEN_KEY_ID`：可选的 token 密钥版本标签；未设置时使用内置默认值。开始密钥轮换后，所有签发方和验证方必须同时配置相同标签。
-- 场景目录不做预置审核名单：`/api/ai/tools` 的 `list_scenes` 返回该家庭下所有已启用的手动场景；模型只看到场景别名、名称和描述；小米会话、真实场景 ID、DID 和原始用户 ID 不进入模型上下文。
+- `/api/ai/tools` 的 `list_scenes` 只返回当前家庭中已启用、通过低风险筛选、且其当前动作 revision 已由成员授权的场景；每个家庭还需启用场景操作。模型只看到不透明场景别名和脱敏动作摘要；小米会话、真实场景 ID、DID 和原始用户 ID 不进入模型上下文。
 - 连续对话由 Makers Agent 的 `Makers-Conversation-Id` 和服务端 principal/home 派生的存储键隔离。
-- `idempotencyKey` 是请求/回执标识，不是授权；Phase 1 的 Web Chat 固定为 `ai:chat`，不会因为客户端提供 key 而获得 `scene:activate`。未来物理动作必须同时满足服务器签发的 action scope、暴露/修订校验、durable action ledger 和幂等 claim。
+- `idempotencyKey` 是请求/回执标识，不是授权；Web Chat 固定为 `ai:chat`，不会因为客户端提供 key 而获得 `scene:activate`。物理动作还必须经过服务器签发的 action scope、暴露/修订校验、durable action ledger 和幂等 claim。
 
 ### `AI_PRINCIPAL_SECRET`
 

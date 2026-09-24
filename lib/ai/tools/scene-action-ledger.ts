@@ -27,8 +27,11 @@ export type SceneActionClaim =
   | { kind: "conflict" };
 
 export class SceneActionLedgerError extends Error {
-  constructor(readonly code: "AI_ACTION_LEDGER_UNAVAILABLE") {
+  readonly code: "AI_ACTION_LEDGER_UNAVAILABLE";
+
+  constructor(code: "AI_ACTION_LEDGER_UNAVAILABLE") {
     super(code);
+    this.code = code;
   }
 }
 

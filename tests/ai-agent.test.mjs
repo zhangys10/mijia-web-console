@@ -29,9 +29,17 @@ const session = {
   createdAt: now - 60_000,
 };
 
+const lightAction = (deviceName, room = "客厅") => ({
+  order: 0,
+  label: "开启灯光",
+  deviceName,
+  room,
+  details: [{ kind: "power", label: "电源", value: "开启" }],
+});
+
 const scenes = [
-  { id: "real-scene-id", homeId, name: "回家模式", enabled: true, actionCount: 2 },
-  { id: "real-other-scene-id", homeId, name: "观影模式", enabled: true, actionCount: 1 },
+  { id: "real-scene-id", homeId, name: "回家模式", enabled: true, actionCount: 2, actions: [lightAction("客厅灯")] },
+  { id: "real-other-scene-id", homeId, name: "观影模式", enabled: true, actionCount: 1, actions: [lightAction("客厅射灯")] },
   { id: "real-disabled-scene-id", homeId, name: "离家模式", enabled: false, actionCount: 1 },
   { id: "real-other-home-scene-id", homeId: otherHomeId, name: "其它家庭", enabled: true, actionCount: 1 },
 ];
@@ -41,6 +49,10 @@ async function sceneCatalog(principal = principalId, home = homeId) {
     principalId: principal,
     homeId: home,
     scenes,
+    devices: [
+      { name: "客厅灯", room: "客厅", kind: "light" },
+      { name: "客厅射灯", room: "客厅", kind: "light" },
+    ],
   });
 }
 
@@ -86,7 +98,7 @@ test("agent binding is sealed, scoped, expiring, and mismatch-rejecting", async 
   );
 });
 
-test("scene catalog exposes every enabled scene of the home as principal-scoped aliases", async () => {
+test("scene catalog exposes sanitized, risk-classified scenes of the home as principal-scoped aliases", async () => {
   const catalog = await sceneCatalog();
   const safeScenes = safeScenesForModel(catalog);
   const serialized = JSON.stringify(safeScenes);
@@ -98,18 +110,9 @@ test("scene catalog exposes every enabled scene of the home as principal-scoped 
   assert.equal(serialized.includes("real-scene-id"), false);
   assert.equal(serialized.includes("real-other-scene-id"), false);
   assert.equal(serialized.includes("raw-user-id"), false);
-  assert.deepEqual(safeScenes, [
-    {
-      id: catalog[0].alias,
-      name: "回家模式",
-      description: "当前家庭的手动场景：回家模式",
-    },
-    {
-      id: catalog[1].alias,
-      name: "观影模式",
-      description: "当前家庭的手动场景：观影模式",
-    },
-  ]);
+  assert.deepEqual(safeScenes.map(scene => [scene.name, scene.risk]), [["回家模式", "low"], ["观影模式", "low"]]);
+  assert.match(safeScenes[0].revision, /^rev_[a-f0-9]{24}$/);
+  assert.deepEqual(safeScenes[0].actionSummaries, [{ room: "客厅", device: "客厅灯", actions: [{ label: "电源", value: "开启" }] }]);
 
   const otherPrincipalCatalog = await sceneCatalog(otherPrincipalId);
   assert.notEqual(otherPrincipalCatalog[0].alias, catalog[0].alias);

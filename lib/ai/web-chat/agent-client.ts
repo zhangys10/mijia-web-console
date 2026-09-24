@@ -109,6 +109,65 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function normalizeAgentSceneSummary(value: unknown): AgentSceneSummary | null {
+  const scene = objectRecord(value);
+  if (
+    !scene
+    || typeof scene.alias !== "string"
+    || scene.alias.length > 128
+    || typeof scene.name !== "string"
+    || scene.name.length > 200
+    || typeof scene.description !== "string"
+    || scene.description.length > 500
+    || !Number.isSafeInteger(scene.actionCount)
+    || (scene.actionCount as number) < 0
+    || typeof scene.revision !== "string"
+    || !/^rev_[a-f0-9]{24}$/.test(scene.revision)
+    || (scene.risk !== "low" && scene.risk !== "blocked")
+    || !Array.isArray(scene.actionSummaries)
+    || scene.actionSummaries.length > 32
+  ) return null;
+
+  const actionSummaries: AgentSceneSummary["actionSummaries"] = [];
+  for (const value of scene.actionSummaries) {
+    const summary = objectRecord(value);
+    if (
+      !summary
+      || (summary.room !== null && (typeof summary.room !== "string" || summary.room.length > 200))
+      || (summary.device !== null && (typeof summary.device !== "string" || summary.device.length > 200))
+      || !Array.isArray(summary.actions)
+      || summary.actions.length > 12
+    ) return null;
+    const actions: AgentSceneSummary["actionSummaries"][number]["actions"] = [];
+    for (const actionValue of summary.actions) {
+      const action = objectRecord(actionValue);
+      if (
+        !action
+        || typeof action.label !== "string"
+        || action.label.length > 80
+        || typeof action.value !== "string"
+        || action.value.length > 80
+      ) return null;
+      actions.push({ label: action.label, value: action.value });
+    }
+    actionSummaries.push({
+      room: summary.room as string | null,
+      device: summary.device as string | null,
+      actions,
+    });
+  }
+
+  return {
+    alias: scene.alias,
+    name: scene.name,
+    description: scene.description,
+    actionCount: scene.actionCount as number,
+    revision: scene.revision,
+    risk: scene.risk,
+    actionSummaries,
+  };
+}
+
 async function responseBody(response: Response) {
   const text = await response.text();
   if (new TextEncoder().encode(text).byteLength > 64 * 1024) return null;
@@ -387,21 +446,9 @@ function normalizeAgentResult(
     quota: body.quota === undefined ? undefined : normalizeQuota(body.quota),
   };
   if (Array.isArray(body.scenes)) {
-    result.scenes = body.scenes.flatMap((item) => {
-      const scene = objectRecord(item);
-      return scene
-        && typeof scene.alias === "string"
-        && typeof scene.name === "string"
-        && typeof scene.description === "string"
-        && Number.isSafeInteger(scene.actionCount)
-        && (scene.actionCount as number) >= 0
-        ? [{
-          alias: scene.alias,
-          name: scene.name,
-          description: scene.description,
-          actionCount: scene.actionCount as number,
-        }]
-        : [];
+    result.scenes = body.scenes.flatMap(item => {
+      const scene = normalizeAgentSceneSummary(item);
+      return scene ? [scene] : [];
     });
   }
   // Malformed status payloads are dropped (undefined), never partially trusted.
