@@ -16,12 +16,12 @@ export async function GET(request: NextRequest) {
     if (requestedHomeId && !validIdentifier(requestedHomeId)) return NextResponse.json({ error: "INVALID_HOME_ID", retryable: false }, { status: 400 });
     const value = (await cookies()).get("xiaomi_session")?.value;
     if (!value) return NextResponse.json({ error: "XIAOMI_NOT_CONNECTED" }, { status: 401 });
-    const session = await readXiaomiSession(value);
+    const session = await readXiaomiSession(value, process.env.XIAOMI_SESSION_SECRET);
     const discoveryStartedAt = Date.now();
     const result = await listDevices(session);
     const discoveryDurationMs = Date.now() - discoveryStartedAt;
     const runtimeStartedAt = Date.now();
-    const sync = await syncXiaomiDevices(session, result);
+    const sync = await syncXiaomiDevices(session, result, process.env.XIAOMI_RUNTIME_DEBUG === "1");
     const runtimeDurationMs = Date.now() - runtimeStartedAt;
     const { runtime } = sync;
     for (const mapped of new Set([...sync.topology.values()])) {
@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
           controlObjectComplete: channel.controlObjectComplete,
           objectCount: channel.controlObjects.length,
           classification: channel.classification,
-        });
+        }, process.env.XIAOMI_RUNTIME_DEBUG === "1");
       }
     }
     const devices = sync.devices;

@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     if (!value) return NextResponse.json({ error: "XIAOMI_NOT_CONNECTED" }, { status: 401 });
     const homeId = request.nextUrl.searchParams.get("homeId");
     if (!validIdentifier(homeId)) return NextResponse.json({ error: "INVALID_HOME_ID" }, { status: 400 });
-    const session = await readXiaomiSession(value);
+    const session = await readXiaomiSession(value, process.env.XIAOMI_SESSION_SECRET);
     const homes = await listHomes(session);
     try { assertHomeAccess(homes, homeId!); }
     catch { return NextResponse.json({ error: "XIAOMI_HOME_NOT_FOUND" }, { status: 404 }); }
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
     if (!value) return NextResponse.json({ error: "XIAOMI_NOT_CONNECTED" }, { status: 401 });
     const draft = assertAutomationDraft(await request.json(), false);
     if (!draft.schedule && !draft.triggerSelections?.length || !draft.actions?.length) return NextResponse.json({ error: "INVALID_AUTOMATION_DRAFT" }, { status: 400 });
-    const session = await readXiaomiSession(value);
+    const session = await readXiaomiSession(value, process.env.XIAOMI_SESSION_SECRET);
     const homes = await listHomes(session);
     try { assertHomeAccess(homes, draft.homeId); }
     catch { return NextResponse.json({ error: "XIAOMI_HOME_NOT_FOUND" }, { status: 404 }); }

@@ -38,15 +38,13 @@ type PropertyResultState =
   | { status: "property-result-invalid" }
   | { status: "property-batch-failed" };
 
-const debugRuntime = process.env.XIAOMI_RUNTIME_DEBUG === "1";
-
 export function errorCode(error: unknown) {
   const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
   return /^(?:XIAOMI|MIOT)_[A-Z0-9_]+$/.test(message) ? message : error instanceof Error ? error.name : "UNKNOWN_ERROR";
 }
 
-export function runtimeDiagnostic(event: string, details: Record<string, unknown>) {
-  if (!debugRuntime) return;
+export function runtimeDiagnostic(event: string, details: Record<string, unknown>, enabled = false) {
+  if (!enabled) return;
   console.info("[xiaomi-runtime]", JSON.stringify({ event, ...details }));
 }
 
@@ -82,7 +80,8 @@ function chunks<T>(values: T[], size: number) {
 
 export type RuntimeState = Awaited<ReturnType<typeof loadRuntimeState>>;
 
-export async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[]) {
+export async function loadRuntimeState(session: XiaomiSession, devices: RawDevice[], diagnosticsEnabled = false) {
+  const emitDiagnostic = (event: string, details: Record<string, unknown>) => runtimeDiagnostic(event, details, diagnosticsEnabled);
   const candidates = devices.filter(device => {
     const did = text(device.did);
     if (!did || parseDerivedDeviceId(did)) return false;
@@ -102,7 +101,7 @@ export async function loadRuntimeState(session: XiaomiSession, devices: RawDevic
       const groups = (await getMiotCapabilities(item.model, item.urn)).groups;
       specifications.set(key, groups);
       if (item.model === "xiaomi.controller.oh4w") {
-        runtimeDiagnostic("specification-loaded", {
+        emitDiagnostic("specification-loaded", {
           model: item.model,
           switches: groups.filter(group => group.name === "switch").map(group => ({
             siid: group.siid,
@@ -119,7 +118,7 @@ export async function loadRuntimeState(session: XiaomiSession, devices: RawDevic
       const failure = errorCode(error);
       specifications.set(key, []);
       specificationFailures.set(key, failure);
-      runtimeDiagnostic("specification-failed", { model: item.model, error: failure });
+      emitDiagnostic("specification-failed", { model: item.model, error: failure });
     }
   }));
 
@@ -141,14 +140,14 @@ export async function loadRuntimeState(session: XiaomiSession, devices: RawDevic
     const role = inferHardwareRole(model, text(device.name));
     if (!isOnline(device)) {
       if (role === "controller" || role === "switch") {
-        runtimeDiagnostic("device-skipped", { model, reason: "device-offline" });
+        emitDiagnostic("device-skipped", { model, reason: "device-offline" });
       }
       continue;
     }
     if (role === "controller" || role === "switch") {
       const switchGroups = groups.filter(group => group.name === "switch");
       if (!switchGroups.length) {
-        runtimeDiagnostic("switch-services-missing", {
+        emitDiagnostic("switch-services-missing", {
           model,
           reason: specificationFailures.has(specificationKey) ? "spec-unavailable" : "switch-service-missing",
           error: specificationFailures.get(specificationKey) ?? null,
@@ -160,7 +159,7 @@ export async function loadRuntimeState(session: XiaomiSession, devices: RawDevic
         channelDescriptors.push({ device, group, buttonIndex: index + 1, on, mode });
         for (const property of [on, mode]) if (property) plans.set(propertyKey(did, property.siid, property.piid), { did, siid: property.siid, piid: property.piid });
         if (model === "xiaomi.controller.oh4w" && !mode) {
-          runtimeDiagnostic("mode-property-missing", {
+          emitDiagnostic("mode-property-missing", {
             model,
             siid: group.siid,
             properties: group.properties.map(property => ({ name: property.name, piid: property.piid, readable: property.readable })),
@@ -188,7 +187,7 @@ export async function loadRuntimeState(session: XiaomiSession, devices: RawDevic
       if (!Array.isArray(response.result)) {
         incompletePropertyBatches.add(batchIndex);
         for (const plan of batch) resultStates.set(propertyKey(plan.did, plan.siid, plan.piid), { status: "property-result-invalid" });
-        runtimeDiagnostic("property-batch-invalid", { batch: batchIndex + 1, requested: batch.length });
+        emitDiagnostic("property-batch-invalid", { batch: batchIndex + 1, requested: batch.length });
         return;
       }
       let accepted = 0;
@@ -209,7 +208,7 @@ export async function loadRuntimeState(session: XiaomiSession, devices: RawDevic
         resultStates.set(key, { status: "ok" });
         accepted += 1;
       }
-      runtimeDiagnostic("property-batch-completed", {
+      emitDiagnostic("property-batch-completed", {
         batch: batchIndex + 1,
         requested: batch.length,
         returned: response.result.length,
@@ -222,7 +221,7 @@ export async function loadRuntimeState(session: XiaomiSession, devices: RawDevic
       if (xiaomiErrorInfo(error).retryable) retryablePropertyBatches.add(batchIndex);
       const failure = errorCode(error);
       for (const plan of batch) resultStates.set(propertyKey(plan.did, plan.siid, plan.piid), { status: "property-batch-failed" });
-      runtimeDiagnostic("property-batch-failed", { batch: batchIndex + 1, requested: batch.length, error: failure });
+      emitDiagnostic("property-batch-failed", { batch: batchIndex + 1, requested: batch.length, error: failure });
     }
   }));
 
@@ -237,7 +236,7 @@ export async function loadRuntimeState(session: XiaomiSession, devices: RawDevic
     const connectionType = diagnostic.capability === "wireless-only" ? "wireless" : "unknown";
     if (diagnostic.capability === "unknown") {
       const resultState = modeKey ? resultStates.get(modeKey) : undefined;
-      runtimeDiagnostic("channel-mode-unknown", {
+      emitDiagnostic("channel-mode-unknown", {
         model: deviceModel(descriptor.device),
         siid: descriptor.group.siid,
         modeProperty: descriptor.mode ? { name: descriptor.mode.name, piid: descriptor.mode.piid } : null,
@@ -248,7 +247,7 @@ export async function loadRuntimeState(session: XiaomiSession, devices: RawDevic
         choices: descriptor.mode?.choices ?? [],
       });
     } else if (deviceModel(descriptor.device) === "xiaomi.controller.oh4w") {
-      runtimeDiagnostic("channel-mode-resolved", {
+      emitDiagnostic("channel-mode-resolved", {
         model: deviceModel(descriptor.device),
         siid: descriptor.group.siid,
         piid: descriptor.mode?.piid ?? null,
@@ -367,6 +366,7 @@ export type XiaomiDeviceSync = {
 export async function syncXiaomiDevices(
   session: XiaomiSession,
   discovery: XiaomiDeviceList,
+  diagnosticsEnabled = false,
 ): Promise<XiaomiDeviceSync> {
   const groupDids = discovery.devices.map(device => text(device.did)).filter(isDeviceGroupId);
   const groupMembershipRequest = loadDeviceGroupMemberships(session, groupDids)
@@ -374,8 +374,8 @@ export async function syncXiaomiDevices(
     .catch(error => ({ members: new Map<string, string[]>(), error }));
   // Runtime-state budget shared by both callers: exceeding it degrades to
   // "unknown" power values rather than failing the whole sync.
-  const runtime = await withTimeoutFallback(loadRuntimeState(session, discovery.devices), 12_000, () => {
-    runtimeDiagnostic("runtime-state-budget-exceeded", { budgetMs: 12_000, devices: discovery.devices.length });
+  const runtime = await withTimeoutFallback(loadRuntimeState(session, discovery.devices, diagnosticsEnabled), 12_000, () => {
+    runtimeDiagnostic("runtime-state-budget-exceeded", { budgetMs: 12_000, devices: discovery.devices.length }, diagnosticsEnabled);
     return {
       channels: new Map(),
       devicePower: new Map(),

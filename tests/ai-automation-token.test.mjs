@@ -154,6 +154,14 @@ test("malformed token segments, unexpected keyId or environment mismatch are rej
     () => openAutomationToken("v2.key.iv.ct.tag", { secret: fakeSecret }),
     (err) => err instanceof AutomationTokenError && err.code === "AUTOMATION_TOKEN_INVALID"
   );
+  await assert.rejects(
+    () => openAutomationToken(token, { secret: fakeSecret }),
+    (err) => err instanceof AutomationTokenError && err.code === "AI_AUTOMATION_TOKEN_ENVIRONMENT_NOT_CONFIGURED"
+  );
+  await assert.rejects(
+    () => sealAutomationToken(payload, { secret: fakeSecret, keyId: "key-1" }),
+    (err) => err instanceof AutomationTokenError && err.code === "AI_AUTOMATION_TOKEN_ENVIRONMENT_NOT_CONFIGURED"
+  );
 });
 
 test("expired token is rejected with AUTOMATION_TOKEN_EXPIRED", async () => {

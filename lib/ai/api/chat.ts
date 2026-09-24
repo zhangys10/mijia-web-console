@@ -1,13 +1,13 @@
-import { listHomes, readXiaomiSessionWithSecret } from "../../../lib/xiaomi-cloud.ts";
-import { MakersAgentClient } from "../../../lib/ai/web-chat/agent-client.ts";
-import { AiWebService } from "../../../lib/ai/web-chat/web-chat-service.ts";
+import { listHomes, readXiaomiSessionWithSecret } from "../../xiaomi-cloud.ts";
+import { MakersAgentClient } from "../web-chat/agent-client.ts";
+import { AiWebService } from "../web-chat/web-chat-service.ts";
 import {
   authenticateXiaomiSession,
   jsonResponse,
   readJsonBody,
   webApiErrorResponse,
   type AiWebContext,
-} from "../../../lib/ai/web-chat/web-api-boundary.ts";
+} from "../web-chat/web-api-boundary.ts";
 
 type ChatHandlerDependencies = {
   fetchImpl?: typeof fetch;

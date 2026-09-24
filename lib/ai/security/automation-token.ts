@@ -20,6 +20,7 @@ export type AutomationTokenErrorCode =
   | "AUTOMATION_TOKEN_INVALID"
   | "AUTOMATION_TOKEN_EXPIRED"
   | "AUTOMATION_TOKEN_ENVIRONMENT_MISMATCH"
+  | "AI_AUTOMATION_TOKEN_ENVIRONMENT_NOT_CONFIGURED"
   | "AI_AUTOMATION_TOKEN_SECRET_NOT_CONFIGURED";
 
 export class AutomationTokenError extends Error {
@@ -37,10 +38,6 @@ const DEFAULT_KEY_ID = "key-2026-01";
 const MAX_TOKEN_LENGTH = 8192;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-
-function nodeEnvironment(): NodeJS.ProcessEnv | undefined {
-  return typeof process === "undefined" ? undefined : process.env;
-}
 
 function bytesToBase64Url(bytes: Uint8Array): string {
   if (typeof Buffer !== "undefined") {
@@ -71,18 +68,18 @@ export async function computePrincipalId(region: string, userId: string): Promis
 export type SealTokenOptions = {
   secret?: string;
   keyId?: string;
-  env?: string;
+  env: string;
 };
 
 export type OpenTokenOptions = {
   secret?: string;
   expectedKeyId?: string;
-  env?: string;
+  env: string;
   now?: number;
 };
 
 function resolveSecret(customSecret?: string): string {
-  const secret = customSecret || nodeEnvironment()?.AI_AUTOMATION_TOKEN_SECRET;
+  const secret = customSecret;
   if (!secret) {
     throw new AutomationTokenError(
       "AI_AUTOMATION_TOKEN_SECRET_NOT_CONFIGURED",
@@ -93,12 +90,18 @@ function resolveSecret(customSecret?: string): string {
 }
 
 function resolveKeyId(customKeyId?: string): string {
-  return customKeyId || nodeEnvironment()?.AI_AUTOMATION_TOKEN_KEY_ID || DEFAULT_KEY_ID;
+  return customKeyId || DEFAULT_KEY_ID;
 }
 
 function resolveEnv(customEnv?: string): string {
-  const environment = nodeEnvironment();
-  return customEnv || environment?.APP_ENV || environment?.NODE_ENV || "development";
+  const environment = customEnv?.trim();
+  if (!environment) {
+    throw new AutomationTokenError(
+      "AI_AUTOMATION_TOKEN_ENVIRONMENT_NOT_CONFIGURED",
+      "自动化令牌运行环境尚未配置",
+    );
+  }
+  return environment;
 }
 
 async function deriveCryptoKey(secret: string): Promise<CryptoKey> {
@@ -163,7 +166,7 @@ export async function openAutomationToken(
     throw new AutomationTokenError("AUTOMATION_TOKEN_INVALID", "自动化凭据段结构错误");
   }
 
-  const expectedKeyId = options?.expectedKeyId || nodeEnvironment()?.AI_AUTOMATION_TOKEN_KEY_ID;
+  const expectedKeyId = options?.expectedKeyId;
   if (expectedKeyId && keyId !== expectedKeyId) {
     throw new AutomationTokenError("AUTOMATION_TOKEN_INVALID", "自动化凭据密钥标识不匹配");
   }

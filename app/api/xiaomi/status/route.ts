@@ -6,7 +6,7 @@ export async function GET() {
   try {
     const value = (await cookies()).get("xiaomi_session")?.value;
     if (!value) return NextResponse.json({ connected: false });
-    const session = await readXiaomiSession(value);
+    const session = await readXiaomiSession(value, process.env.XIAOMI_SESSION_SECRET);
     return NextResponse.json({ connected: true, region: session.region, userId: `••••${session.userId.slice(-4)}` });
   } catch (error) { return NextResponse.json({ connected: false, error: error instanceof Error ? error.message : "INVALID_SESSION" }, { status: 401 }); }
 }

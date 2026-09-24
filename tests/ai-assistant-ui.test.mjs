@@ -104,7 +104,7 @@ test("assistant exposure settings use compact filterable rows and select only fi
   assert.match(styles, /@media\(max-width:600px\).*\.assistant-exposure-table tbody tr\{display:grid/s);
 });
 
-test("next routes delegate to the shared edge-function handlers without duplicating boundary logic", async () => {
+test("Next routes own the AI API URLs and call shared handlers directly", async () => {
   const chat = await read("../app/api/ai/chat/route.ts");
   const conversations = await read("../app/api/ai/conversations/route.ts");
   const deletion = await read("../app/api/ai/conversations/[conversationId]/route.ts");
@@ -124,6 +124,13 @@ test("next routes delegate to the shared edge-function handlers without duplicat
   assert.match(quota, /export async function GET/);
 
   for (const route of [chat, conversations, deletion, quota]) {
+    assert.doesNotMatch(route, /edge-functions/);
     assert.doesNotMatch(route, /authenticateXiaomiSession|readJsonBody|webApiErrorResponse/, "routes must reuse the shared boundary, not re-implement it");
   }
+  const allApiRoutes = await Promise.all([
+    "../app/api/ai/exposure/route.ts",
+    "../app/api/internal/assistant/v1/capabilities/route.ts",
+    "../app/api/internal/assistant/v1/tools:invoke/route.ts",
+  ].map(read));
+  assert.ok(allApiRoutes.every(route => !route.includes("edge-functions")));
 });

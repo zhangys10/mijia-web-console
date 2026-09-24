@@ -126,11 +126,11 @@ function parseOverrides(value: string | undefined): Record<string, Partial<Quota
   return overrides;
 }
 
-export function isQuotaEnabled(env: QuotaEnvironment = process.env): boolean {
+export function isQuotaEnabled(env: QuotaEnvironment): boolean {
   return bool(env, "AI_QUOTA_ENABLED", true);
 }
 
-export function loadQuotaPolicy(env: QuotaEnvironment = process.env): QuotaPolicy {
+export function loadQuotaPolicy(env: QuotaEnvironment): QuotaPolicy {
   const failModeValue = env.AI_QUOTA_FAIL_MODE ?? "closed";
   if (failModeValue !== "closed" && failModeValue !== "open") {
     throw new QuotaPolicyError("AI_QUOTA_CONFIG_INVALID", "AI_QUOTA_FAIL_MODE 只允许 closed 或 open");

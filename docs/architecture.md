@@ -90,7 +90,7 @@ flowchart LR
     Secret -.运行时注入.-> Vercel
 ```
 
-Cloudflare 构建由 `vite.config.ts` 和 `worker/index.ts` 负责；EdgeOne、Vercel 分别通过 `edgeone.json`、`vercel.json` 使用原生 Next.js 构建。三种目标共享相同的应用与领域代码。
+Cloudflare 构建由 `vite.config.ts` 和 `worker/index.ts` 负责；EdgeOne、Vercel 分别通过 `edgeone.json`、`vercel.json` 使用原生 Next.js 构建。所有 Console HTTP API 由 `app/api/**/route.ts` 持有，平台间共享 `lib/` 服务实现；不再有 Edge Function API 路由副本。三种目标共享相同的应用与领域代码。
 
 ## 2. 主要调用链
 

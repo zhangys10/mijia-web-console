@@ -17,7 +17,7 @@ export type EdgeOneKvBinding = {
 };
 
 type EdgeOneKvQuotaStoreOptions = {
-  env?: string;
+  env: string;
   now?: () => number;
 };
 
@@ -74,9 +74,9 @@ export class EdgeOneKvQuotaStore implements QuotaStore {
   private readonly env: string;
   private readonly now: () => number;
 
-  constructor(binding: EdgeOneKvBinding, options: EdgeOneKvQuotaStoreOptions = {}) {
+  constructor(binding: EdgeOneKvBinding, options: EdgeOneKvQuotaStoreOptions) {
     this.binding = binding;
-    this.env = options.env ?? process.env.APP_ENV ?? process.env.NODE_ENV ?? "development";
+    this.env = options.env;
     this.now = options.now ?? Date.now;
   }
 
