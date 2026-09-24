@@ -22,7 +22,7 @@ test("keeps typography readable across desktop, tablet and mobile layouts", asyn
   assert.match(styles, /\.header-controls\s*\{[^}]*width:\s*100%/s);
   assert.match(styles, /\.associated-device-ids code/);
   assert.match(contractStyles, /--text-secondary:\s*#596574/);
-  assert.match(contractStyles, /--action-primary:\s*#c2410c/);
+  assert.match(contractStyles, /--action-primary:\s*#ff6b2c/);
   assert.match(contractStyles, /:focus-visible/);
   assert.match(contractStyles, /@media\s*\(max-width:\s*360px\)/);
   assert.match(contractStyles, /body input, body select, body textarea \{ font-size: 16px !important; \}/);
