@@ -32,7 +32,7 @@ body textarea {
   font-size: var(--font-page-title);
 }
 
-.workspace header p,
+.workspace-header .header-copy p,
 .brand small,
 .mode small,
 .profile small,
@@ -98,8 +98,6 @@ body textarea {
 .settings-heading span,
 .setting-label small,
 .range-control small,
-.readonly-note,
-.capability-note,
 .spec-group > summary small,
 .spec-events > div > small,
 .spec-events > p,

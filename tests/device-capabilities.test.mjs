@@ -77,3 +77,14 @@ test("device and scene pages consume separate capability projections", async () 
   assert.match(scenePage, /listSceneWritableProperties\(group\)/);
   assert.match(scenePage, /立即执行 Action、只读属性和仅写属性不会在此交叉调用/);
 });
+
+test("device detail keeps unknown capabilities read only and submits range values explicitly", async () => {
+  const devicePage = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(devicePage, /function deviceSettings\(/);
+  assert.match(devicePage, /无法确认可写能力/);
+  assert.match(devicePage, /演示数据 · 只读预览/);
+  assert.match(devicePage, /role="switch" aria-label=\{setting\.label\} aria-checked=\{value\}/);
+  assert.match(devicePage, /当前状态\{setting\.access==="write-only"\?"不可读取":"未知"\}/);
+  assert.doesNotMatch(devicePage, /onPointerUp=\{\(\)=>onApply\(setting/);
+  assert.match(devicePage, /onClick=\{\(\)=>onApply\(setting,Number\(value\)\)\}>保存/);
+});

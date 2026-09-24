@@ -5,6 +5,7 @@ import test from "node:test";
 test("keeps typography readable across desktop, tablet and mobile layouts", async () => {
   const styles = await readFile(new URL("../app/responsive.css", import.meta.url), "utf8");
   const typography = await readFile(new URL("../app/typography.css", import.meta.url), "utf8");
+  const contractStyles = await readFile(new URL("../app/design-contract.css", import.meta.url), "utf8");
 
   assert.match(typography, /body\s*\{[^}]*font-size:\s*var\(--font-body\)/s);
   assert.match(styles, /@media\s*\(max-width:\s*1320px\)/);
@@ -20,6 +21,14 @@ test("keeps typography readable across desktop, tablet and mobile layouts", asyn
   assert.match(styles, /\.active-device-grid\s*\{[^}]*grid-template-columns:/s);
   assert.match(styles, /\.header-controls\s*\{[^}]*width:\s*100%/s);
   assert.match(styles, /\.associated-device-ids code/);
+  assert.match(contractStyles, /--text-secondary:\s*#596574/);
+  assert.match(contractStyles, /--action-primary:\s*#c2410c/);
+  assert.match(contractStyles, /:focus-visible/);
+  assert.match(contractStyles, /@media\s*\(max-width:\s*360px\)/);
+  assert.match(contractStyles, /body input, body select, body textarea \{ font-size: 16px !important; \}/);
+  assert.match(contractStyles, /\.ai-assistant-button \{ bottom: calc\(16px \+ env\(safe-area-inset-bottom\)\); \}/);
+  assert.match(contractStyles, /\.workspace \{ padding-bottom: calc\(104px \+ env\(safe-area-inset-bottom\)\); \}/);
+  assert.match(contractStyles, /prefers-reduced-motion/);
 });
 
 test("mobile navigation opens the complete account drawer and closes safely", async () => {
@@ -34,6 +43,18 @@ test("mobile navigation opens the complete account drawer and closes safely", as
   assert.match(source, /setMobileMenuOpen\(false\);openLogin\(\)/);
   assert.match(source, /event\.key==="Escape"/);
   assert.doesNotMatch(source, /早上好，Ryan|<strong>Ryan<\/strong>|2026年8月25日/);
+});
+
+test("device and login dialogs remain above the assistant and contain keyboard focus", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../app/design-contract.css", import.meta.url), "utf8");
+  assert.match(source, /role="dialog" aria-modal="true" aria-labelledby="device-dialog-title"/);
+  assert.match(source, /role="dialog" aria-modal="true" aria-labelledby="auth-dialog-title"/);
+  assert.match(source, /modal\.querySelectorAll<HTMLElement>\(/);
+  assert.match(source, /event\.key!==.Tab./);
+  assert.match(source, /previousFocus\.focus\(\)/);
+  assert.match(styles, /\.modal-bg \{ z-index: 50; \}/);
+  assert.match(styles, /\.modal \.setting-row \{ align-items: stretch; flex-direction: column; \}/);
 });
 
 test("renders the rebuilt device inventory and interactive light topology on desktop and mobile", async () => {
@@ -70,5 +91,9 @@ test("renders the rebuilt device inventory and interactive light topology on des
   assert.match(component, /dm-channel-siid/);
   assert.match(component, /无线控制/);
   assert.match(component, /关系待确认/);
-  assert.match(component, /stopPropagation\(\);\s*onOpenMember\(member\)/);
+  assert.match(component, /className="dm-record-name" onClick=\{onOpen\}/);
+  assert.match(component, /onClick=\{\(\) => onOpenMember\(member\)\}/);
+  assert.doesNotMatch(component, /role="button" tabIndex=\{0\} onClick=\{onOpen\}/);
+  assert.match(component, /当前筛选 \{resultCount\} 个 \/ 本视图 \{totalCount\} 个/);
+  assert.match(component, /groupedTopologies\.map\(group =>/);
 });
