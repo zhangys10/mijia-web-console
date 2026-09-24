@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     if (!validIdentifier(body.homeId) || !validIdentifier(body.sceneId)) return NextResponse.json({ error: "INVALID_SCENE_COMMAND" }, { status: 400 });
     const homeId = body.homeId as string;
     const sceneId = body.sceneId as string;
-    const session = await readXiaomiSession(value);
+    const session = await readXiaomiSession(value, process.env.XIAOMI_SESSION_SECRET);
     const homes = await listHomes(session);
     try { assertHomeAccess(homes, homeId); }
     catch { return NextResponse.json({ error: "XIAOMI_HOME_NOT_FOUND" }, { status: 404 }); }

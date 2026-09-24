@@ -59,7 +59,7 @@ export class AssistantExposureError extends Error {
 type ExposureEnvironment = Record<string, string | undefined>;
 
 function blobStore(runtimeEnv?: ExposureEnvironment): AssistantExposureStore {
-  const env: ExposureEnvironment = runtimeEnv ?? (typeof process === "undefined" ? {} : process.env);
+  const env = runtimeEnv ?? {};
   const name = env.AI_ASSISTANT_EXPOSURE_STORE?.trim() || "mijia-ai-assistant-exposure-v1";
   const projectId = env.PAGES_PROJECT_ID?.trim();
   const token = env.PAGES_BLOB_API_TOKEN?.trim();

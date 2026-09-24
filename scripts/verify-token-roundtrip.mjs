@@ -33,7 +33,11 @@ try {
   const token = stdout.trim().split("\n").at(-1);
   console.log("token prefix:", token.slice(0, 12) + "…");
 
-  const payload = await openAutomationToken(token, { secret: secrets.AI_AUTOMATION_TOKEN_SECRET });
+  const payload = await openAutomationToken(token, {
+    secret: secrets.AI_AUTOMATION_TOKEN_SECRET,
+    expectedKeyId: secrets.AI_AUTOMATION_TOKEN_KEY_ID,
+    env: secrets.APP_ENV ?? secrets.NODE_ENV ?? "development",
+  });
   if (payload.xiaomiSession.userId !== session.userId) throw new Error("userId mismatch");
   if (payload.purpose !== "ai-home-automation" || payload.version !== 1) throw new Error("payload mismatch");
   const expectedPrincipal = await computePrincipalForTest(session);

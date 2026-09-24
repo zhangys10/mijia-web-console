@@ -4,13 +4,48 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { sealWithSecret } from "../lib/xiaomi-cloud.ts";
+import { onRequest as exposureHandler } from "../lib/ai/api/exposure.ts";
 import {
   assistantExposureProjection,
   readAssistantExposure,
   updateAssistantExposure,
 } from "../lib/ai/tools/assistant-exposure.ts";
-import { filterEnvironmentByExposure, filterDeviceStatus } from "../lib/ai/tools/assistant-v1-service.ts";
+import { filterEnvironmentByExposure, filterDeviceStatus, invokeAssistantToolV1 } from "../lib/ai/tools/assistant-v1-service.ts";
+import { sealAutomationToken } from "../lib/ai/security/automation-token.ts";
 import { createLocalAssistantExposureStore } from "../lib/ai/tools/local-assistant-exposure-store.ts";
+
+test("exposure API treats homeId as routing context, not an exposure setting", async () => {
+  const env = {
+    XIAOMI_SESSION_SECRET: "ai-exposure-route-session-secret-at-least-32-characters",
+    AI_PRINCIPAL_SECRET: "ai-exposure-route-principal-secret-at-least-32-characters",
+  };
+  const session = {
+    userId: "exposure-route-user", cUserId: "exposure-route-c-user", ssecurity: "mock-ssecurity",
+    serviceToken: "mock-service-token", region: "cn", deviceId: "mock-device", userAgent: "mock-agent", createdAt: Date.now(),
+  };
+  const cookie = await sealWithSecret(session, env.XIAOMI_SESSION_SECRET);
+  const stored = [];
+  const response = await exposureHandler({
+    request: new Request("http://localhost/api/ai/exposure", {
+      method: "PUT",
+      headers: { Cookie: `xiaomi_session=${encodeURIComponent(cookie)}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ homeId: "home-route-test", enabled: true, roomMetrics: {}, deviceRefs: [] }),
+    }),
+    env,
+  }, {
+    homes: async () => [{ id: "home-route-test" }],
+    devices: async () => ({ devices: [] }),
+    store: {
+      async get() { return null; },
+      async setJSON(key, value) { stored.push({ key, value }); },
+    },
+  });
+
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.equal(stored.length, 2);
+  assert.equal(stored.some(({ value }) => value.homeId), false);
+});
 
 async function entityRef(homeId, did) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${homeId}:${did}`));
@@ -113,6 +148,95 @@ test("per-room metric rules prevent a filter from exposing a metric granted only
   assert.equal(filtered.groups.length, 1);
   assert.equal(filtered.groups[0].metric, "humidity");
   assert.equal(filtered.groups[0].latest.value, 50);
+});
+
+test("assistant environment response stays within the Python reading and body limits", () => {
+  const capturedAt = "2026-09-23T00:00:00Z";
+  const readings = Array.from({ length: 25 }, (_, index) => ({
+    value: index,
+    unit: "°C",
+    sourceLabel: `测试传感器${"甲".repeat(170)}${index}`,
+    roomName: "客厅",
+    capturedAt,
+    freshness: "fresh",
+  }));
+  const metrics = ["temperature", "humidity", "co2", "formaldehyde", "pm25", "pm10", "tvoc", "pressure", "battery"];
+  const snapshot = {
+    capturedAt,
+    completeness: "complete",
+    groups: metrics.map(metric => ({ metric, label: "读数", unit: "°C", latest: readings[0], readings })),
+    warnings: [],
+  };
+  let truncation;
+  const filtered = filterEnvironmentByExposure(snapshot, { "客厅": metrics }, details => { truncation = details; });
+  assert.deepEqual(truncation, { readingLimitReached: true, responseSizeLimitReached: false });
+  assert.equal(filtered.groups.length, metrics.length);
+  assert.ok(filtered.groups.every(group => group.readings.length <= 20));
+  assert.equal(filtered.groups[0].latest.value, 0);
+  assert.equal(filtered.completeness, "partial");
+  assert.match(filtered.warnings[0], /未展示/);
+  assert.ok(new TextEncoder().encode(JSON.stringify(filtered)).byteLength <= 60_000);
+});
+
+test("assistant tool reuses one authenticated device discovery for inventory and readings", async () => {
+  const env = {
+    APP_ENV: "test",
+    AI_ENVIRONMENT: "production",
+    AI_AUTOMATION_TOKEN_SECRET: "test-automation-secret-not-real-12345",
+    AI_PRINCIPAL_SECRET: "test-principal-secret-not-real-123456789",
+  };
+  const session = { userId: "test-user", serviceToken: "fake-token", ssecurity: "fake-security", region: "cn" };
+  const token = await sealAutomationToken({
+    version: 1,
+    purpose: "ai-home-automation",
+    audience: "mijia-agent",
+    principalId: "forged-principal-ignored",
+    xiaomiSession: session,
+    region: "cn",
+    homeId: "test-home",
+    issuedAt: Date.now() - 1000,
+    expiresAt: Date.now() + 60000,
+  }, { secret: env.AI_AUTOMATION_TOKEN_SECRET, env: env.APP_ENV });
+  const discovery = {
+    homes: [{ id: "test-home", name: "测试家庭" }],
+    devices: [
+      { homeId: "test-home", did: "fake-device-1", name: "测试传感器", roomName: "客厅", model: "sensor.test" },
+      { homeId: "test-home", did: "fake-device-2", name: "测试传感器", roomName: "卧室", model: "sensor.test" },
+    ],
+  };
+  let discoveryCalls = 0;
+  let environmentCalls = 0;
+  const result = await invokeAssistantToolV1({ requestId: "req_test_environment", operation: "get_home_environment", arguments: { rooms: ["客厅"], metrics: ["temperature"] } }, token, env, {
+    discovery: async () => { discoveryCalls += 1; return discovery; },
+    exposure: async () => ({ version: 1, enabled: true, roomMetrics: { "客厅": ["temperature"], "卧室": ["humidity"] }, deviceDids: [], updatedAt: null, revision: "exp_test" }),
+    environment: async (_session, _home, dependencies, filter) => {
+      environmentCalls += 1;
+      assert.equal(await dependencies.listDevices(session), discovery);
+      assert.deepEqual(filter.rooms, ["客厅", "卧室"]);
+      assert.deepEqual(filter.metrics.sort(), ["temperature", "humidity"].sort());
+      return {
+        capturedAt: "2026-09-23T00:00:00Z",
+        completeness: "complete",
+        groups: [
+          { metric: "temperature", label: "温度", unit: "°C", latest: { value: 23, unit: "°C", sourceLabel: "测试传感器", roomName: "客厅", capturedAt: "2026-09-23T00:00:00Z", freshness: "fresh" }, readings: [{ value: 23, unit: "°C", sourceLabel: "测试传感器", roomName: "客厅", capturedAt: "2026-09-23T00:00:00Z", freshness: "fresh" }] },
+          { metric: "humidity", label: "湿度", unit: "%", latest: { value: 50, unit: "%", sourceLabel: "测试传感器", roomName: "卧室", capturedAt: "2026-09-23T00:00:00Z", freshness: "fresh" }, readings: [{ value: 50, unit: "%", sourceLabel: "测试传感器", roomName: "卧室", capturedAt: "2026-09-23T00:00:00Z", freshness: "fresh" }] },
+        ],
+        warnings: [],
+      };
+    },
+  });
+  assert.equal(discoveryCalls, 1);
+  assert.equal(environmentCalls, 1);
+  assert.equal(result.groups.length, 1);
+  assert.equal(result.groups[0].metric, "temperature");
+  assert.equal(result.groups[0].latest.value, 23);
+  await assert.rejects(
+    invokeAssistantToolV1({ requestId: "req_test_environment", operation: "get_home_environment", arguments: { rooms: ["未授权房间"] } }, token, env, {
+      discovery: async () => discovery,
+      exposure: async () => ({ version: 1, enabled: true, roomMetrics: { "客厅": ["temperature"], "卧室": ["humidity"] }, deviceDids: [], updatedAt: null, revision: "exp_test" }),
+    }),
+    /AI_INVALID_REQUEST/,
+  );
 });
 
 test("device filters preserve unknown states and only return the selected room, kind, and state", () => {

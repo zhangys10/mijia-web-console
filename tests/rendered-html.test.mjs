@@ -51,7 +51,10 @@ test("reading or changing device settings requires an authenticated Xiaomi sessi
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `control-${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
-  const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
+  const env = {
+    ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
+    XIAOMI_SESSION_SECRET: process.env.XIAOMI_SESSION_SECRET,
+  };
   const context = { waitUntil() {}, passThroughOnException() {} };
 
   for (const request of [
@@ -193,7 +196,7 @@ test("scene APIs reject malformed identifiers before contacting Xiaomi", async (
     serviceToken: "unused",
     region: "cn",
     createdAt: Date.now(),
-  });
+  }, process.env.XIAOMI_SESSION_SECRET);
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `scene-validation-${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);

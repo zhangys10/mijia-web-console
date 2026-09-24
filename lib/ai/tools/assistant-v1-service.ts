@@ -1,11 +1,12 @@
-import { listDevices, listHomes, type XiaomiSession } from "../../xiaomi-cloud.ts";
+import { listDevices, listHomes, type XiaomiDeviceList, type XiaomiSession } from "../../xiaomi-cloud.ts";
 import { isPreviewEnvironment } from "../config.ts";
 import { derivePrincipalId } from "../security/principal.ts";
 import { AutomationTokenError, openAutomationToken } from "../security/automation-token.ts";
 import { collectDeviceStatus, type DeviceStatus } from "../../device-status.ts";
 import { classifyDeviceKind } from "../../device-views.ts";
-import { collectHomeEnvironment, type EnvironmentMetric, type EnvironmentSnapshot } from "../../home-environment.ts";
+import { collectHomeEnvironment, type EnvironmentMetric, type EnvironmentSnapshot, type HomeEnvironmentDiagnostics } from "../../home-environment.ts";
 import {
+  AssistantExposureError,
   assistantExposureProjection,
   listAssistantExposureInventory,
   readAssistantExposure,
@@ -16,7 +17,7 @@ import {
 import { authorizeRemoteTool, RemoteToolError } from "./remote-tool-service.ts";
 
 type Environment = Record<string, string | undefined>;
-type HomeContext = { session: XiaomiSession; homeId: string; exposure: AssistantExposure; inventory: ExposureInventory; selectedDids: string[] };
+type HomeContext = { session: XiaomiSession; homeId: string; discovery: XiaomiDeviceList; exposure: AssistantExposure; inventory: ExposureInventory; selectedDids: string[] };
 
 export type AssistantV1Dependencies = {
   homes?: typeof listHomes;
@@ -26,6 +27,7 @@ export type AssistantV1Dependencies = {
   homeInventory?: typeof listAssistantExposureInventory;
   exposure?: typeof readAssistantExposure;
   exposureStore?: AssistantExposureStore;
+  diagnosticLogger?: (record: Record<string, unknown>) => void;
 };
 
 const NO_STORE = { "Cache-Control": "no-store" };
@@ -65,7 +67,8 @@ async function resolveHomeContext(
   if (payload.audience !== "mijia-agent") throw new RemoteToolError("AUTOMATION_TOKEN_INVALID", 401);
   try { await derivePrincipalId(payload.xiaomiSession, env); }
   catch { throw new RemoteToolError("AI_UNAUTHENTICATED", 401); }
-  const homes = await (dependencies.homes ?? listHomes)(payload.xiaomiSession);
+  const discovery = await (dependencies.discovery ?? listDevices)(payload.xiaomiSession);
+  const homes = dependencies.homes ? await dependencies.homes(payload.xiaomiSession) : discovery.homes;
   if (!homes.length) throw new RemoteToolError("AI_HOME_NOT_FOUND", 404);
   const selector = typeof input.home === "string" ? input.home.trim() : "";
   const home = selector
@@ -73,9 +76,13 @@ async function resolveHomeContext(
     : payload.homeId ? homes.find(item => item.id === payload.homeId) : homes[0];
   if (!home) throw new RemoteToolError("AI_HOME_NOT_FOUND", 404);
   const exposure = await (dependencies.exposure ?? readAssistantExposure)(home.id, dependencies.exposureStore, env);
-  const inventory = await (dependencies.homeInventory ?? listAssistantExposureInventory)(payload.xiaomiSession, home.id, exposure);
-  const deviceList = await (dependencies.discovery ?? listDevices)(payload.xiaomiSession);
-  const eligibleDids = new Set(deviceList.devices.flatMap(device => {
+  const inventory = dependencies.homeInventory
+    ? await dependencies.homeInventory(payload.xiaomiSession, home.id, exposure)
+    : await listAssistantExposureInventory(payload.xiaomiSession, home.id, exposure, {
+      homes: async () => homes,
+      devices: async () => discovery,
+    });
+  const eligibleDids = new Set(discovery.devices.flatMap(device => {
     if (String(device.homeId ?? "") !== home.id) return [];
     const name = typeof device.name === "string" ? device.name : "";
     const model = typeof device.model === "string" ? device.model : "";
@@ -84,7 +91,7 @@ async function resolveHomeContext(
     return did && !/(?:lock|camera|doorbell|security|alarm|intercom)/i.test(`${kind} ${model} ${name}`) ? [did] : [];
   }));
   const selectedDids = exposure.enabled ? exposure.deviceDids.filter(did => eligibleDids.has(did)) : [];
-  return { session: payload.xiaomiSession, homeId: home.id, exposure, inventory, selectedDids };
+  return { session: payload.xiaomiSession, homeId: home.id, discovery, exposure, inventory, selectedDids };
 }
 
 export async function getAssistantCapabilitiesV1(
@@ -109,6 +116,11 @@ export async function getAssistantCapabilitiesV1(
   };
 }
 
+function statusIsPartial(diagnostics: HomeEnvironmentDiagnostics) {
+  return diagnostics.specificationFailures > 0 || diagnostics.failedBatches > 0
+    || diagnostics.missingResults > 0 || diagnostics.nonzeroResults > 0 || diagnostics.invalidValues > 0;
+}
+
 function stringFilter(args: Record<string, unknown>, name: string, allowed: readonly string[], max: number): string[] | undefined {
   const value = args[name];
   if (value === undefined) return undefined;
@@ -129,13 +141,38 @@ function validateArguments(operation: unknown, value: unknown, projection: Retur
   return { rooms, metrics: metrics as EnvironmentMetric[] | undefined, kinds, states };
 }
 
-export function filterEnvironmentByExposure(status: EnvironmentSnapshot, roomMetrics: Record<string, readonly EnvironmentMetric[]>): EnvironmentSnapshot {
+export function filterEnvironmentByExposure(status: EnvironmentSnapshot, roomMetrics: Record<string, readonly EnvironmentMetric[]>, onTruncation?: (details: { readingLimitReached: boolean; responseSizeLimitReached: boolean }) => void): EnvironmentSnapshot {
+  let truncated = false;
   const groups = status.groups.flatMap(group => {
     const readings = group.readings.filter(item => item.roomName !== null && (roomMetrics[item.roomName] ?? []).includes(group.metric));
     const latest = group.latest && group.latest.roomName !== null && (roomMetrics[group.latest.roomName] ?? []).includes(group.metric) ? group.latest : readings[0] ?? null;
-    return readings.length || latest ? [{ ...group, latest, readings }] : [];
+    if (readings.length > 20) truncated = true;
+    return readings.length || latest ? [{ ...group, latest, readings: readings.slice(0, 20) }] : [];
   });
-  return { ...status, groups, completeness: groups.length ? status.completeness : "empty" };
+  const snapshot: EnvironmentSnapshot = { ...status, groups, completeness: groups.length ? status.completeness : "empty" };
+  const truncationWarning = "部分读数未展示。";
+  const byteLength = () => new TextEncoder().encode(JSON.stringify({
+    ...snapshot,
+    completeness: "partial",
+    warnings: [...status.warnings.slice(0, 7), truncationWarning],
+  })).byteLength;
+  let responseSizeLimitReached = byteLength() > 60_000;
+  while (responseSizeLimitReached) {
+    const largest = snapshot.groups.filter(group => group.readings.length > 1)
+      .sort((left, right) => right.readings.length - left.readings.length)[0];
+    if (!largest) break;
+    largest.readings.pop();
+    truncated = true;
+    responseSizeLimitReached = byteLength() > 60_000;
+  }
+  if (truncated) {
+    snapshot.completeness = "partial";
+    snapshot.warnings = [...status.warnings.slice(0, 7), truncationWarning];
+  }
+  if (truncated || responseSizeLimitReached) {
+    onTruncation?.({ readingLimitReached: truncated, responseSizeLimitReached });
+  }
+  return snapshot;
 }
 
 export function filterDeviceStatus(status: DeviceStatus, rooms: readonly string[], kinds: readonly string[] | undefined, states: readonly string[] | undefined): DeviceStatus {
@@ -168,20 +205,37 @@ export async function invokeAssistantToolV1(
   if (isPreviewEnvironment(env)) throw new RemoteToolError("AI_PREVIEW_READ_ONLY", 403);
   if (operation === "get_home_environment") {
     if (!projection.capabilities.some(item => item.name === "get_home_environment")) throw new RemoteToolError("AI_CAPABILITY_UNAVAILABLE", 403);
-    const rooms = filters.rooms ?? operationProjection.rooms;
+    const exposedRooms = operationProjection.rooms;
+    const exposedRoomMetrics = Object.fromEntries(exposedRooms.map(room => [room, context.exposure.roomMetrics[room] ?? []]));
+    const exposedMetrics = [...new Set(Object.values(exposedRoomMetrics).flat())];
+    const requestId = typeof input.requestId === "string" && /^[A-Za-z0-9_.-]{6,128}$/.test(input.requestId) ? input.requestId : undefined;
+    const logDiagnostic = dependencies.diagnosticLogger ?? (record => console.info(JSON.stringify(record)));
+    const status = await (dependencies.environment ?? collectHomeEnvironment)(context.session, context.homeId, {
+      listDevices: async () => context.discovery,
+      onDiagnostics: (diagnostics: HomeEnvironmentDiagnostics) => {
+        if (statusIsPartial(diagnostics)) {
+          logDiagnostic({ event: "assistant_environment_partial", requestId, route: "/api/internal/assistant/v1/tools:invoke", stage: "PROPERTY_COLLECTION", httpStatus: 200, category: "PARTIAL_READ", ...diagnostics });
+        }
+      },
+    }, {
+      rooms: exposedRooms,
+      metrics: exposedMetrics,
+      roomMetrics: exposedRoomMetrics,
+    });
+    const rooms = filters.rooms ?? exposedRooms;
     const requestedMetrics = filters.metrics;
     const roomMetrics = Object.fromEntries(rooms.flatMap(room => {
       const exposed = context.exposure.roomMetrics[room] ?? [];
       const selected = requestedMetrics ? exposed.filter(metric => requestedMetrics.includes(metric)) : exposed;
       return selected.length ? [[room, selected]] : [];
     }));
-    const metrics = [...new Set(Object.values(roomMetrics).flat())];
-    const status = await (dependencies.environment ?? collectHomeEnvironment)(context.session, context.homeId, {}, { rooms, metrics, roomMetrics });
-    return filterEnvironmentByExposure(status, roomMetrics);
+    return filterEnvironmentByExposure(status, roomMetrics, details => {
+      logDiagnostic({ event: "assistant_environment_partial", requestId, route: "/api/internal/assistant/v1/tools:invoke", stage: "EXPOSURE_FILTER", httpStatus: 200, category: "RESPONSE_TRUNCATED", ...details });
+    });
   }
   const rooms = filters.rooms ?? projection.rooms;
   const selectedDids = context.selectedDids;
-  const status = await (dependencies.devices ?? collectDeviceStatus)(context.session, context.homeId, {}, selectedDids);
+  const status = await (dependencies.devices ?? collectDeviceStatus)(context.session, context.homeId, { listDevices: async () => context.discovery }, selectedDids);
   return filterDeviceStatus(status, rooms, filters.kinds, filters.states);
 }
 
@@ -192,25 +246,46 @@ export function createAssistantV1Handler(
   return async function onRequest(context: { request: Request; env: Environment }) {
     const headers = { ...NO_STORE, "Content-Type": "application/json" };
     const respond = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
-    if (context.request.method !== "POST") return respond({ code: "AI_INVALID_REQUEST" }, 405);
-    if (!await authorizeRemoteTool(context.request.headers.get("Authorization"), context.env.AI_TOOLS_INTERNAL_SECRET)) return respond({ code: "AI_UNAUTHENTICATED" }, 401);
-    const token = context.request.headers.get("X-Ai-User-Token") ?? "";
-    if (!token) return respond({ code: "AI_UNAUTHENTICATED" }, 401);
-    let body: unknown;
+    let stage: "AUTHORIZATION" | "REQUEST_BODY" | "CAPABILITIES" | "TOOL_INVOKE" = "AUTHORIZATION";
+    let requestId: string | undefined;
     try {
-      const text = await context.request.text();
-      if (new TextEncoder().encode(text).byteLength > 32768) return respond({ code: "AI_INVALID_REQUEST" }, 400);
-      body = JSON.parse(text);
-    } catch { return respond({ code: "AI_INVALID_REQUEST" }, 400); }
-    try {
+      if (context.request.method !== "POST") return respond({ code: "AI_INVALID_REQUEST" }, 405);
+      if (!await authorizeRemoteTool(context.request.headers.get("Authorization"), context.env.AI_TOOLS_INTERNAL_SECRET)) return respond({ code: "AI_UNAUTHENTICATED" }, 401);
+      const token = context.request.headers.get("X-Ai-User-Token") ?? "";
+      if (!token) return respond({ code: "AI_UNAUTHENTICATED" }, 401);
+
+      stage = "REQUEST_BODY";
+      let body: unknown;
+      try {
+        const text = await context.request.text();
+        if (new TextEncoder().encode(text).byteLength > 32768) return respond({ code: "AI_INVALID_REQUEST" }, 400);
+        body = JSON.parse(text);
+      } catch { return respond({ code: "AI_INVALID_REQUEST" }, 400); }
+
+      requestId = body && typeof body === "object" && !Array.isArray(body)
+        && typeof (body as Record<string, unknown>).requestId === "string"
+        && /^[A-Za-z0-9_.-]{6,128}$/.test((body as Record<string, string>).requestId)
+        ? (body as Record<string, string>).requestId : undefined;
+      stage = operation === "capabilities" ? "CAPABILITIES" : "TOOL_INVOKE";
       const result = operation === "capabilities"
         ? await getAssistantCapabilitiesV1(body, token, context.env, dependencies)
         : await invokeAssistantToolV1(body, token, context.env, dependencies);
       return respond(result);
     } catch (error) {
-      return error instanceof RemoteToolError
-        ? respond({ code: error.message }, error.status)
-        : respond({ code: "AI_AGENT_UNAVAILABLE" }, 502);
+      if (error instanceof AssistantExposureError) return respond({ code: error.code }, error.status);
+      if (error instanceof RemoteToolError) return respond({ code: error.message }, error.status);
+      (dependencies.diagnosticLogger ?? (record => console.error(JSON.stringify(record))))({
+        event: "assistant_api_exception",
+        requestId: requestId ?? crypto.randomUUID(),
+        route: `/api/internal/assistant/v1/${operation === "capabilities" ? "capabilities" : "tools:invoke"}`,
+        stage,
+        httpStatus: 502,
+        category: "UNEXPECTED_EXCEPTION",
+      });
+      return respond({
+        code: "AI_AGENT_UNAVAILABLE",
+        diagnosticCode: `ASSISTANT_${stage}_EXCEPTION`,
+      }, 502);
     }
   };
 }

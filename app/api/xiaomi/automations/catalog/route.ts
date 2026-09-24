@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     if (!value) return NextResponse.json({ error: "XIAOMI_NOT_CONNECTED" }, { status: 401 });
     const homeId = request.nextUrl.searchParams.get("homeId");
     if (!validIdentifier(homeId)) return NextResponse.json({ error: "INVALID_HOME_ID" }, { status: 400 });
-    const session = await readXiaomiSession(value);
+    const session = await readXiaomiSession(value, process.env.XIAOMI_SESSION_SECRET);
     const homes = await listHomeContexts(session);
     try { assertHomeAccess(homes, homeId!); }
     catch { return NextResponse.json({ error: "XIAOMI_HOME_NOT_FOUND" }, { status: 404 }); }

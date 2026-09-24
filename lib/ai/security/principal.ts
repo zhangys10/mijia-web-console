@@ -58,7 +58,7 @@ function resolvePrincipalSecret(env: PrincipalEnvironment): string {
  */
 export async function derivePrincipalId(
   session: Pick<XiaomiSession, "userId">,
-  env: PrincipalEnvironment = process.env,
+  env: PrincipalEnvironment,
 ): Promise<string> {
   const userId = session?.userId;
   if (typeof userId !== "string" || !userId.trim()) {
