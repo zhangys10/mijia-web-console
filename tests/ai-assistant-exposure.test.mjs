@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { sealWithSecret } from "../lib/xiaomi-cloud.ts";
+import { onRequest as exposureHandler } from "../edge-functions/api/ai/exposure.ts";
 import {
   assistantExposureProjection,
   readAssistantExposure,
@@ -11,6 +13,38 @@ import {
 } from "../lib/ai/tools/assistant-exposure.ts";
 import { filterEnvironmentByExposure, filterDeviceStatus } from "../lib/ai/tools/assistant-v1-service.ts";
 import { createLocalAssistantExposureStore } from "../lib/ai/tools/local-assistant-exposure-store.ts";
+
+test("exposure API treats homeId as routing context, not an exposure setting", async () => {
+  const env = {
+    XIAOMI_SESSION_SECRET: "ai-exposure-route-session-secret-at-least-32-characters",
+    AI_PRINCIPAL_SECRET: "ai-exposure-route-principal-secret-at-least-32-characters",
+  };
+  const session = {
+    userId: "exposure-route-user", cUserId: "exposure-route-c-user", ssecurity: "mock-ssecurity",
+    serviceToken: "mock-service-token", region: "cn", deviceId: "mock-device", userAgent: "mock-agent", createdAt: Date.now(),
+  };
+  const cookie = await sealWithSecret(session, env.XIAOMI_SESSION_SECRET);
+  const stored = [];
+  const response = await exposureHandler({
+    request: new Request("http://localhost/api/ai/exposure", {
+      method: "PUT",
+      headers: { Cookie: `xiaomi_session=${encodeURIComponent(cookie)}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ homeId: "home-route-test", enabled: true, roomMetrics: {}, deviceRefs: [] }),
+    }),
+    env,
+  }, {
+    homes: async () => [{ id: "home-route-test" }],
+    devices: async () => ({ devices: [] }),
+    store: {
+      async get() { return null; },
+      async setJSON(key, value) { stored.push({ key, value }); },
+    },
+  });
+
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.equal(stored.length, 2);
+  assert.equal(stored.some(({ value }) => value.homeId), false);
+});
 
 async function entityRef(homeId, did) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${homeId}:${did}`));
