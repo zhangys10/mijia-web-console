@@ -35,13 +35,13 @@ export async function onRequest(context: AiWebContext, dependencies: { store?: A
     const homeId = requestedHome(context.request, body);
     await resolveHome(session, homeId);
     if (context.request.method === "GET") {
-      const exposure = await readAssistantExposure(homeId, dependencies.store);
+      const exposure = await readAssistantExposure(homeId, dependencies.store, context.env);
       const inventory = await listAssistantExposureInventory(session, homeId, exposure);
-      return jsonResponse({ exposure: { enabled: exposure.enabled, roomMetrics: exposure.roomMetrics, updatedAt: exposure.updatedAt, revision: exposure.revision }, inventory }, 200);
+      return jsonResponse({ exposure: { enabled: exposure.enabled, sceneActionsEnabled: exposure.sceneActionsEnabled, roomMetrics: exposure.roomMetrics, updatedAt: exposure.updatedAt, revision: exposure.revision }, inventory }, 200);
     }
     const actorPrincipalId = await derivePrincipalId(session, context.env);
-    const result = await updateAssistantExposure(session, homeId, body, actorPrincipalId, { store: dependencies.store });
-    return jsonResponse({ exposure: { enabled: result.exposure.enabled, roomMetrics: result.exposure.roomMetrics, updatedAt: result.exposure.updatedAt, revision: result.exposure.revision }, inventory: result.inventory }, 200);
+    const result = await updateAssistantExposure(session, homeId, body, actorPrincipalId, { store: dependencies.store, env: context.env });
+    return jsonResponse({ exposure: { enabled: result.exposure.enabled, sceneActionsEnabled: result.exposure.sceneActionsEnabled, roomMetrics: result.exposure.roomMetrics, updatedAt: result.exposure.updatedAt, revision: result.exposure.revision }, inventory: result.inventory }, 200);
   } catch (error) {
     if (error instanceof AssistantExposureError) {
       return jsonResponse({ code: error.code }, error.status);

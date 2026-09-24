@@ -7,8 +7,9 @@ type Inventory = {
   rooms: string[];
   metrics: Metric[];
   devices: Array<{ ref: string; name: string; room: string; kind: string; enabled: boolean; eligible: boolean }>;
+  scenes: Array<{ ref: string; name: string; actionCount: number; risk: "low" | "blocked"; enabled: boolean; revision: string; actionSummaries: Array<{ room: string | null; device: string | null; actions: Array<{ label: string; value: string }> }> }>;
 };
-type Exposure = { enabled: boolean; roomMetrics: Record<string, Metric[]>; updatedAt: string | null; revision: string };
+type Exposure = { enabled: boolean; sceneActionsEnabled: boolean; roomMetrics: Record<string, Metric[]>; updatedAt: string | null; revision: string };
 
 const metricLabels: Record<Metric, string> = {
   temperature: "温度", humidity: "湿度", co2: "二氧化碳", formaldehyde: "甲醛",
@@ -29,9 +30,10 @@ const deviceKindLabels: Record<string, string> = {
 };
 
 export default function AssistantExposureSettings({ homeId, homeName }: { homeId?: string; homeName?: string }) {
-  const [exposure, setExposure] = useState<Exposure>({ enabled: false, roomMetrics: {}, updatedAt: null, revision: "exp_default_deny" });
-  const [inventory, setInventory] = useState<Inventory>({ rooms: [], metrics: [], devices: [] });
+  const [exposure, setExposure] = useState<Exposure>({ enabled: false, sceneActionsEnabled: false, roomMetrics: {}, updatedAt: null, revision: "exp_default_deny" });
+  const [inventory, setInventory] = useState<Inventory>({ rooms: [], metrics: [], devices: [], scenes: [] });
   const [selectedDevices, setSelectedDevices] = useState<string[]>([]);
+  const [selectedScenes, setSelectedScenes] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -53,6 +55,7 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
         setExposure(body.exposure);
         setInventory(body.inventory);
         setSelectedDevices(body.inventory.devices.filter(device => device.enabled).map(device => device.ref));
+        setSelectedScenes(body.inventory.scenes.filter(scene => scene.enabled).map(scene => scene.ref));
       } catch {
         if (!cancelled) setError("无法读取家庭暴露设置，请稍后重试。");
       } finally {
@@ -147,13 +150,14 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ homeId, enabled: exposure.enabled, roomMetrics: exposure.roomMetrics, deviceRefs: selectedDevices }),
+        body: JSON.stringify({ homeId, enabled: exposure.enabled, sceneActionsEnabled: exposure.sceneActionsEnabled, roomMetrics: exposure.roomMetrics, deviceRefs: selectedDevices, sceneRefs: selectedScenes }),
       });
       const body = await response.json().catch(() => null) as { code?: string; exposure?: Exposure; inventory?: Inventory } | null;
       if (!response.ok || !body?.exposure || !body.inventory) throw new Error(body?.code ?? "AI_AGENT_UNAVAILABLE");
       setExposure(body.exposure);
       setInventory(body.inventory);
       setSelectedDevices(body.inventory.devices.filter(device => device.enabled).map(device => device.ref));
+      setSelectedScenes(body.inventory.scenes.filter(scene => scene.enabled).map(scene => scene.ref));
       setSaved(true);
     } catch {
       setError("保存失败，家庭数据未开放给 AI 助手。");
@@ -240,6 +244,32 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
                 {allDevicesSelected ? "取消设备全选" : "全选设备状态"}
               </button>
             </div> : <p className="assistant-exposure-note">没有可配置的设备。</p>}
+          </div>
+          <div className="assistant-exposure-section">
+            <h3>场景操作权限 <small>仅限已识别的低风险灯光场景</small></h3>
+            <label className="assistant-exposure-master">
+              <input type="checkbox" checked={exposure.sceneActionsEnabled} disabled={!homeId || loading} onChange={event => { setExposure(value => ({ ...value, sceneActionsEnabled: event.target.checked })); setSaved(false); }} />
+              <span>允许 AI 执行已选场景</span>
+            </label>
+            {inventory.scenes.length ? <fieldset className="assistant-exposure-group" disabled={!homeId || loading}>
+              <legend>手动场景</legend>
+              {inventory.scenes.map(scene => <label key={scene.ref}>
+                <input
+                  type="checkbox"
+                  checked={selectedScenes.includes(scene.ref)}
+                  disabled={scene.risk !== "low"}
+                  onChange={() => {
+                    setSelectedScenes(current => current.includes(scene.ref)
+                      ? current.filter(ref => ref !== scene.ref)
+                      : [...current, scene.ref]);
+                    setSaved(false);
+                  }}
+                />
+                <span>{scene.name}</span>
+                <small>{scene.risk === "low" ? `${scene.actionCount} 个灯光动作` : "含未知或不支持动作"}</small>
+              </label>)}
+            </fieldset> : <p className="assistant-exposure-note">当前家庭没有可配置的手动场景。</p>}
+            <p className="assistant-exposure-note">场景授权按当前内容版本保存；场景被编辑后需要重新开放。远程执行仍处于关闭状态。</p>
           </div>
           <div className="assistant-exposure-footer">
             <span>{exposure.updatedAt ? `上次更新 ${new Date(exposure.updatedAt).toLocaleString()}` : "当前未开放任何家庭数据"}</span>

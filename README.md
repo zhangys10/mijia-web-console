@@ -91,6 +91,13 @@ EdgeOne Pages 运行时，Blob SDK 使用平台提供的部署凭据。Node/Next
 无需 Pages Blob 凭据。生产 Edge Function 仍使用 Blob namespace 和强一致读取。
 敏感设备类别不会列为可开放项，读取过滤只会减少已授权数据。
 
+Phase 3 场景授权复用同一家庭 Blob 配置：家庭成员可以单独开放通过保守规则识别的
+低风险灯光场景，授权绑定规范化动作内容的 revision；场景内容变化后旧授权不再匹配。
+执行前控制台会重新读取场景、校验风险与授权，并通过独立 Blob namespace 的
+`onlyIfNew` claim 和强一致读取领取跨会话执行回执。缺少 claim/outcome 回执时按结果未知
+处理，不会重发。`AI_SCENE_EXECUTION_ENABLED` 默认关闭；在 mijia-agent `docs/TODO.md`
+所列的 EdgeOne 并发、故障恢复和一次低风险端到端门禁完成前不得启用。
+
 ### 远程 Makers Agent
 
 Agent 运行时位于独立的 `mijia-agent` 仓库。本仓库的 Web Chat API 在完成小米登录、家庭归属和会话校验后，签发短期 Automation Token 并携带内部鉴权调用远程 Agent；Agent 端点不是公开 Web API。Makers adapter 会先通过 `/api/ai/tools` 重新解析 token 并比对 principal/home，再读取对话或调用 Python；Python 仅在模型选择家居能力时原样转发 token。
@@ -224,6 +231,7 @@ npm run build
 | `AI_TOOLS_INTERNAL_SECRET` | 必填，至少 32 字符 | Agent 回调 `/api/ai/tools` 的内部 Bearer 鉴权 |
 | `AI_AUTOMATION_TOKEN_KEY_ID` | 可选 | token 密钥版本；设置后签发方和验证方必须一致 |
 | `AI_QUOTA_ENABLED` | 建议显式设置 | `false` 完全停用配额；其他合法配置见 AI Quota 一节 |
+| `AI_SCENE_EXECUTION_ENABLED` | 保持 unset/`false`，直到 agent `docs/TODO.md` 中的 Phase 3 部署门禁全部完成 | 允许已授权的低风险灯光场景进入执行路径 |
 
 Production 不得设置 `AI_ENVIRONMENT=preview`。环境变量新增或修改后必须重新部署；仅保存变量但继续运行旧部署，可能仍使用旧的绑定快照。部署后先验证 Web Chat 能签发 token，再确认 Agent 可通过 `/api/ai/tools` 打开同一 token。
 
