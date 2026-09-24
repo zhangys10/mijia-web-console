@@ -225,10 +225,11 @@ export function buildEnvironmentSnapshot(input: {
   values: Array<{ metric: EnvironmentMetric; sourceLabel: string; roomName: string | null; value: number; declaredUnit?: string }>;
   specificationFailureCount: number;
   failedBatchCount: number;
+  failedReadCount?: number;
 }): EnvironmentSnapshot {
   const warnings: string[] = [];
   if (input.specificationFailureCount > 0) warnings.push("部分设备规格解析失败，相关读数缺失。");
-  if (input.failedBatchCount > 0) warnings.push("部分设备读数暂时不可用。");
+  if (input.failedBatchCount > 0 || (input.failedReadCount ?? 0) > 0) warnings.push("部分设备读数暂时不可用。");
 
   const grouped = new Map<EnvironmentMetric, EnvironmentReading[]>();
   for (const item of input.values) {
@@ -270,6 +271,7 @@ export type HomeEnvironmentDiagnostics = {
   failedBatches: number;
   missingResults: number;
   nonzeroResults: number;
+  nonzeroResultDetails: Array<{ metric: EnvironmentMetric; code: number | null; count: number }>;
   invalidValues: number;
   acceptedValues: number;
 };
@@ -332,6 +334,7 @@ export async function collectHomeEnvironment(
       failedBatches: 0,
       missingResults: 0,
       nonzeroResults: 0,
+      nonzeroResultDetails: [],
       invalidValues: 0,
       acceptedValues: 0,
     });
@@ -367,11 +370,20 @@ export async function collectHomeEnvironment(
   let missingResults = 0;
   let nonzeroResults = 0;
   let invalidValues = 0;
+  const nonzeroResultCounts = new Map<string, { metric: EnvironmentMetric; code: number | null; count: number }>();
   const values = planned
     .map(plan => ({ plan, raw: returned.get(`${plan.did}:${plan.siid}:${plan.piid}`) }))
     .flatMap(({ plan, raw }) => {
       if (!raw) { missingResults += 1; return []; }
-      if (raw.code !== 0) { nonzeroResults += 1; return []; }
+      if (raw.code !== 0) {
+        nonzeroResults += 1;
+        const code = Number.isInteger(raw.code) ? raw.code : null;
+        const key = `${plan.metric}:${code ?? "unknown"}`;
+        const detail = nonzeroResultCounts.get(key) ?? { metric: plan.metric, code, count: 0 };
+        detail.count += 1;
+        nonzeroResultCounts.set(key, detail);
+        return [];
+      }
       const value = sanitizeNumber(raw.value);
       if (value === null) { invalidValues += 1; return []; }
       return [{
@@ -391,6 +403,7 @@ export async function collectHomeEnvironment(
     failedBatches: failedBatches,
     missingResults,
     nonzeroResults,
+    nonzeroResultDetails: [...nonzeroResultCounts.values()],
     invalidValues,
     acceptedValues: values.length,
   });
@@ -401,6 +414,7 @@ export async function collectHomeEnvironment(
     values,
     specificationFailureCount: specificationFailures,
     failedBatchCount: failedBatches,
+    failedReadCount: missingResults + nonzeroResults + invalidValues,
   });
 }
 

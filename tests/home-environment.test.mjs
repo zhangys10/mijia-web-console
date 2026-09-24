@@ -168,9 +168,17 @@ test("collector keeps successful readings and reports per-item failures as parti
     planned: diagnostics.plannedReads,
     accepted: diagnostics.acceptedValues,
     nonzero: diagnostics.nonzeroResults,
+    nonzeroDetails: diagnostics.nonzeroResultDetails,
     missing: diagnostics.missingResults,
-  }, { planned: 4, accepted: 1, nonzero: 1, missing: 2 });
+  }, {
+    planned: 4,
+    accepted: 1,
+    nonzero: 1,
+    nonzeroDetails: [{ metric: "humidity", code: -701007, count: 1 }],
+    missing: 2,
+  });
   assert.equal(snapshot.completeness, "partial");
+  assert.ok(snapshot.warnings.includes("部分设备读数暂时不可用。"));
   assert.equal(snapshot.groups[0].metric, "temperature");
   assert.equal(snapshot.groups[0].latest.value, 25.5);
   const raw = JSON.stringify(snapshot);
