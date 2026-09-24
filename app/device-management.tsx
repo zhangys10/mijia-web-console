@@ -9,6 +9,7 @@ import {
   type ManagedDeviceCategory,
   type ManagedDeviceRecord,
 } from "../lib/device-management";
+import { deviceConnection, devicePower, filterDeviceItems, type DeviceFilterState, type DeviceSort, type PowerFilterState } from "../lib/device-management-filters";
 
 type Props = {
   devices: ManagedDevice[];
@@ -29,7 +30,8 @@ const categoryLabels: Record<ManagedDeviceCategory, string> = {
 };
 const hiddenRoom = /勿关|勿删|语音|隐藏/;
 
-function roomPriority(room: string) { return hiddenRoom.test(room) ? 1 : 0; }
+function roomPriority(room: string) { return /^(未分配|未知)/.test(room) ? 2 : hiddenRoom.test(room) ? 1 : 0; }
+function toggleOption<T>(values: readonly T[], value: T): T[] { return values.includes(value) ? values.filter(item => item !== value) : [...values, value]; }
 function channelLabel(control: LightingControl) {
   if (control.channelIndex !== null) return `按键 ${control.channelIndex}`;
   if (control.channelSiid !== null) return `服务 ${control.channelSiid}`;
@@ -77,18 +79,34 @@ function channelPreviewPresentation(channel: PreviewChannel, targetKinds: Array<
 export default function DeviceManagement({ devices, room, connected, onSelectRoom, onOpenDevice }: Props) {
   const [view, setView] = useState<"hardware" | "topology">("hardware");
   const [selectedTopology, setSelectedTopology] = useState("");
+  const [kinds, setKinds] = useState<string[]>([]);
+  const [connections, setConnections] = useState<DeviceFilterState[]>([]);
+  const [powers, setPowers] = useState<PowerFilterState[]>([]);
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<DeviceSort>("stable");
+  const [filterNote, setFilterNote] = useState("");
   const model = useMemo(() => buildDeviceManagementModel(devices), [devices]);
   const endpointsById = useMemo(() => new Map(model.endpoints.flatMap(record => record.device.did ? [[record.device.did, record.device] as const] : [])), [model.endpoints]);
   const rooms = useMemo(() => ["全屋", ...Array.from(new Set([
     ...model.records.map(record => record.device.room),
     ...model.topologies.map(topology => topology.room),
   ])).sort((left, right) => roomPriority(left) - roomPriority(right) || left.localeCompare(right, "zh-CN"))], [model]);
-  const roomRecords = useMemo(() => model.records.filter(record => room === "全屋" || record.device.room === room), [model.records, room]);
+  const kindOptions = useMemo(() => view === "hardware"
+    ? Array.from(new Set(model.records.map(record => categoryLabels[record.category])))
+    : Array.from(new Set(model.topologies.map(topologyKindLabel))), [model.records, model.topologies, view]);
+  const filters = useMemo(() => ({ room, kinds, connections, powers, query, sort }), [room, kinds, connections, powers, query, sort]);
+  const roomRecords = useMemo(() => filterDeviceItems(model.records.map(record => ({ record, name: record.device.name, room: record.device.room, kind: categoryLabels[record.category], connection: deviceConnection(record.device.online), power: devicePower(record.device.on) })), filters).map(item => item.record), [model.records, filters]);
   const groupedRooms = useMemo(() => Array.from(new Set(roomRecords.map(record => record.device.room)))
     .sort((left, right) => roomPriority(left) - roomPriority(right) || left.localeCompare(right, "zh-CN"))
     .map(name => ({ name, records: roomRecords.filter(record => record.device.room === name) })), [roomRecords]);
-  const topologies = useMemo(() => model.topologies.filter(topology => room === "全屋" || topology.room === room), [model.topologies, room]);
+  const topologies = useMemo(() => filterDeviceItems(model.topologies.map(topology => ({ topology, name: topology.name, room: topology.room, kind: topologyKindLabel(topology), connection: deviceConnection(topology.online), power: devicePower(topology.on) })), filters).map(item => item.topology), [model.topologies, filters]);
+  const groupedTopologies = useMemo(() => Array.from(new Set(topologies.map(topology => topology.room))).sort((left, right) => roomPriority(left) - roomPriority(right) || left.localeCompare(right, "zh-CN")).map(name => ({ name, items: topologies.filter(topology => topology.room === name) })), [topologies]);
   const activeTopology = topologies.find(topology => topology.key === selectedTopology) ?? topologies[0];
+  const resultCount = view === "hardware" ? roomRecords.length : topologies.length;
+  const totalCount = view === "hardware" ? model.records.length : model.topologies.length;
+  const hasFilters = room !== "全屋" || kinds.length > 0 || connections.length > 0 || powers.length > 0 || query.trim().length > 0 || sort !== "stable";
+  function clearFilters() { onSelectRoom("全屋"); setKinds([]); setConnections([]); setPowers([]); setQuery(""); setSort("stable"); setFilterNote(""); }
+  function selectView(next: "hardware" | "topology") { if (view === next) return; const valid = new Set(next === "hardware" ? model.records.map(record => categoryLabels[record.category]) : model.topologies.map(topologyKindLabel)); const kept = kinds.filter(kind => valid.has(kind)); setKinds(kept); setFilterNote(kept.length === kinds.length ? "" : "已清除新视图不适用的设备类型筛选。"); setView(next); setSelectedTopology(""); }
 
   return <section className="dm-shell" aria-label="米家设备管理">
     <header className="dm-intro"><div><span className="dm-eyebrow">MIJIA HOME</span><h2>设备管理</h2><p>硬件按米家房间展示；照明视图按灯具位置分别聚合有线回路、无线控制和智能灯供电。</p></div><span className={`dm-connection ${connected ? "connected" : "demo"}`}>{connected ? "米家云已连接" : "演示设备"}</span></header>
@@ -102,41 +120,50 @@ export default function DeviceManagement({ devices, room, connected, onSelectRoo
 
     <div className="dm-filter-group"><span className="dm-filter-label">房间</span><div className="dm-room-tabs">{rooms.map(item => <button key={item} type="button" className={item === room ? "selected" : ""} onClick={() => onSelectRoom(item)}>{item}</button>)}</div></div>
     <div className="dm-view-bar"><div className="dm-view-tabs" role="tablist" aria-label="设备展示方式">
-      <button type="button" role="tab" aria-selected={view === "hardware"} className={view === "hardware" ? "selected" : ""} onClick={() => setView("hardware")}>▦ 开关与硬件</button>
-      <button type="button" role="tab" aria-selected={view === "topology"} className={view === "topology" ? "selected" : ""} onClick={() => setView("topology")}>⌁ 实际照明</button>
+      <button type="button" role="tab" aria-selected={view === "hardware"} className={view === "hardware" ? "selected" : ""} onClick={() => selectView("hardware")}>▦ 开关与硬件</button>
+      <button type="button" role="tab" aria-selected={view === "topology"} className={view === "topology" ? "selected" : ""} onClick={() => selectView("topology")}>⌁ 实际照明</button>
     </div><p>{view === "hardware" ? "每个物理 DID 只显示一张卡片，派生设备作为对应按键内容展示。" : "同家庭全局查找关联关系，普通灯按有线派生位置归类，智能灯按自身位置归类。"}</p></div>
 
-    {view === "hardware" ? <div className="dm-room-inventory">{groupedRooms.map(group => <section key={group.name} className="dm-room-section"><div className="dm-room-heading"><div><strong>{group.name}</strong>{hiddenRoom.test(group.name) && <span>仅保留真实硬件</span>}</div><small>{group.records.length} 台硬件</small></div><div className="dm-room-grid">{group.records.map(record => <DeviceRecordCard key={`${record.device.homeId}:${record.device.did ?? record.device.id}`} record={record} endpointsById={endpointsById} onOpen={() => onOpenDevice(record.device)} onOpenMapped={(endpoint) => onOpenDevice(record.device, endpoint)} onOpenMember={onOpenDevice} />)}</div></section>)}{!groupedRooms.length && <EmptyState title="这个房间没有实际硬件" detail="开关派生端点不会在本视图中单独显示，请切换到实际照明视图查看控制关系。" />}</div>
-      : <div className="dm-topology-view">{activeTopology ? <div className="dm-topology-explorer"><aside className="dm-topology-list" aria-label="实际照明目标"><div className="dm-list-heading"><strong>实际照明目标</strong><small>{topologies.length} 个</small></div>{topologies.map(topology => <button type="button" key={topology.key} className={`dm-topology-item ${topology.key === activeTopology.key ? "selected" : ""}`} onClick={() => setSelectedTopology(topology.key)}><span className="dm-light-icon">☀</span><div><strong>{topology.name}</strong><small>{topology.room} · {topologyKindLabel(topology)} · {topology.controls.length} 个控制来源</small></div>{topology.unresolved && <em>待确认</em>}</button>)}</aside>
+    <section className="dm-advanced-filters" aria-label="组合筛选"><div className="dm-filter-heading"><strong>筛选设备</strong><span aria-live="polite">当前筛选 {resultCount} 个 / 本视图 {totalCount} 个</span></div>
+      <div className="dm-filter-fields"><div className="dm-search-label"><label htmlFor="dm-search">名称搜索</label><div className="dm-search-control"><input id="dm-search" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索名称、房间或类型" />{query && <button type="button" onClick={() => setQuery("")} aria-label="清除搜索">清除</button>}</div></div><label className="dm-sort-label" htmlFor="dm-sort">排序<select id="dm-sort" value={sort} onChange={event => setSort(event.target.value as DeviceSort)}><option value="stable">默认顺序</option><option value="name">按名称</option><option value="state">按电源状态</option></select></label></div>
+      <FilterChips title="设备类型" options={kindOptions.map(kind => ({ value: kind, label: kind }))} selected={kinds} onToggle={kind => setKinds(current => toggleOption(current, kind))} />
+      <FilterChips title="连接状态" options={[{ value: "online", label: "在线" }, { value: "offline", label: "离线" }, { value: "unknown", label: "未知" }]} selected={connections} onToggle={value => setConnections(current => toggleOption(current, value))} />
+      <FilterChips title="电源状态" options={[{ value: "on", label: "开启" }, { value: "off", label: "关闭" }, { value: "unknown", label: "未知" }]} selected={powers} onToggle={value => setPowers(current => toggleOption(current, value))} />
+      <div className="dm-filter-footer">{filterNote && <p role="status">{filterNote}</p>}<button type="button" onClick={clearFilters} disabled={!hasFilters}>清除筛选</button></div>
+    </section>
+
+    {view === "hardware" ? <div className="dm-room-inventory">{groupedRooms.map(group => <section key={group.name} className="dm-room-section"><div className="dm-room-heading"><div><h3>{group.name}</h3>{hiddenRoom.test(group.name) && <span>仅保留真实硬件</span>}</div><small>{group.records.length} 台硬件</small></div><div className="dm-room-grid">{group.records.map(record => <DeviceRecordCard key={`${record.device.homeId}:${record.device.did ?? record.device.id}`} record={record} endpointsById={endpointsById} onOpen={() => onOpenDevice(record.device)} onOpenMapped={(endpoint) => onOpenDevice(record.device, endpoint)} onOpenMember={onOpenDevice} />)}</div></section>)}{!groupedRooms.length && <div className="dm-filter-empty"><EmptyState title={totalCount ? "没有符合条件的设备" : "当前家庭暂无设备"} detail={totalCount ? "调整条件，或清除筛选查看本视图全部硬件。" : "同步设备后会按房间显示实际硬件。"} />{hasFilters && <button type="button" onClick={clearFilters}>清除筛选</button>}</div>}</div>
+      : <div className="dm-topology-view">{activeTopology ? <div className="dm-topology-explorer"><aside className="dm-topology-list" aria-label="实际照明目标"><div className="dm-list-heading"><strong>实际照明目标</strong><small>{topologies.length} 个</small></div>{groupedTopologies.map(group => <section key={group.name} className="dm-topology-room"><div className="dm-topology-room-heading"><h3>{group.name}</h3><small>{group.items.length} 个目标</small></div>{group.items.map(topology => <button type="button" key={topology.key} className={`dm-topology-item ${topology.key === activeTopology.key ? "selected" : ""}`} onClick={() => setSelectedTopology(topology.key)}><span className="dm-light-icon">☀</span><div><strong>{topology.name}</strong><small>{topologyKindLabel(topology)} · {topology.controls.length} 个控制来源</small></div>{topology.unresolved && <em>待确认</em>}</button>)}</section>)}</aside>
         <section className="dm-topology-stage"><div className="dm-stage-heading"><div><span>{activeTopology.room} · {topologyKindLabel(activeTopology)}</span><h3>{activeTopology.name}</h3><p>{activeTopology.controls.filter(control => control.connection === "wired").length} 个有线控制 · {activeTopology.controls.filter(control => control.connection === "wireless").length} 个无线控制 · {activeTopology.controls.filter(control => control.connection === "unknown").length} 个关系待确认</p></div><TargetState topology={activeTopology} /></div>
           <LightingCanvas topology={activeTopology} onOpenDevice={onOpenDevice} />
           <div className="dm-legend"><span><i className="wired" />有线直连 / 供电</span><span><i className="wireless" />无线控制</span><span><i className="unknown" />关系待确认</span></div>
           <TopologyDetails topology={activeTopology} onOpenDevice={onOpenDevice} />
-        </section></div> : <EmptyState title="这个房间暂未识别到照明目标" detail="模式读取失败的端点会保留为待确认；同步成功后将自动按真实模式重建拓扑。" />}</div>}
+        </section></div> : <div className="dm-filter-empty"><EmptyState title={totalCount ? "没有符合条件的设备" : "当前家庭暂无照明目标"} detail={totalCount ? "调整条件，或清除筛选查看本视图全部目标。" : "模式读取失败的端点会保留为待确认；同步成功后将自动按真实模式重建拓扑。"} />{hasFilters && <button type="button" onClick={clearFilters}>清除筛选</button>}</div>}</div>}
   </section>;
 }
 
 function SummaryCard({ icon, value, label, tone }: { icon: string; value: number; label: string; tone: string }) { return <article className={`dm-summary-card ${tone}`}><span>{icon}</span><div><strong>{value}</strong><small>{label}</small></div></article>; }
+function FilterChips<T extends string>({ title, options, selected, onToggle }: { title: string; options: Array<{ value: T; label: string }>; selected: readonly T[]; onToggle: (value: T) => void }) { return <div className="dm-chip-filter" role="group" aria-label={title}><span>{title}</span><div>{options.map(option => <button type="button" key={option.value} aria-pressed={selected.includes(option.value)} className={selected.includes(option.value) ? "selected" : ""} onClick={() => onToggle(option.value)}>{option.label}</button>)}</div></div>; }
 
 function DeviceRecordCard({ record, endpointsById, onOpen, onOpenMapped, onOpenMember }: { record: ManagedDeviceRecord; endpointsById: Map<string, ManagedDevice>; onOpen: () => void; onOpenMapped: (device: ManagedDevice) => void; onOpenMember: (device: ManagedDevice) => void }) {
   const { device, category, groupMembers } = record;
   const channels = category === "switch" || category === "controller" ? device.topology?.channels ?? [] : [];
   const summary = category === "group" ? groupMembers.length ? `${groupMembers.length} 台已公开成员` : "成员关系暂未公开"
     : channels.length ? `${channels.length} 个实际 switch 服务` : `${device.status} · 点击查看设备设置`;
-  return <article className={`dm-record-card dm-record-kind-${category} ${device.online === false ? "offline" : ""}`} role="button" tabIndex={0} onClick={onOpen} onKeyDown={event => { if (event.currentTarget === event.target && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onOpen(); } }}>
+  return <article className={`dm-record-card dm-record-kind-${category} ${device.online === false ? "offline" : ""}`}>
     <div className="dm-record-top"><span className={`dm-record-icon ${device.color}`}>{category === "group" ? "◫" : device.icon}</span><span className={`dm-category dm-category-${category}`}>{categoryLabels[category]}</span></div>
-    <h3>{device.name}</h3><p>{summary}</p>
+    <h4><button type="button" className="dm-record-name" onClick={onOpen} aria-label={`查看 ${device.name} 详情`}>{device.name}</button></h4><p>{summary}</p>
     {channels.length > 0 && <div className="dm-channel-preview">{channels.map(channel => {
       const targets = channel.targets.length ? channel.targets : [{ id: "", targetKey: "", name: channel.controlObjects[0]?.targetName ?? channel.label, room: channel.controlObjects[0]?.targetRoom ?? device.room, kind: channel.controlObjects[0]?.targetKind }];
       const primaryTarget = targets[0];
       const { tone, label } = channelPreviewPresentation(channel, targets.map(target => target.kind));
       const targetName = targets.length > 1 ? `${primaryTarget.name} +${targets.length - 1}` : primaryTarget.name;
       const mappedEndpoint = channel.targets.length === 1 ? endpointsById.get(primaryTarget.id) : undefined;
-      return <button type="button" key={channel.key} className={`dm-channel-row ${tone}`} title={`${label} · ${targets.map(target => target.name).join("、")}${channel.channelSiid !== null ? ` · s${channel.channelSiid}` : ""}`} onClick={event => { event.stopPropagation(); if (mappedEndpoint) onOpenMapped(mappedEndpoint); else onOpen(); }}><i className="dm-channel-status">{label}</i><span className="dm-channel-name">{targetName}</span><small className="dm-channel-siid">{channel.channelSiid !== null ? `s${channel.channelSiid}` : ""}</small></button>;
+      return <button type="button" key={channel.key} className={`dm-channel-row ${tone}`} title={`${label} · ${targets.map(target => target.name).join("、")}${channel.channelSiid !== null ? ` · s${channel.channelSiid}` : ""}`} onClick={() => { if (mappedEndpoint) onOpenMapped(mappedEndpoint); else onOpen(); }}><i className="dm-channel-status">{label}</i><span className="dm-channel-name">{targetName}</span><small className="dm-channel-siid">{channel.channelSiid !== null ? `s${channel.channelSiid}` : ""}</small></button>;
     })}</div>}
-    {category === "group" && groupMembers.length > 0 && <div className="dm-group-members">{groupMembers.map(member => <button key={`${member.did}:${member.name}`} type="button" onClick={event => { event.stopPropagation(); onOpenMember(member); }}><span className={member.color}>{member.icon}</span><span><strong>{member.name}</strong><small>{member.room} · {member.did}</small></span><b>›</b></button>)}</div>}
+    {category === "group" && groupMembers.length > 0 && <div className="dm-group-members">{groupMembers.map(member => <button key={`${member.did}:${member.name}`} type="button" onClick={() => onOpenMember(member)}><span className={member.color}>{member.icon}</span><span><strong>{member.name}</strong><small>{member.room} · {member.did}</small></span><b>›</b></button>)}</div>}
     {category === "group" && !groupMembers.length && <div className="dm-group-unknown">组合设备 · 成员关系暂未公开</div>}
-    <div className="dm-record-footer"><span>{device.room}</span>{device.did ? <code title={device.did}>{device.did}</code> : <small>演示设备</small>}<b>›</b></div>
+    <div className="dm-record-footer"><span>{device.room}</span>{device.did ? <code title={device.did}>{device.did}</code> : <small>演示设备</small>}<button type="button" onClick={onOpen}>查看详情 ›</button></div>
   </article>;
 }
 
