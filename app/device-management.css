@@ -189,7 +189,7 @@
 }
 
 .dm-room-heading { justify-content: space-between; }
-.dm-room-heading strong { font-size: 17px; }
+.dm-room-heading h3 { margin: 0; font-size: 17px; }
 .dm-room-heading > small { color: #778392; font-size: 12px; }
 .dm-room-heading > div > span { color: #4b87bd; font-size: 11px; }
 
@@ -254,7 +254,7 @@
 .dm-category-voice-alias { background: #eaf4ff; color: #397cb7; }
 .dm-category-group { background: #f0ebff; color: #6c5cbc; }
 
-.dm-record-card h3 {
+.dm-record-card h4 {
   overflow: hidden;
   margin: 14px 0 4px;
   font-size: 15px;
