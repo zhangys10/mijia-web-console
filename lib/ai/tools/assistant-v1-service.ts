@@ -72,7 +72,7 @@ async function resolveHomeContext(
     ? homes.find(item => item.id === selector) ?? homes.find(item => item.name === selector) ?? homes.find(item => item.name.includes(selector) || selector.includes(item.name))
     : payload.homeId ? homes.find(item => item.id === payload.homeId) : homes[0];
   if (!home) throw new RemoteToolError("AI_HOME_NOT_FOUND", 404);
-  const exposure = await (dependencies.exposure ?? readAssistantExposure)(home.id, dependencies.exposureStore);
+  const exposure = await (dependencies.exposure ?? readAssistantExposure)(home.id, dependencies.exposureStore, env);
   const inventory = await (dependencies.homeInventory ?? listAssistantExposureInventory)(payload.xiaomiSession, home.id, exposure);
   const deviceList = await (dependencies.discovery ?? listDevices)(payload.xiaomiSession);
   const eligibleDids = new Set(deviceList.devices.flatMap(device => {

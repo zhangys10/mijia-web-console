@@ -50,10 +50,13 @@ export class AssistantExposureError extends Error {
   }
 }
 
-function blobStore(): AssistantExposureStore {
-  const name = process.env.AI_ASSISTANT_EXPOSURE_STORE?.trim() || "mijia-ai-assistant-exposure-v1";
-  const projectId = process.env.PAGES_PROJECT_ID?.trim();
-  const token = process.env.PAGES_BLOB_API_TOKEN?.trim();
+type ExposureEnvironment = Record<string, string | undefined>;
+
+function blobStore(runtimeEnv?: ExposureEnvironment): AssistantExposureStore {
+  const env = runtimeEnv ?? (typeof process === "undefined" ? {} : process.env);
+  const name = env.AI_ASSISTANT_EXPOSURE_STORE?.trim() || "mijia-ai-assistant-exposure-v1";
+  const projectId = env.PAGES_PROJECT_ID?.trim();
+  const token = env.PAGES_BLOB_API_TOKEN?.trim();
   if (projectId && token) {
     return getStore({ name, projectId, token }) as AssistantExposureStore;
   }
@@ -70,9 +73,9 @@ function emptyExposure(): AssistantExposure {
   return { version: 1, enabled: false, roomMetrics: {}, deviceDids: [], updatedAt: null, revision: "exp_default_deny" };
 }
 
-export async function readAssistantExposure(homeId: string, store?: AssistantExposureStore): Promise<AssistantExposure> {
+export async function readAssistantExposure(homeId: string, store?: AssistantExposureStore, env?: ExposureEnvironment): Promise<AssistantExposure> {
   try {
-    const value = await (store ?? blobStore()).get(await homeKey(homeId), { type: "json", consistency: "strong" });
+    const value = await (store ?? blobStore(env)).get(await homeKey(homeId), { type: "json", consistency: "strong" });
     if (value === null) return emptyExposure();
     if (!value || typeof value !== "object") throw new Error("invalid exposure");
     const record = value as Record<string, unknown>;
@@ -156,11 +159,11 @@ export async function updateAssistantExposure(
   homeId: string,
   input: unknown,
   actorPrincipalId: string,
-  dependencies: { homes?: typeof listHomes; devices?: typeof listDevices; store?: AssistantExposureStore } = {},
+  dependencies: { homes?: typeof listHomes; devices?: typeof listDevices; store?: AssistantExposureStore; env?: ExposureEnvironment } = {},
 ): Promise<{ exposure: AssistantExposure; inventory: ExposureInventory }> {
   if (!/^usr_[A-Za-z0-9_-]{43}$/.test(actorPrincipalId)) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
   const parsed = await saveAssistantExposure(homeId, input);
-  const current = await readAssistantExposure(homeId, dependencies.store);
+  const current = await readAssistantExposure(homeId, dependencies.store, dependencies.env);
   const inventory = await listAssistantExposureInventory(session, homeId, current, dependencies);
   const requestedRefs = new Set((input as { deviceRefs: string[] }).deviceRefs);
   const selectedDevices = await (dependencies.devices ?? listDevices)(session);
@@ -191,7 +194,7 @@ export async function updateAssistantExposure(
   const changedAt = new Date().toISOString();
   const next: AssistantExposure = { ...parsed, deviceDids: deviceDids as string[], updatedAt: changedAt, revision: await exposureRevision({ ...parsed, deviceDids: deviceDids as string[] }) };
   try {
-    const store = dependencies.store ?? blobStore();
+    const store = dependencies.store ?? blobStore(dependencies.env);
     const baseKey = await homeKey(homeId);
     const auditKey = baseKey.replace(/\.json$/, `/audit/${Date.now()}-${crypto.randomUUID()}.json`);
     const auditRecord: AssistantExposureAuditRecord = {
