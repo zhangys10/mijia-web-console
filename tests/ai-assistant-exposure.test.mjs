@@ -57,10 +57,15 @@ test("home exposure update resolves only current-home device references and stor
     },
   };
   const homes = async () => [{ id: homeId, name: "我的家" }];
-  const devices = async () => ({
-    homes: [{ id: homeId, name: "我的家" }],
-    devices: [{ homeId, did, name: "客厅灯", roomName: "客厅", model: "yeelink.light.test" }],
-  });
+  let deviceReads = 0;
+  const devices = async () => {
+    deviceReads += 1;
+    return {
+      homes: [{ id: homeId, name: "我的家" }],
+      // Simulate Xiaomi returning inconsistent snapshots within one save request.
+      devices: deviceReads === 1 ? [{ homeId, did, name: "客厅灯", roomName: "客厅", model: "yeelink.light.test" }] : [],
+    };
+  };
 
   const result = await updateAssistantExposure({ userId: "test" }, homeId, {
     enabled: true,
@@ -69,6 +74,7 @@ test("home exposure update resolves only current-home device references and stor
   }, "usr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", { store, homes, devices });
 
   assert.equal(result.exposure.enabled, true);
+  assert.equal(deviceReads, 1);
   assert.equal(result.exposure.deviceDids[0], did);
   assert.equal(result.inventory.devices[0].enabled, true);
   assert.equal(JSON.stringify(result.inventory).includes(did), false);

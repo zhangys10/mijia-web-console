@@ -164,9 +164,13 @@ export async function updateAssistantExposure(
   if (!/^usr_[A-Za-z0-9_-]{43}$/.test(actorPrincipalId)) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
   const parsed = await saveAssistantExposure(homeId, input);
   const current = await readAssistantExposure(homeId, dependencies.store, dependencies.env);
-  const inventory = await listAssistantExposureInventory(session, homeId, current, dependencies);
-  const requestedRefs = new Set((input as { deviceRefs: string[] }).deviceRefs);
   const selectedDevices = await (dependencies.devices ?? listDevices)(session);
+  const inventoryDependencies = {
+    ...dependencies,
+    devices: async () => selectedDevices,
+  };
+  const inventory = await listAssistantExposureInventory(session, homeId, current, inventoryDependencies);
+  const requestedRefs = new Set((input as { deviceRefs: string[] }).deviceRefs);
   const homeDevices = selectedDevices.devices.filter(device => String(device.homeId ?? "") === homeId).flatMap(device => {
     const did = typeof device.did === "string" || typeof device.did === "number" ? String(device.did) : "";
     if (!did) return [];
@@ -212,7 +216,7 @@ export async function updateAssistantExposure(
   } catch {
     throw new AssistantExposureError("AI_EXPOSURE_STORE_UNAVAILABLE", 503);
   }
-  return { exposure: next, inventory: await listAssistantExposureInventory(session, homeId, next, dependencies) };
+  return { exposure: next, inventory: await listAssistantExposureInventory(session, homeId, next, inventoryDependencies) };
 }
 
 export function assistantExposureProjection(exposure: AssistantExposure, inventory: ExposureInventory) {
