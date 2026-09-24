@@ -38,7 +38,8 @@ type PropertyResultState =
   | { status: "property-result-invalid" }
   | { status: "property-batch-failed" };
 
-const debugRuntime = process.env.XIAOMI_RUNTIME_DEBUG === "1";
+// This shared module also loads in Edge Functions, where Node's process is absent.
+const debugRuntime = typeof process !== "undefined" && process.env?.XIAOMI_RUNTIME_DEBUG === "1";
 
 export function errorCode(error: unknown) {
   const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
