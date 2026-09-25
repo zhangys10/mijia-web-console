@@ -329,6 +329,7 @@ export async function updateAssistantExposure(
   }
   const changedAt = new Date().toISOString();
   const next: AssistantExposure = { ...parsed, deviceDids: deviceDids as string[], sceneApprovals, updatedAt: changedAt, revision: await exposureRevision({ ...parsed, deviceDids: deviceDids as string[], sceneApprovals }) };
+  let storageStage = "initialize";
   try {
     const store = dependencies.store ?? blobStore(dependencies.env);
     const baseKey = await homeKey(homeId);
@@ -346,9 +347,20 @@ export async function updateAssistantExposure(
       sceneActionsEnabled: next.sceneActionsEnabled,
       sceneApprovalBypass: next.sceneApprovalBypass,
     };
+    storageStage = "write_audit";
     await store.setJSON(auditKey, auditRecord, { onlyIfNew: true });
+    storageStage = "write_exposure";
     await store.setJSON(baseKey, next);
-  } catch {
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" && /^[A-Z0-9_]{1,32}$/.test(error.code)
+      ? error.code
+      : undefined;
+    console.error(JSON.stringify({
+      event: "assistant_exposure_storage_write_failed",
+      stage: storageStage,
+      store: dependencies.store ? "injected" : "blob",
+      ...(code ? { code } : {}),
+    }));
     throw new AssistantExposureError("AI_EXPOSURE_STORE_UNAVAILABLE", 503);
   }
   return {

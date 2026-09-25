@@ -84,8 +84,8 @@ Phase 2 的家庭读取通过 `/api/internal/assistant/v1/capabilities` 与
 `/api/internal/assistant/v1/tools:invoke` 提供。在「设置 → AI 助手访问权限」中，家庭成员
 逐房间开放环境指标、逐设备开放只读状态；初始状态全部关闭。设置页只列出环境采集器当前读到有效数值的房间与指标组合，以及设备状态采集器实际报告的设备；不会把全部指标套到每个房间。生产授权配置保存在
 EdgeOne Makers Blob 的 `mijia-ai-assistant-exposure-v1` 命名空间，并使用强一致读取。该授权配置按哈希化的 `homeId` 保存，不绑定某个米家 `userId`；每次读取前仍会校验当前登录会话是否属于该家庭。因此同一家庭的授权对有权访问该家庭的成员共享，不会改变米家账号本身的权限。
-EdgeOne Pages 运行时，Blob SDK 使用平台提供的部署凭据。Node/Next 本地开发在
-`AI_ENVIRONMENT=development` 时将配置读写到 `AI_ASSISTANT_EXPOSURE_DIR` 指定的本地文件目录；
+EdgeOne Pages 运行时，Blob SDK 使用平台提供的部署凭据。本地开发在
+`AI_ENVIRONMENT=development` 时使用开发存储；Cloudflare Vite Worker 开发运行时使用进程内存（重启后清空），Node 运行时使用 `AI_ASSISTANT_EXPOSURE_DIR` 指定的本地文件目录（默认 `.local/assistant-exposure/`）。未指定 `AI_ENVIRONMENT` 的 Node 开发服务器也会自动使用开发存储；
 其他环境不会使用此开发存储，Blob 不可用时返回 `503 AI_EXPOSURE_STORE_UNAVAILABLE`，不会回退到内存或 KV。
 可运行 `scripts/local-integration.py start` 自动生成本地 `.env.local` 并启动端到端联调，
 无需 Pages Blob 凭据。生产 Next Route Handler 使用 Blob namespace 和强一致读取；EdgeOne 部署切换后需在 staging 单独验证现有 namespace 的读取与写入。

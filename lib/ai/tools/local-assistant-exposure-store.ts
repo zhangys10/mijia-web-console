@@ -4,6 +4,7 @@ import type { AssistantExposureStore } from "./assistant-exposure.ts";
 
 const HOME_KEY = /^homes\/[a-f0-9]{64}\.json$/;
 const AUDIT_KEY = /^homes\/[a-f0-9]{64}\/audit\/[0-9]+-[a-f0-9-]{36}\.json$/;
+const workerMemoryStores = new Map<string, Map<string, unknown>>();
 
 /** A local-only filesystem store for Next development routes. Production handlers use Pages Blob. */
 export function createLocalAssistantExposureStore(directory: string): AssistantExposureStore {
@@ -51,7 +52,26 @@ export function createLocalAssistantExposureStore(directory: string): AssistantE
 }
 
 export function localAssistantExposureStore(directoryValue?: string) {
-  const directory = directoryValue?.trim();
-  if (!directory) throw new Error("AI_ASSISTANT_EXPOSURE_DIR is required for local exposure storage");
+  const directory = directoryValue?.trim() || ".local/assistant-exposure";
+  if (typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers") {
+    let entries = workerMemoryStores.get(directory);
+    if (!entries) {
+      entries = new Map();
+      workerMemoryStores.set(directory, entries);
+    }
+    return {
+      async get(key: string) {
+        const value = entries.get(key);
+        return value === undefined ? null : JSON.parse(JSON.stringify(value)) as unknown;
+      },
+      async setJSON(key: string, value: unknown, options?: { onlyIfNew?: boolean }) {
+        if (!HOME_KEY.test(key) && !AUDIT_KEY.test(key)) throw new Error("invalid assistant exposure key");
+        if (options?.onlyIfNew && entries.has(key)) {
+          throw Object.assign(new Error("assistant exposure record already exists"), { code: "EEXIST" });
+        }
+        entries.set(key, JSON.parse(JSON.stringify(value)) as unknown);
+      },
+    } satisfies AssistantExposureStore;
+  }
   return createLocalAssistantExposureStore(directory);
 }
