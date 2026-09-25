@@ -34,7 +34,6 @@ test("thrown route errors get a safe no-store response and no exception detail i
   assert.equal(record.requestId.length > 0, true);
   assert.equal(record.category, "UNEXPECTED_EXCEPTION");
 });
-
 test("route diagnostics include only a bounded validation reason", async context => {
   const warnings = [];
   context.mock.method(console, "warn", line => warnings.push(line));

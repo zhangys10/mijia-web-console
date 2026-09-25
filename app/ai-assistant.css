@@ -51,4 +51,25 @@
 .assistant-exposure-footer button:disabled{opacity:.55;cursor:wait}
 .assistant-exposure-success,.assistant-exposure-error{margin:10px 0 0;font-size:10px}
 .assistant-exposure-success{color:#268257}.assistant-exposure-error{color:#b3483d}
+.assistant-exposure-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:12px;margin-top:8px}
+.assistant-exposure-filters label{display:grid;gap:4px;color:var(--text-secondary);font-size:var(--font-meta)}
+.assistant-exposure-filters .assistant-exposure-select-visible{display:flex;align-items:center;align-self:end;gap:8px;min-height:44px;color:var(--ink);font-size:var(--font-body)}
+.assistant-exposure-select-visible input{width:18px;height:18px;accent-color:var(--action-primary)}
+.assistant-exposure-filters select,.assistant-exposure-filters input{width:100%;min-width:0;min-height:44px;border:1px solid var(--control-border);border-radius:10px;background:#fff;color:var(--ink);padding:8px 10px;font:inherit;font-size:var(--font-body)}
+.assistant-exposure-filters :focus-visible,.assistant-exposure-clear-filters:focus-visible,.assistant-exposure-table :focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
+.assistant-exposure-search{grid-column:span 2}
+.assistant-exposure-result-count{margin:0;color:var(--text-secondary);font-size:var(--font-body)}
+.assistant-exposure-table-wrap{max-height:min(58vh,560px);overflow:auto;border:1px solid var(--line);border-radius:14px;background:#fff;overscroll-behavior:contain}
+.assistant-exposure-table{width:100%;border-collapse:collapse;text-align:left;font-size:var(--font-body)}
+.assistant-exposure-table thead{position:sticky;top:0;z-index:1;background:#f5f7f9}
+.assistant-exposure-table th,.assistant-exposure-table td{padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+.assistant-exposure-table thead th{height:44px;color:var(--ink);font-weight:600;white-space:nowrap}
+.assistant-exposure-table tbody tr:last-child>*{border-bottom:0}
+.assistant-exposure-table tbody tr:hover{background:#fafbfc}
+.assistant-exposure-table tbody th[scope="row"]{font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+.assistant-exposure-table input[type="checkbox"]{width:18px;height:18px;accent-color:var(--action-primary)}
+.assistant-exposure-check-column{width:44px}
+.assistant-exposure-empty{margin:0;padding:16px;color:var(--text-secondary);font-size:var(--font-body)}
+.assistant-exposure-clear-filters{justify-self:start;border:1px solid var(--control-border);border-radius:10px;background:#fff;color:var(--ink);padding:8px 12px;font-size:var(--font-control);cursor:pointer}
+@media(max-width:600px){.assistant-exposure-heading{display:grid}.assistant-exposure-heading-actions{justify-self:stretch}.assistant-exposure-master{justify-self:start}.assistant-exposure-select-all{justify-self:start}.assistant-exposure-footer{align-items:flex-start;flex-direction:column}.assistant-exposure-footer button{width:100%}.assistant-exposure-search{grid-column:auto}.assistant-exposure-table-wrap{max-height:62dvh}.assistant-exposure-table{border-collapse:separate;border-spacing:0}.assistant-exposure-table thead{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.assistant-exposure-table tbody tr{display:grid;grid-template-columns:36px minmax(0,1fr);padding:8px 10px;border-bottom:1px solid var(--line)}.assistant-exposure-table tbody tr:last-child{border-bottom:0}.assistant-exposure-table tbody th,.assistant-exposure-table tbody td{min-width:0;padding:4px;border:0}.assistant-exposure-table tbody td:first-child{grid-column:1;grid-row:1/4;align-self:center}.assistant-exposure-table tbody th[scope="row"]{grid-column:2;grid-row:1}.assistant-exposure-table tbody td[data-label="类型"],.assistant-exposure-table tbody td[data-label="房间"]{grid-column:2;display:flex;gap:8px;color:var(--text-secondary);font-size:var(--font-meta)}.assistant-exposure-table tbody td[data-label="类型"]::before,.assistant-exposure-table tbody td[data-label="房间"]::before{content:attr(data-label);color:var(--text-secondary);font-weight:600}.assistant-exposure-table input[type="checkbox"]{min-width:18px;min-height:18px}}
 @media(max-width:600px){.assistant-exposure-heading{display:grid}.assistant-exposure-heading-actions{justify-self:stretch}.assistant-exposure-master{justify-self:start}.assistant-exposure-select-all{justify-self:start}.assistant-exposure-footer{align-items:flex-start;flex-direction:column}.assistant-exposure-footer button{width:100%}}
