@@ -48,7 +48,7 @@ export async function createAgentBinding(
     kind: "ai_agent_binding",
     principalId: input.principalId,
     homeId: input.homeId,
-    scopes: [...new Set([...(input.scopes ?? AGENT_SCOPES)])].sort(),
+    scopes: [...new Set([...(input.scopes ?? ["ai:chat"])])].sort(),
     session: input.session,
     issuedAt,
     expiresAt: input.expiresAt,
@@ -90,7 +90,7 @@ export async function verifyAgentBinding(
   if ((expected.now ?? Date.now()) >= payload.expiresAt) {
     throw new AgentBindingError("AI_AGENT_BINDING_EXPIRED");
   }
-  const expectedScopes = [...new Set([...(expected.scopes ?? AGENT_SCOPES)])].sort();
+  const expectedScopes = [...new Set([...(expected.scopes ?? ["ai:chat"])])].sort();
   if (
     payload.principalId !== expected.principalId
     || payload.homeId !== expected.homeId

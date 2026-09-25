@@ -84,12 +84,19 @@ Phase 2 的家庭读取通过 `/api/internal/assistant/v1/capabilities` 与
 `/api/internal/assistant/v1/tools:invoke` 提供。在「设置 → AI 助手访问权限」中，家庭成员
 逐房间开放环境指标、逐设备开放只读状态；初始状态全部关闭。设置页只列出环境采集器当前读到有效数值的房间与指标组合，以及设备状态采集器实际报告的设备；不会把全部指标套到每个房间。生产授权配置保存在
 EdgeOne Makers Blob 的 `mijia-ai-assistant-exposure-v1` 命名空间，并使用强一致读取。该授权配置按哈希化的 `homeId` 保存，不绑定某个米家 `userId`；每次读取前仍会校验当前登录会话是否属于该家庭。因此同一家庭的授权对有权访问该家庭的成员共享，不会改变米家账号本身的权限。
-EdgeOne Pages 运行时，Blob SDK 使用平台提供的部署凭据。Node/Next 本地开发在
-`AI_ENVIRONMENT=development` 时将配置读写到 `AI_ASSISTANT_EXPOSURE_DIR` 指定的本地文件目录；
+EdgeOne Pages 运行时，Blob SDK 使用平台提供的部署凭据。本地开发在
+`AI_ENVIRONMENT=development` 时使用开发存储；Cloudflare Vite Worker 开发运行时使用进程内存（重启后清空），Node 运行时使用 `AI_ASSISTANT_EXPOSURE_DIR` 指定的本地文件目录（默认 `.local/assistant-exposure/`）。未指定 `AI_ENVIRONMENT` 的 Node 开发服务器也会自动使用开发存储；
 其他环境不会使用此开发存储，Blob 不可用时返回 `503 AI_EXPOSURE_STORE_UNAVAILABLE`，不会回退到内存或 KV。
 可运行 `scripts/local-integration.py start` 自动生成本地 `.env.local` 并启动端到端联调，
 无需 Pages Blob 凭据。生产 Next Route Handler 使用 Blob namespace 和强一致读取；EdgeOne 部署切换后需在 staging 单独验证现有 namespace 的读取与写入。
 敏感设备类别不会列为可开放项，读取过滤只会减少已授权数据。
+
+Phase 3 场景授权复用同一家庭 Blob 配置：家庭成员可以单独开放通过保守规则识别的
+低风险灯光场景，授权绑定规范化动作内容的 revision；场景内容变化后旧授权不再匹配。
+执行前控制台会重新读取场景、校验风险与授权，并通过独立 Blob namespace 的
+`onlyIfNew` claim 和强一致读取领取跨会话执行回执。缺少 claim/outcome 回执时按结果未知
+处理，不会重发。`AI_SCENE_EXECUTION_ENABLED` 默认关闭；在 mijia-agent `docs/TODO.md`
+所列的 EdgeOne 并发、故障恢复和一次低风险端到端门禁完成前不得启用。
 
 ### 远程 Makers Agent
 
@@ -100,9 +107,9 @@ Agent 运行时位于独立的 `mijia-agent` 仓库。本仓库的 Web Chat API 
 - `AI_AUTOMATION_TOKEN_SECRET`：签发和验证短期 Automation Token 的独立高熵密钥；Web Chat、Siri 和本地生产验证使用同一 token 工具信封。缺失时非预览聊天会安全失败，不会回退到 session binding。
 - `APP_ENV`：Automation Token 的 AES-GCM AAD 环境边界。生产环境必须显式设为 `production`；签发 token 的 `/api/ai/chat`、验证 token 的 `/api/ai/tools` 和离线 token 生成器必须使用相同值。
 - `AI_AUTOMATION_TOKEN_KEY_ID`：可选的 token 密钥版本标签；未设置时使用内置默认值。开始密钥轮换后，所有签发方和验证方必须同时配置相同标签。
-- 场景目录不做预置审核名单：`/api/ai/tools` 的 `list_scenes` 返回该家庭下所有已启用的手动场景；模型只看到场景别名、名称和描述；小米会话、真实场景 ID、DID 和原始用户 ID 不进入模型上下文。
+- `/api/ai/tools` 的 `list_scenes` 只返回当前家庭中已启用、通过低风险筛选、且其当前动作 revision 已由成员授权的场景；每个家庭还需启用场景操作。模型只看到不透明场景别名和脱敏动作摘要；小米会话、真实场景 ID、DID 和原始用户 ID 不进入模型上下文。
 - 连续对话由 Makers Agent 的 `Makers-Conversation-Id` 和服务端 principal/home 派生的存储键隔离。
-- `idempotencyKey` 是请求/回执标识，不是授权；Phase 1 的 Web Chat 固定为 `ai:chat`，不会因为客户端提供 key 而获得 `scene:activate`。未来物理动作必须同时满足服务器签发的 action scope、暴露/修订校验、durable action ledger 和幂等 claim。
+- `idempotencyKey` 是请求/回执标识，不是授权；Web Chat 固定为 `ai:chat`，不会因为客户端提供 key 而获得 `scene:activate`。物理动作还必须经过服务器签发的 action scope、暴露/修订校验、durable action ledger 和幂等 claim。
 
 ### `AI_PRINCIPAL_SECRET`
 
@@ -219,8 +226,10 @@ npm run build
 | `AI_AGENT_BASE_URL` | 必填，HTTPS origin | 远程 `mijia-agent` 地址，不包含路径 |
 | `AI_AGENT_INTERNAL_SECRET` | 必填，至少 32 字符 | Web Console 调用 Agent 的内部 Bearer 鉴权 |
 | `AI_TOOLS_INTERNAL_SECRET` | 必填，至少 32 字符 | Agent 回调 `/api/ai/tools` 的内部 Bearer 鉴权 |
+| `AI_SCENE_ACTION_AUTHORIZATION_SECRET` | 保持 unset，若执行门禁全部通过且服务端 scope 流程上线时，配置一个独立的 32 字符以上随机密钥；不要提供给 Agent | Console 签发与校验短时、绑定家庭/场景 revision/幂等请求的动作授权票据 |
 | `AI_AUTOMATION_TOKEN_KEY_ID` | 可选 | token 密钥版本；设置后签发方和验证方必须一致 |
 | `AI_QUOTA_ENABLED` | 建议显式设置 | `false` 完全停用配额；其他合法配置见 AI Quota 一节 |
+| `AI_SCENE_EXECUTION_ENABLED` | 保持 unset/`false`，直到 agent `docs/TODO.md` 中的 Phase 3 部署门禁全部完成 | 允许已授权的低风险灯光场景进入执行路径 |
 
 Production 不得设置 `AI_ENVIRONMENT=preview`。环境变量新增或修改后必须重新部署；仅保存变量但继续运行旧部署，可能仍使用旧的绑定快照。部署后先验证 Web Chat 能签发 token，再确认 Agent 可通过 `/api/ai/tools` 打开同一 token。
 

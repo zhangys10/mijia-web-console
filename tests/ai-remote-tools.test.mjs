@@ -8,13 +8,17 @@ import { AiWebService } from "../lib/ai/web-chat/web-chat-service.ts";
 
 const env = { XIAOMI_SESSION_SECRET: "test-session-secret-not-real-123456789", AI_PRINCIPAL_SECRET: "test-principal-secret-not-real-123456789" };
 const session = { userId: "test-user", serviceToken: "fake-token", ssecurity: "fake-security", region: "cn" };
+const sceneRevision = `rev_${"b".repeat(24)}`;
+const exposure = { version: 1, enabled: true, sceneActionsEnabled: true, roomMetrics: {}, deviceDids: [], sceneApprovals: { "private-real-id": sceneRevision }, updatedAt: null, revision: `exp_${"c".repeat(24)}` };
+const exposureStore = { get: async () => exposure, setJSON: async () => {} };
 async function input(scopes = ["ai:chat"]) {
   const principalId = await derivePrincipalId(session, env);
   return { requestId: "req_test_remote_tool", principalId, homeId: "test-home", scopes,
     sessionBinding: await createAgentBinding({ principalId, homeId: "test-home", scopes, session, expiresAt: Date.now() + 60000 }, env.XIAOMI_SESSION_SECRET),
     tool: "list_scenes", arguments: {} };
 }
-const dependencies = { homes: async () => [{ id: "test-home" }], scenes: async () => [{ alias: "scene_0123456789abcdef", sceneId: "private-real-id", homeId: "test-home", name: "回家模式", description: "审核场景", actionCount: 1 }] };
+const approvedScene = { alias: "scene_0123456789abcdef", sceneId: "private-real-id", homeId: "test-home", name: "回家模式", description: "审核场景", enabled: true, actionCount: 1, revision: sceneRevision, actionSummaries: [{ room: "客厅", device: "客厅灯", actions: [{ label: "电源", value: "开启" }] }] };
+const dependencies = { homes: async () => [{ id: "test-home" }], scenes: async () => [approvedScene], exposureStore };
 
 test("remote tools require independent service authentication", async () => {
   const secret = "test-tools-secret-not-real-123456789";
@@ -22,10 +26,25 @@ test("remote tools require independent service authentication", async () => {
   assert.equal(await authorizeRemoteTool("Bearer wrong", secret), false);
   assert.equal(await authorizeRemoteTool(null, secret), false);
 });
-test("catalog response never exports private scene or Xiaomi credentials", async () => {
+test("catalog response exposes approved scenes without private scene or Xiaomi credentials", async () => {
   const result = await runRemoteTool(await input(), env, dependencies);
   assert.equal(result.scenes[0].alias, "scene_0123456789abcdef");
   for (const secret of ["private-real-id", "fake-token", "fake-security", "test-user"]) assert.ok(!JSON.stringify(result).includes(secret));
+});
+test("catalog response is empty when per-home exposure has no scene approval", async () => {
+  const result = await runRemoteTool(await input(), env, {
+    ...dependencies,
+    exposureStore: { get: async () => null, setJSON: async () => {} },
+  });
+  assert.deepEqual(result.scenes, []);
+});
+test("confirmed home bypass lists current scenes without individual approvals", async () => {
+  const result = await runRemoteTool(await input(), env, {
+    ...dependencies,
+    exposureStore: { get: async () => ({ ...exposure, sceneApprovalBypass: true, sceneApprovals: {} }), setJSON: async () => {} },
+  });
+  assert.equal(result.scenes.length, 1);
+  assert.equal(result.scenes[0].alias, approvedScene.alias);
 });
 test("binding prevents forged principal or home", async () => {
   const body = await input();
@@ -39,17 +58,60 @@ test("new remote execution stays closed until durable executor claims exist", as
   const body = {
     ...await input(["ai:chat", "scene:activate"]),
     idempotencyKey: "valid-idempotency-key-0001",
+    requestHash: "a".repeat(64),
     tool: "activate_scene",
-    arguments: { sceneId: "scene_0123456789abcdef" },
+    arguments: { sceneId: "scene_0123456789abcdef", revision: sceneRevision },
   };
   await assert.rejects(runRemoteTool(body, env, dependencies), /AI_SCENE_EXECUTION_DISABLED/);
+});
+
+test("scene action grants require a signed server binding and Console-only ticket key", async () => {
+  const idempotencyKey = "valid-idempotency-key-0001";
+  const requestHash = "a".repeat(64);
+  const actionEnv = {
+    ...env,
+    AI_SCENE_EXECUTION_ENABLED: "true",
+    AI_SCENE_ACTION_AUTHORIZATION_SECRET: "test-console-action-ticket-secret-32chars",
+  };
+  const binding = await input(["ai:chat", "scene:activate"]);
+  const grant = await runRemoteTool({
+    ...binding,
+    idempotencyKey,
+    requestHash,
+    tool: "authorize_scene_action",
+    arguments: { sceneId: approvedScene.alias, revision: sceneRevision },
+  }, actionEnv, dependencies);
+  assert.equal(typeof grant.actionAuthorization, "string");
+  assert.ok(grant.actionAuthorization.length > 32);
+  const ticketPayload = JSON.parse(Buffer.from(grant.actionAuthorization.split(".")[0], "base64url").toString("utf8"));
+  assert.equal(ticketPayload.sceneAlias, approvedScene.alias);
+  assert.equal("sceneId" in ticketPayload, false);
+
+  const readOnlyBinding = await input(["ai:chat"]);
+  await assert.rejects(runRemoteTool({
+    ...readOnlyBinding,
+    idempotencyKey,
+    requestHash,
+    tool: "authorize_scene_action",
+    arguments: { sceneId: approvedScene.alias, revision: sceneRevision },
+  }, actionEnv, dependencies), /AI_SCOPE_FORBIDDEN/);
+
+  await assert.rejects(runRemoteTool({
+    ...binding,
+    idempotencyKey,
+    requestHash,
+    tool: "activate_scene",
+    actionAuthorization: grant.actionAuthorization,
+    arguments: { sceneId: approvedScene.alias, revision: sceneRevision },
+  }, { ...actionEnv, AI_SCENE_ACTION_AUTHORIZATION_SECRET: "wrong-console-ticket-secret-32chars" }, dependencies), /AI_SCOPE_FORBIDDEN/);
 });
 
 test("remote execution requires a valid idempotency key and strict scene argument", async () => {
   const base = {
     ...await input(["ai:chat", "scene:activate"]),
+    requestHash: "a".repeat(64),
     tool: "activate_scene",
-    arguments: { sceneId: "scene_0123456789abcdef" },
+    arguments: { sceneId: "scene_0123456789abcdef", revision: sceneRevision },
   };
   await assert.rejects(
     runRemoteTool({ ...base, idempotencyKey: undefined }, env, dependencies),
@@ -71,7 +133,7 @@ test("remote execution requires a valid idempotency key and strict scene argumen
     runRemoteTool({
       ...base,
       idempotencyKey: "valid-idempotency-key-0001",
-      arguments: { sceneId: "scene_0123456789abcdef", extra: 1 },
+      arguments: { sceneId: "scene_0123456789abcdef", revision: sceneRevision, extra: 1 },
     }, env, dependencies),
     /AI_INVALID_REQUEST/,
   );
@@ -81,8 +143,9 @@ test("remote execution stays read-only in the preview environment", async () => 
   const body = {
     ...await input(["ai:chat", "scene:activate"]),
     idempotencyKey: "valid-idempotency-key-0001",
+    requestHash: "a".repeat(64),
     tool: "activate_scene",
-    arguments: { sceneId: "scene_0123456789abcdef" },
+    arguments: { sceneId: "scene_0123456789abcdef", revision: sceneRevision },
   };
   await assert.rejects(
     runRemoteTool(body, { ...env, AI_ENVIRONMENT: "preview" }, dependencies),
@@ -161,9 +224,10 @@ function tokenInput(tool = "list_scenes", extra = {}) {
 function tokenDeps(seen = []) {
   return {
     homes: async () => tokenHomes,
+    exposureStore,
     scenes: async (input) => {
       seen.push(input);
-      return [{ alias: "scene_0123456789abcdef", sceneId: "private-real-id", homeId: input.homeId, name: "回家模式", description: "审核场景", actionCount: 1 }];
+      return [{ ...approvedScene, homeId: input.homeId }];
     },
   };
 }
@@ -432,19 +496,21 @@ test("token path keeps get_device_status read-only", async () => {
   );
 });
 
-test("token path activation stays disabled and requires an idempotency key", async () => {
+test("automation-token activation stays blocked without a server-issued action scope", async () => {
   const token = await automationToken();
+  const runScene = [];
   await assert.rejects(
     runRemoteTool(
-      tokenInput("activate_scene", { arguments: { sceneId: "scene_0123456789abcdef" }, idempotencyKey: "valid-idempotency-key-0001" }),
-      tokenEnv,
-      tokenDeps(),
+      tokenInput("activate_scene", { arguments: { sceneId: "scene_0123456789abcdef", revision: sceneRevision }, idempotencyKey: "valid-idempotency-key-0001", requestHash: "a".repeat(64) }),
+      { ...tokenEnv, AI_SCENE_EXECUTION_ENABLED: "true" },
+      { ...tokenDeps(), runScene: async () => { runScene.push(true); } },
       token,
     ),
-    /AI_SCENE_EXECUTION_DISABLED/,
+    /AI_SCOPE_FORBIDDEN/,
   );
+  assert.deepEqual(runScene, []);
   await assert.rejects(
-    runRemoteTool(tokenInput("activate_scene", { arguments: { sceneId: "scene_0123456789abcdef" } }), tokenEnv, tokenDeps(), token),
-    /AI_INVALID_REQUEST/,
+    runRemoteTool(tokenInput("activate_scene", { arguments: { sceneId: "scene_0123456789abcdef", revision: sceneRevision } }), tokenEnv, tokenDeps(), token),
+    /AI_SCOPE_FORBIDDEN/,
   );
 });

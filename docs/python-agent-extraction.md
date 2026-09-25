@@ -15,12 +15,11 @@ conversation storage, agent usage quotas, and forwards bounded turns to Python.
 - Envelope: requestId, principalId, homeId, scopes, sessionBinding, optional idempotencyKey,
   tool and arguments. No new Xiaomi credentials leave the console.
 - Binding is decrypted only here; principal is re-derived and current home access rechecked.
-- `authorize` returns `{ok:true}`; `list_scenes` returns sanitized alias/name/description/actionCount.
+- `authorize` returns `{ok:true}`. `list_scenes` returns enabled manual scenes exposed by current individual approval or the confirmed home-level approval bypass. Individual approvals remain revision-bound; bypass covers current and future scenes. Summaries use opaque aliases and contain no real scene IDs or DIDs.
 - `get_home_status` returns a sanitized read-only home snapshot; it stays out of preview.
 - `get_device_status` returns a sanitized read-only per-room device on/off snapshot
   (the same device pipeline and lighting model as the 首页 dashboard); it stays out of preview.
-- `activate_scene` currently returns `AI_SCENE_EXECUTION_DISABLED`; remote control requires
-  durable cross-conversation atomic execution claims plus reviewed scene revision/risk checks.
+- Scene catalog responses revalidate home-scoped aliases, current exposure policy, and content revision. The automation-token tools ingress rejects `activate_scene` until it carries a per-request console-issued action scope; the deprecated command router cannot dispatch it either. A signed binding scope is required to request a short-lived scene ticket, which is signed with the Console-only `AI_SCENE_ACTION_AUTHORIZATION_SECRET` and bound to principal, home, scene revision, request hash and idempotency key. Keep that secret out of the Agent environment. Keep remote execution disabled until the deployed concurrency, recovery and end-to-end gates in the agent repo's `docs/TODO.md` pass and canonical action registration is complete.
 - Optional `X-Ai-User-Token` header (checked after the service Bearer) adds a user
   automation-token ingress for the Python agent's `/ai/command` pipeline. The token is
   opaque to the agent; only this console opens it (`AI_AUTOMATION_TOKEN_SECRET`),

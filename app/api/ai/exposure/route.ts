@@ -1,9 +1,10 @@
 import { withRouteDiagnostics } from "../../../../lib/ai/api/diagnostics.ts";
 import { onRequest as exposureHandler } from "../../../../lib/ai/api/exposure.ts";
+import { isLocalAssistantExposureRuntime } from "../../../../lib/ai/config.ts";
 
 async function invoke(request: Request) {
   const context = { request, env: process.env };
-  if (process.env.AI_ENVIRONMENT === "development") {
+  if (isLocalAssistantExposureRuntime(process.env)) {
     const { localAssistantExposureStore } = await import("../../../../lib/ai/tools/local-assistant-exposure-store.ts");
     return exposureHandler(context, { store: localAssistantExposureStore(process.env.AI_ASSISTANT_EXPOSURE_DIR) });
   }

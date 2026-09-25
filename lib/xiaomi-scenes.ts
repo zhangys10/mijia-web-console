@@ -15,6 +15,20 @@ export type ManualScene = {
   actions: ManualSceneAction[];
 };
 
+const sceneRevisionMaterial = new WeakMap<ManualScene, unknown>();
+
+/** Return private source material for server-side revision hashing only. */
+export function manualSceneRevisionMaterial(scene: ManualScene) {
+  return sceneRevisionMaterial.get(scene) ?? {
+    actions: scene.actions.map(action => ({
+      order: action.order,
+      deviceName: action.deviceName ?? null,
+      room: action.room ?? null,
+      details: action.details,
+    })),
+  };
+}
+
 export type ManualSceneAction = {
   order: number;
   label: string;
@@ -259,7 +273,7 @@ export function parseManualScenes(response: Record<string, unknown>, homeId: str
     const icon = text(scene.icon ?? scene.icon_url);
     const updatedAt = text(scene.update_time ?? scene.updated_at ?? scene.modify_time);
     const actions = normalizeActions(scene, roomsByDid, capabilities, homeId);
-    scenes.set(id, {
+    const parsedScene: ManualScene = {
       id,
       homeId,
       name,
@@ -268,7 +282,17 @@ export function parseManualScenes(response: Record<string, unknown>, homeId: str
       actionCount: actions.length,
       ...(updatedAt ? { updatedAt } : {}),
       actions,
+    };
+    // Keep raw target identifiers and command/property coordinates off all
+    // serialized scene projections while binding approvals to their values.
+    sceneRevisionMaterial.set(parsedScene, {
+      actions: actionEntries(scene).map(action => ({
+        order: action.order ?? null,
+        did: action.did ?? parsedSceneRecord(action.payload_json ?? action.payload)?.did ?? null,
+        payload: parsedSceneRecord(action.payload_json ?? action.payload) ?? null,
+      })),
     });
+    scenes.set(id, parsedScene);
   }
   return [...scenes.values()];
 }

@@ -8,6 +8,7 @@ import { sealWithSecret } from "../lib/xiaomi-cloud.ts";
 import { onRequest as exposureHandler } from "../lib/ai/api/exposure.ts";
 import {
   assistantExposureProjection,
+  listObservedAssistantExposureInventory,
   observedExposureInventory,
   readAssistantExposure,
   updateAssistantExposure,
@@ -53,6 +54,11 @@ test("exposure API treats homeId as routing context, not an exposure setting", a
 async function entityRef(homeId, did) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${homeId}:${did}`));
   return `entity_${Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, "0")).join("").slice(0, 32)}`;
+}
+
+async function sceneRef(homeId, sceneId) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${homeId}:${sceneId}`));
+  return `scene_${Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, "0")).join("").slice(0, 16)}`;
 }
 
 test("home assistant exposure defaults to deny and uses a strongly consistent read", async () => {
@@ -161,6 +167,57 @@ test("home exposure update resolves only current-home device references and stor
     store, homes, devices, environment,
     deviceStatus: async () => ({ capturedAt: "2026-09-24T00:00:00Z", completeness: "empty", poweredOn: 0, rooms: [], warnings: [] }),
   }), error => error.code === "AI_INVALID_REQUEST");
+});
+
+test("observed read inventory preserves scene approvals through settings save", async () => {
+  const homeId = "test-home";
+  const sceneId = "private-scene-id";
+  const revision = `rev_${"a".repeat(24)}`;
+  let currentSceneRevision = revision;
+  let deviceReads = 0;
+  let sceneReads = 0;
+  const ref = await sceneRef(homeId, sceneId);
+  let stored = null;
+  const dependencies = {
+    store: {
+      async get() { return stored; },
+      async setJSON(key, value, options) { if (!options?.onlyIfNew) stored = value; },
+    },
+    homes: async () => [{ id: homeId, name: "测试家庭" }],
+    devices: async () => { deviceReads += 1; return { homes: [{ id: homeId }], devices: [] }; },
+    environment: async () => ({ capturedAt: "2026-09-24T00:00:00Z", completeness: "empty", groups: [], warnings: [] }),
+    deviceStatus: async () => ({ capturedAt: "2026-09-24T00:00:00Z", completeness: "empty", poweredOn: 0, rooms: [], warnings: [] }),
+    sceneCatalog: async () => { sceneReads += 1; return [{ sceneId, homeId, name: "客厅灯", actionCount: 1, revision: currentSceneRevision, actionSummaries: [] }]; },
+  };
+  const session = { userId: "fake-user" };
+  const principalId = `usr_${"a".repeat(43)}`;
+  const updated = await updateAssistantExposure(session, homeId, {
+    enabled: true, sceneActionsEnabled: true, roomMetrics: {}, deviceRefs: [], sceneRefs: [ref],
+  }, principalId, dependencies);
+  assert.equal(deviceReads, 1, "settings save reuses the device inventory read");
+  assert.equal(sceneReads, 1, "settings save reuses the scene catalog read");
+  assert.equal(updated.exposure.sceneApprovals[sceneId], revision);
+  assert.equal(updated.inventory.scenes[0].approvalStatus, "approved");
+  assert.equal(updated.inventory.scenes[0].enabled, true);
+  const observed = await listObservedAssistantExposureInventory(session, homeId, updated.exposure, dependencies);
+  assert.equal(observed.scenes[0].ref, ref);
+  assert.equal(observed.scenes[0].approvalStatus, "approved");
+  assert.equal(observed.scenes[0].enabled, true);
+  assert.equal(JSON.stringify(observed).includes(sceneId), false);
+
+  currentSceneRevision = `rev_${"b".repeat(24)}`;
+  const changed = await listObservedAssistantExposureInventory(session, homeId, updated.exposure, dependencies);
+  assert.equal(changed.scenes[0].approvalStatus, "changed");
+  assert.equal(changed.scenes[0].enabled, false, "an edited scene must lose its previous approval");
+
+  const bypassInput = { enabled: true, sceneActionsEnabled: true, sceneApprovalBypass: true, roomMetrics: {}, deviceRefs: [], sceneRefs: [] };
+  await assert.rejects(updateAssistantExposure(session, homeId, bypassInput, principalId, dependencies), error => error.code === "AI_INVALID_REQUEST");
+  const bypassed = await updateAssistantExposure(session, homeId, { ...bypassInput, confirmSceneApprovalBypass: true }, principalId, dependencies);
+  assert.equal(bypassed.exposure.sceneApprovalBypass, true);
+  assert.deepEqual(bypassed.exposure.sceneApprovals, {});
+  assert.equal(bypassed.inventory.scenes[0].enabled, true, "confirmed bypass exposes scenes without individual approval");
+  const restored = await updateAssistantExposure(session, homeId, { ...bypassInput, sceneApprovalBypass: false }, principalId, dependencies);
+  assert.equal(restored.inventory.scenes[0].enabled, false, "turning bypass off restores the individual approval gate");
 });
 
 test("home exposure update rejects an entity reference that is not in the selected home", async () => {
