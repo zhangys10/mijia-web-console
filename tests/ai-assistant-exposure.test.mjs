@@ -8,10 +8,11 @@ import { sealWithSecret } from "../lib/xiaomi-cloud.ts";
 import { onRequest as exposureHandler } from "../lib/ai/api/exposure.ts";
 import {
   assistantExposureProjection,
+  observedExposureInventory,
   readAssistantExposure,
   updateAssistantExposure,
 } from "../lib/ai/tools/assistant-exposure.ts";
-import { filterEnvironmentByExposure, filterDeviceStatus, invokeAssistantToolV1 } from "../lib/ai/tools/assistant-v1-service.ts";
+import { filterEnvironmentByExposure, filterDeviceStatus, getAssistantCapabilitiesV1, invokeAssistantToolV1 } from "../lib/ai/tools/assistant-v1-service.ts";
 import { sealAutomationToken } from "../lib/ai/security/automation-token.ts";
 import { createLocalAssistantExposureStore } from "../lib/ai/tools/local-assistant-exposure-store.ts";
 
@@ -35,7 +36,9 @@ test("exposure API treats homeId as routing context, not an exposure setting", a
     env,
   }, {
     homes: async () => [{ id: "home-route-test" }],
-    devices: async () => ({ devices: [] }),
+    devices: async () => ({ homes: [{ id: "home-route-test" }], devices: [] }),
+    environment: async () => ({ capturedAt: "2026-09-24T00:00:00Z", completeness: "empty", groups: [], warnings: [] }),
+    deviceStatus: async () => ({ capturedAt: "2026-09-24T00:00:00Z", completeness: "empty", poweredOn: 0, rooms: [], warnings: [] }),
     store: {
       async get() { return null; },
       async setJSON(key, value) { stored.push({ key, value }); },
@@ -67,6 +70,28 @@ test("home assistant exposure defaults to deny and uses a strongly consistent re
   assert.deepEqual(assistantExposureProjection(exposure, { rooms: [], metrics: [], devices: [] }).capabilities, []);
 });
 
+test("settings inventory offers only observed room metrics and reported device statuses", () => {
+  const base = {
+    rooms: ["客厅", "卧室"], metrics: ["temperature", "humidity"],
+    devices: [
+      { ref: "entity_light", name: "客厅灯", room: "客厅", kind: "light", enabled: false, eligible: true },
+      { ref: "entity_sensor", name: "卧室传感器", room: "卧室", kind: "sensor", enabled: false, eligible: true },
+    ],
+  };
+  const inventory = observedExposureInventory(base, {
+    capturedAt: "2026-09-24T00:00:00Z", completeness: "partial", warnings: [],
+    groups: [{ metric: "temperature", label: "温度", unit: "°C", latest: null, readings: [
+      { value: 23, unit: "°C", sourceLabel: "客厅传感器", roomName: "客厅", capturedAt: "2026-09-24T00:00:00Z", freshness: "fresh" },
+    ] }],
+  }, {
+    capturedAt: "2026-09-24T00:00:00Z", completeness: "partial", poweredOn: 1, warnings: [],
+    rooms: [{ room: "客厅", items: [{ name: "客厅灯", kind: "light", state: "on", online: true }] }],
+  });
+  assert.deepEqual(inventory.roomMetrics, { "客厅": ["temperature"] });
+  assert.deepEqual(inventory.metrics, ["temperature"]);
+  assert.deepEqual(inventory.devices.map(item => item.ref), ["entity_light"]);
+});
+
 test("exposure storage failures stay distinguishable from generic assistant failures", async () => {
   await assert.rejects(
     readAssistantExposure("home-id", {
@@ -96,12 +121,19 @@ test("home exposure update resolves only current-home device references and stor
     homes: [{ id: homeId, name: "我的家" }],
     devices: [{ homeId, did, name: "客厅灯", roomName: "客厅", model: "yeelink.light.test" }],
   });
+  const environment = async () => ({ capturedAt: "2026-09-24T00:00:00Z", completeness: "complete", warnings: [], groups: [{
+    metric: "temperature", label: "温度", unit: "°C", latest: null,
+    readings: [{ value: 23, unit: "°C", sourceLabel: "客厅传感器", roomName: "客厅", capturedAt: "2026-09-24T00:00:00Z", freshness: "fresh" }],
+  }] });
+  const deviceStatus = async () => ({ capturedAt: "2026-09-24T00:00:00Z", completeness: "complete", poweredOn: 1, warnings: [], rooms: [
+    { room: "客厅", items: [{ name: "客厅灯", kind: "light", state: "on", online: true }] },
+  ] });
 
   const result = await updateAssistantExposure({ userId: "test" }, homeId, {
     enabled: true,
     roomMetrics: { "客厅": ["temperature"] },
     deviceRefs: [selectedRef],
-  }, "usr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", { store, homes, devices });
+  }, "usr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", { store, homes, devices, environment, deviceStatus });
 
   assert.equal(result.exposure.enabled, true);
   assert.equal(result.exposure.deviceDids[0], did);
@@ -119,6 +151,16 @@ test("home exposure update resolves only current-home device references and stor
   assert.equal(auditRecords[0].value.revision, result.exposure.revision);
   assert.equal(auditRecords[0].value.exposedDeviceCount, 1);
   assert.equal(JSON.stringify(auditRecords[0]).includes(did), false);
+  await assert.rejects(updateAssistantExposure({ userId: "test" }, homeId, {
+    enabled: true, roomMetrics: { "客厅": ["humidity"] }, deviceRefs: [selectedRef],
+  }, "usr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", { store, homes, devices, environment, deviceStatus }),
+  error => error.code === "AI_INVALID_REQUEST");
+  await assert.rejects(updateAssistantExposure({ userId: "test" }, homeId, {
+    enabled: true, roomMetrics: {}, deviceRefs: [selectedRef],
+  }, "usr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
+    store, homes, devices, environment,
+    deviceStatus: async () => ({ capturedAt: "2026-09-24T00:00:00Z", completeness: "empty", poweredOn: 0, rooms: [], warnings: [] }),
+  }), error => error.code === "AI_INVALID_REQUEST");
 });
 
 test("home exposure update rejects an entity reference that is not in the selected home", async () => {
@@ -131,6 +173,8 @@ test("home exposure update rejects an entity reference that is not in the select
     store,
     homes: async () => [{ id: "home-id", name: "我的家" }],
     devices: async () => ({ homes: [{ id: "home-id", name: "我的家" }], devices: [] }),
+    environment: async () => ({ capturedAt: "2026-09-24T00:00:00Z", completeness: "empty", groups: [], warnings: [] }),
+    deviceStatus: async () => ({ capturedAt: "2026-09-24T00:00:00Z", completeness: "empty", poweredOn: 0, rooms: [], warnings: [] }),
   }), error => error.code === "AI_INVALID_REQUEST");
 });
 
@@ -206,14 +250,21 @@ test("assistant tool reuses one authenticated device discovery for inventory and
   };
   let discoveryCalls = 0;
   let environmentCalls = 0;
+  const manifest = await getAssistantCapabilitiesV1({ requestId: "req_test_manifest" }, token, env, {
+    discovery: async () => discovery,
+    exposure: async () => ({ version: 1, enabled: true, roomMetrics: { "客厅": ["temperature"], "卧室": ["humidity"] }, deviceDids: [], updatedAt: null, revision: "exp_test" }),
+  });
+  assert.deepEqual(manifest.projection.roomMetrics, { "客厅": ["temperature"], "卧室": ["humidity"] });
+  assert.deepEqual(manifest.projection.roomDeviceKinds, {});
   const result = await invokeAssistantToolV1({ requestId: "req_test_environment", operation: "get_home_environment", arguments: { rooms: ["客厅"], metrics: ["temperature"] } }, token, env, {
     discovery: async () => { discoveryCalls += 1; return discovery; },
     exposure: async () => ({ version: 1, enabled: true, roomMetrics: { "客厅": ["temperature"], "卧室": ["humidity"] }, deviceDids: [], updatedAt: null, revision: "exp_test" }),
     environment: async (_session, _home, dependencies, filter) => {
       environmentCalls += 1;
       assert.equal(await dependencies.listDevices(session), discovery);
-      assert.deepEqual(filter.rooms, ["客厅", "卧室"]);
-      assert.deepEqual(filter.metrics.sort(), ["temperature", "humidity"].sort());
+      assert.deepEqual(filter.rooms, ["客厅"]);
+      assert.deepEqual(filter.metrics, ["temperature"]);
+      assert.deepEqual(filter.roomMetrics, { "客厅": ["temperature"] });
       return {
         capturedAt: "2026-09-23T00:00:00Z",
         completeness: "complete",
@@ -235,7 +286,14 @@ test("assistant tool reuses one authenticated device discovery for inventory and
       discovery: async () => discovery,
       exposure: async () => ({ version: 1, enabled: true, roomMetrics: { "客厅": ["temperature"], "卧室": ["humidity"] }, deviceDids: [], updatedAt: null, revision: "exp_test" }),
     }),
-    /AI_INVALID_REQUEST/,
+    error => error.message === "AI_INVALID_REQUEST" && error.diagnosticCode === "FILTER_ROOMS_INVALID",
+  );
+  await assert.rejects(
+    invokeAssistantToolV1({ requestId: "req_test_device", operation: "get_device_status", arguments: { kinds: ["light"] } }, token, env, {
+      discovery: async () => discovery,
+      exposure: async () => ({ version: 1, enabled: true, roomMetrics: {}, deviceDids: ["fake-device-1"], updatedAt: null, revision: "exp_test" }),
+    }),
+    error => error.message === "AI_INVALID_REQUEST" && error.diagnosticCode === "FILTER_KINDS_INVALID",
   );
 });
 

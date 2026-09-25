@@ -6,6 +6,7 @@ type Metric = "temperature" | "humidity" | "co2" | "formaldehyde" | "pm25" | "pm
 type Inventory = {
   rooms: string[];
   metrics: Metric[];
+  roomMetrics: Record<string, Metric[]>;
   devices: Array<{ ref: string; name: string; room: string; kind: string; enabled: boolean; eligible: boolean }>;
 };
 type Exposure = { enabled: boolean; roomMetrics: Record<string, Metric[]>; updatedAt: string | null; revision: string };
@@ -39,7 +40,7 @@ const deviceKindLabels: Record<string, string> = {
 
 export default function AssistantExposureSettings({ homeId, homeName }: { homeId?: string; homeName?: string }) {
   const [exposure, setExposure] = useState<Exposure>({ enabled: false, roomMetrics: {}, updatedAt: null, revision: "exp_default_deny" });
-  const [inventory, setInventory] = useState<Inventory>({ rooms: [], metrics: [], devices: [] });
+  const [inventory, setInventory] = useState<Inventory>({ rooms: [], metrics: [], roomMetrics: {}, devices: [] });
   const [selectedDevices, setSelectedDevices] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -79,7 +80,7 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
 
   const selectedCount = selectedDevices.length;
   const permissionRows = useMemo<PermissionRow[]>(() => [
-    ...inventory.rooms.flatMap(room => inventory.metrics.map(metric => ({
+    ...Object.entries(inventory.roomMetrics).flatMap(([room, metrics]) => metrics.map(metric => ({
       id: `metric:${room}:${metric}`,
       name: `${metricLabels[metric]}读数`,
       kind: metricLabels[metric],
@@ -117,15 +118,14 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
     }
   }, [allVisibleSelected, someVisibleSelected]);
 
-  const allEnvironmentSelected = inventory.metrics.length > 0 && inventory.rooms.length > 0
-    && inventory.metrics.every(metric => inventory.rooms.every(room => (exposure.roomMetrics[room] ?? []).includes(metric)));
+  const unavailableApprovals = Object.entries(exposure.roomMetrics).flatMap(([room, metrics]) =>
+    metrics.filter(metric => !inventory.roomMetrics[room]?.includes(metric)).map(metric => `${room} · ${metricLabels[metric]}`));
   const eligibleDevices = inventory.devices.filter(device => device.eligible);
-  const allDevicesSelected = eligibleDevices.length === 0 || eligibleDevices.every(device => selectedDevices.includes(device.ref));
-  const allSelected = allEnvironmentSelected && allDevicesSelected;
+  const allSelected = permissionRows.length > 0 && permissionRows.every(row => row.selected);
 
   function setAllEnvironment(next: boolean) {
     const roomMetrics = next
-      ? Object.fromEntries(inventory.rooms.map(room => [room, [...inventory.metrics]]))
+      ? Object.fromEntries(Object.entries(inventory.roomMetrics).filter(([, metrics]) => metrics.length).map(([room, metrics]) => [room, [...metrics]]))
       : {};
     setExposure(current => ({ ...current, roomMetrics }));
     setSaved(false);
@@ -191,11 +191,15 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
     setError("");
     setSaved(false);
     try {
+      const roomMetrics = Object.fromEntries(Object.entries(exposure.roomMetrics).flatMap(([room, metrics]) => {
+        const available = metrics.filter(metric => inventory.roomMetrics[room]?.includes(metric));
+        return available.length ? [[room, available]] : [];
+      }));
       const response = await fetch("/api/ai/exposure", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ homeId, enabled: exposure.enabled, roomMetrics: exposure.roomMetrics, deviceRefs: selectedDevices }),
+        body: JSON.stringify({ homeId, enabled: exposure.enabled, roomMetrics, deviceRefs: selectedDevices }),
       });
       const body = await response.json().catch(() => null) as { code?: string; exposure?: Exposure; inventory?: Inventory } | null;
       if (!response.ok || !body?.exposure || !body.inventory) throw new Error(body?.code ?? "AI_AGENT_UNAVAILABLE");
@@ -235,6 +239,7 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
         <>
           <div className="assistant-exposure-section">
             <h3>读取权限 <small>已选 {permissionRows.filter(row => row.selected).length} 项</small></h3>
+            {unavailableApprovals.length > 0 && <p className="assistant-exposure-note">以下已授权读数当前不可用，保存时会撤销这些授权：{unavailableApprovals.join("、")}</p>}
             {permissionRows.length ? <>
               <div className="assistant-exposure-filters" aria-label="读取权限筛选">
                 <label>数据范围

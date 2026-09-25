@@ -99,6 +99,7 @@ test("assistant exposure settings use compact filterable rows and select only fi
   assert.match(source, /value=\{search\}/, "rows must support text search");
   assert.match(source, /全选当前筛选结果/);
   assert.match(source, /for \(const row of filteredRows\)/, "bulk selection must only visit visible filtered rows");
+  assert.match(source, /Object\.entries\(inventory\.roomMetrics\)\.flatMap/, "environment choices must be limited to readings observed in each room");
   assert.match(source, /current\.filter\(ref => !refs\.has\(ref\)\)/, "deselecting filtered rows must preserve selected devices outside the filter");
   assert.match(source, /data-label="房间"/, "small screens must retain the table's field labels");
   assert.match(styles, /@media\(max-width:600px\).*\.assistant-exposure-table tbody tr\{display:grid/s);

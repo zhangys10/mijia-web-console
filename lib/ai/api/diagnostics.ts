@@ -11,10 +11,13 @@ function requestId(request: Request) {
 
 async function responseCategory(response: Response) {
   try {
-    const body = await response.clone().json() as { code?: unknown };
-    return typeof body?.code === "string" && SAFE_CATEGORY.test(body.code) ? body.code : "HTTP_ERROR";
+    const body = await response.clone().json() as { code?: unknown; diagnosticCode?: unknown };
+    return {
+      category: typeof body?.code === "string" && SAFE_CATEGORY.test(body.code) ? body.code : "HTTP_ERROR",
+      diagnosticCode: typeof body?.diagnosticCode === "string" && SAFE_CATEGORY.test(body.diagnosticCode) ? body.diagnosticCode : undefined,
+    };
   } catch {
-    return "HTTP_ERROR";
+    return { category: "HTTP_ERROR", diagnosticCode: undefined };
   }
 }
 
@@ -25,13 +28,15 @@ export function withRouteDiagnostics(route: string, handler: RouteHandler): Rout
     try {
       const response = await handler(request);
       if (!response.ok) {
+        const { category, diagnosticCode } = await responseCategory(response);
         const record = {
           event: "console_api_response_error",
           requestId: id,
           route,
           stage: "ROUTE_HANDLER",
           httpStatus: response.status,
-          category: await responseCategory(response),
+          category,
+          ...(diagnosticCode ? { diagnosticCode } : {}),
         };
         const line = JSON.stringify(record);
         if (response.status >= 500) console.error(line);
