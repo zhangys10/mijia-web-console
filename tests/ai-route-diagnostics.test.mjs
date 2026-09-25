@@ -34,3 +34,19 @@ test("thrown route errors get a safe no-store response and no exception detail i
   assert.equal(record.requestId.length > 0, true);
   assert.equal(record.category, "UNEXPECTED_EXCEPTION");
 });
+test("route diagnostics include only a bounded validation reason", async context => {
+  const warnings = [];
+  context.mock.method(console, "warn", line => warnings.push(line));
+  const handler = withRouteDiagnostics("/api/internal/assistant/v1/tools:invoke", async () => Response.json({
+    code: "AI_INVALID_REQUEST", diagnosticCode: "FILTER_KINDS_INVALID", message: "private device name",
+  }, { status: 400 }));
+  await handler(new Request("https://console.test/api/internal/assistant/v1/tools:invoke", {
+    headers: { "x-request-id": "req_806b23a2f1334512aeb6c36fe0effabe" },
+  }));
+  assert.deepEqual(JSON.parse(warnings[0]), {
+    event: "console_api_response_error", requestId: "req_806b23a2f1334512aeb6c36fe0effabe",
+    route: "/api/internal/assistant/v1/tools:invoke", stage: "ROUTE_HANDLER", httpStatus: 400,
+    category: "AI_INVALID_REQUEST", diagnosticCode: "FILTER_KINDS_INVALID",
+  });
+  assert.equal(warnings[0].includes("private device name"), false);
+});

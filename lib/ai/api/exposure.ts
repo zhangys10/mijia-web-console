@@ -7,7 +7,9 @@ import {
 } from "../web-chat/web-api-boundary.ts";
 import { listDevices, listHomes } from "../../xiaomi-cloud.ts";
 import { derivePrincipalId } from "../security/principal.ts";
-import { AssistantExposureError, listAssistantExposureInventory, readAssistantExposure, updateAssistantExposure, type AssistantExposureStore } from "../tools/assistant-exposure.ts";
+import { AssistantExposureError, listObservedAssistantExposureInventory, readAssistantExposure, updateAssistantExposure, type AssistantExposureStore } from "../tools/assistant-exposure.ts";
+import { collectHomeEnvironment } from "../../home-environment.ts";
+import { collectDeviceStatus } from "../../device-status.ts";
 
 const MAX_BODY_BYTES = 32768;
 
@@ -33,6 +35,8 @@ export async function onRequest(context: AiWebContext, dependencies: {
   store?: AssistantExposureStore;
   homes?: typeof listHomes;
   devices?: typeof listDevices;
+  environment?: typeof collectHomeEnvironment;
+  deviceStatus?: typeof collectDeviceStatus;
 } = {}) {
   if (context.request.method !== "GET" && context.request.method !== "PUT") {
     return jsonResponse({ code: "AI_INVALID_REQUEST" }, 405);
@@ -44,7 +48,7 @@ export async function onRequest(context: AiWebContext, dependencies: {
     await resolveHome(session, homeId, dependencies.homes);
     if (context.request.method === "GET") {
       const exposure = await readAssistantExposure(homeId, dependencies.store, context.env);
-      const inventory = await listAssistantExposureInventory(session, homeId, exposure);
+      const inventory = await listObservedAssistantExposureInventory(session, homeId, exposure, dependencies);
       return jsonResponse({ exposure: { enabled: exposure.enabled, sceneActionsEnabled: exposure.sceneActionsEnabled, roomMetrics: exposure.roomMetrics, updatedAt: exposure.updatedAt, revision: exposure.revision }, inventory }, 200);
     }
     const actorPrincipalId = await derivePrincipalId(session, context.env);
@@ -57,6 +61,8 @@ export async function onRequest(context: AiWebContext, dependencies: {
       env: context.env,
       homes: dependencies.homes,
       devices: dependencies.devices,
+      environment: dependencies.environment,
+      deviceStatus: dependencies.deviceStatus,
     });
     return jsonResponse({ exposure: { enabled: result.exposure.enabled, sceneActionsEnabled: result.exposure.sceneActionsEnabled, roomMetrics: result.exposure.roomMetrics, updatedAt: result.exposure.updatedAt, revision: result.exposure.revision }, inventory: result.inventory }, 200);
   } catch (error) {
