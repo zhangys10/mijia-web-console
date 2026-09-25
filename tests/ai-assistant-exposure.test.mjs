@@ -173,6 +173,7 @@ test("observed read inventory preserves scene approvals through settings save", 
   const homeId = "test-home";
   const sceneId = "private-scene-id";
   const revision = `rev_${"a".repeat(24)}`;
+  let currentSceneRevision = revision;
   const ref = await sceneRef(homeId, sceneId);
   let stored = null;
   const dependencies = {
@@ -184,7 +185,7 @@ test("observed read inventory preserves scene approvals through settings save", 
     devices: async () => ({ homes: [{ id: homeId }], devices: [] }),
     environment: async () => ({ capturedAt: "2026-09-24T00:00:00Z", completeness: "empty", groups: [], warnings: [] }),
     deviceStatus: async () => ({ capturedAt: "2026-09-24T00:00:00Z", completeness: "empty", poweredOn: 0, rooms: [], warnings: [] }),
-    sceneCatalog: async () => [{ sceneId, homeId, name: "客厅灯", actionCount: 1, risk: "low", revision, actionSummaries: [] }],
+    sceneCatalog: async () => [{ sceneId, homeId, name: "客厅灯", actionCount: 1, risk: "low", revision: currentSceneRevision, actionSummaries: [] }],
   };
   const session = { userId: "fake-user" };
   const principalId = `usr_${"a".repeat(43)}`;
@@ -192,11 +193,18 @@ test("observed read inventory preserves scene approvals through settings save", 
     enabled: true, sceneActionsEnabled: true, roomMetrics: {}, deviceRefs: [], sceneRefs: [ref],
   }, principalId, dependencies);
   assert.equal(updated.exposure.sceneApprovals[sceneId], revision);
+  assert.equal(updated.inventory.scenes[0].approvalStatus, "approved");
   assert.equal(updated.inventory.scenes[0].enabled, true);
   const observed = await listObservedAssistantExposureInventory(session, homeId, updated.exposure, dependencies);
   assert.equal(observed.scenes[0].ref, ref);
+  assert.equal(observed.scenes[0].approvalStatus, "approved");
   assert.equal(observed.scenes[0].enabled, true);
   assert.equal(JSON.stringify(observed).includes(sceneId), false);
+
+  currentSceneRevision = `rev_${"b".repeat(24)}`;
+  const changed = await listObservedAssistantExposureInventory(session, homeId, updated.exposure, dependencies);
+  assert.equal(changed.scenes[0].approvalStatus, "changed");
+  assert.equal(changed.scenes[0].enabled, false, "an edited scene must lose its previous approval");
 });
 
 test("home exposure update rejects an entity reference that is not in the selected home", async () => {

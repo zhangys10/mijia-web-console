@@ -103,6 +103,23 @@ test("assistant exposure settings use compact filterable rows and select only fi
   assert.match(source, /current\.filter\(ref => !refs\.has\(ref\)\)/, "deselecting filtered rows must preserve selected devices outside the filter");
   assert.match(source, /data-label="房间"/, "small screens must retain the table's field labels");
   assert.match(styles, /@media\(max-width:600px\).*\.assistant-exposure-table tbody tr\{display:grid/s);
+  assert.match(styles, /\.assistant-exposure-filters input\[type="checkbox"\]\{width:18px;height:18px;min-height:18px/, "filter selection boxes must keep a compact visual checkbox inside the 44px target");
+});
+
+test("scene approvals are readable, grouped by room, and never promise remote execution", async () => {
+  const source = await read("../app/components/ai-assistant/assistant-exposure-settings.tsx");
+  const styles = await read("../app/ai-assistant.css");
+  assert.match(source, /场景授权目前仍关闭|远程场景执行目前仍关闭/);
+  assert.match(source, /sceneGroupName\(scene\)/, "scene filters and sections must use the affected room grouping");
+  assert.match(source, /value=\{sceneSearch\}/, "scene search must be available");
+  assert.match(source, /<details className="assistant-scene-details">/, "each scene must expose its action summary on demand");
+  assert.match(source, /启用场景授权/);
+  assert.doesNotMatch(source, /允许 AI 执行已选场景/);
+  assert.match(source, /disabled=\{selectableVisibleScenes\.length === 0 \|\| loading\}/, "bulk approval configuration must not require the master permission to be on");
+  assert.match(styles, /\.assistant-scene-groups\{display:grid;gap:24px\}/);
+  assert.match(styles, /\.assistant-scene-search input,.assistant-scene-room-filter select\{[^}]*min-height:44px/);
+  assert.match(styles, /@media\(max-width:560px\).*\.assistant-scene-tools input,.assistant-scene-tools select\{font-size:16px!important\}/s, "mobile scene filters must avoid browser auto-zoom");
+  assert.match(styles, /@media\(max-width:440px\).*\.assistant-scene-details li\{grid-template-columns:minmax\(0,1fr\)\}/s);
 });
 
 test("Next routes own the AI API URLs and call shared handlers directly", async () => {

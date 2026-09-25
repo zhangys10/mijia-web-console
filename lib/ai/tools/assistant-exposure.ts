@@ -26,7 +26,7 @@ export type ExposureInventory = {
   metrics: EnvironmentMetric[];
   roomMetrics: Record<string, EnvironmentMetric[]>;
   devices: Array<{ ref: string; name: string; room: string; kind: string; enabled: boolean; eligible: boolean }>;
-  scenes: Array<{ ref: string; name: string; actionCount: number; risk: "low" | "blocked"; enabled: boolean; revision: string; actionSummaries: Array<{ room: string | null; device: string | null; actions: Array<{ label: string; value: string }> }> }>;
+  scenes: Array<{ ref: string; name: string; actionCount: number; risk: "low" | "blocked"; approvalStatus: "approved" | "changed" | "pending" | "blocked"; enabled: boolean; revision: string; actionSummaries: Array<{ room: string | null; device: string | null; actions: Array<{ label: string; value: string }> }> }>;
 };
 
 type ExposureReaders = {
@@ -188,15 +188,26 @@ export async function listAssistantExposureInventory(
     metrics: HOME_METRICS,
     roomMetrics: {},
     devices: items.map(({ ref, name, room, kind, enabled, eligible }) => ({ ref, name, room, kind, enabled, eligible })),
-    scenes: await Promise.all(sceneCatalog.map(async scene => ({
-      ref: await sceneExposureRef(homeId, scene.sceneId),
-      name: scene.name,
-      actionCount: scene.actionCount,
-      risk: scene.risk,
-      enabled: exposure.enabled && scene.risk === "low" && exposure.sceneApprovals[scene.sceneId] === scene.revision,
-      revision: scene.revision,
-      actionSummaries: scene.actionSummaries,
-    }))),
+    scenes: await Promise.all(sceneCatalog.map(async scene => {
+      const savedRevision = exposure.sceneApprovals[scene.sceneId];
+      const approvalStatus = scene.risk !== "low"
+        ? "blocked"
+        : savedRevision === scene.revision
+          ? "approved"
+          : savedRevision
+            ? "changed"
+            : "pending";
+      return {
+        ref: await sceneExposureRef(homeId, scene.sceneId),
+        name: scene.name,
+        actionCount: scene.actionCount,
+        risk: scene.risk,
+        approvalStatus,
+        enabled: exposure.enabled && exposure.sceneActionsEnabled && approvalStatus === "approved",
+        revision: scene.revision,
+        actionSummaries: scene.actionSummaries,
+      };
+    })),
   };
 }
 
@@ -331,7 +342,11 @@ export async function updateAssistantExposure(
     inventory: {
       ...inventory,
       devices: inventory.devices.map(device => ({ ...device, enabled: device.eligible && requestedRefs.has(device.ref) })),
-      scenes: inventory.scenes.map(scene => ({ ...scene, enabled: next.enabled && next.sceneActionsEnabled && requestedSceneRefs.has(scene.ref) })),
+      scenes: inventory.scenes.map(scene => ({
+        ...scene,
+        approvalStatus: scene.risk !== "low" ? "blocked" : requestedSceneRefs.has(scene.ref) ? "approved" : "pending",
+        enabled: next.enabled && next.sceneActionsEnabled && requestedSceneRefs.has(scene.ref),
+      })),
     },
   };
 }

@@ -8,7 +8,7 @@ type Inventory = {
   metrics: Metric[];
   roomMetrics: Record<string, Metric[]>;
   devices: Array<{ ref: string; name: string; room: string; kind: string; enabled: boolean; eligible: boolean }>;
-  scenes: Array<{ ref: string; name: string; actionCount: number; risk: "low" | "blocked"; enabled: boolean; revision: string; actionSummaries: Array<{ room: string | null; device: string | null; actions: Array<{ label: string; value: string }> }> }>;
+  scenes: Array<{ ref: string; name: string; actionCount: number; risk: "low" | "blocked"; approvalStatus: "approved" | "changed" | "pending" | "blocked"; enabled: boolean; revision: string; actionSummaries: Array<{ room: string | null; device: string | null; actions: Array<{ label: string; value: string }> }> }>;
 };
 type Exposure = { enabled: boolean; sceneActionsEnabled: boolean; roomMetrics: Record<string, Metric[]>; updatedAt: string | null; revision: string };
 type PermissionRow = {
@@ -39,6 +39,15 @@ const deviceKindLabels: Record<string, string> = {
   unknown: "其他设备",
 };
 
+function sceneRooms(scene: Inventory["scenes"][number]) {
+  return [...new Set(scene.actionSummaries.flatMap(action => action.room ? [action.room] : []))];
+}
+
+function sceneGroupName(scene: Inventory["scenes"][number]) {
+  const rooms = sceneRooms(scene);
+  return rooms.length === 1 ? rooms[0] : rooms.length > 1 ? "多个房间" : "房间未识别";
+}
+
 export default function AssistantExposureSettings({ homeId, homeName }: { homeId?: string; homeName?: string }) {
   const [exposure, setExposure] = useState<Exposure>({ enabled: false, sceneActionsEnabled: false, roomMetrics: {}, updatedAt: null, revision: "exp_default_deny" });
   const [inventory, setInventory] = useState<Inventory>({ rooms: [], metrics: [], roomMetrics: {}, devices: [], scenes: [] });
@@ -52,6 +61,8 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
   const [roomFilter, setRoomFilter] = useState("all");
   const [kindFilter, setKindFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [sceneSearch, setSceneSearch] = useState("");
+  const [sceneRoomFilter, setSceneRoomFilter] = useState("all");
   const selectVisibleRef = useRef<HTMLInputElement>(null);
   const selectVisibleToolbarRef = useRef<HTMLInputElement>(null);
 
@@ -71,7 +82,7 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
         setExposure(body.exposure);
         setInventory(body.inventory);
         setSelectedDevices(body.inventory.devices.filter(device => device.enabled).map(device => device.ref));
-        setSelectedScenes(body.inventory.scenes.filter(scene => scene.enabled).map(scene => scene.ref));
+        setSelectedScenes(body.inventory.scenes.filter(scene => scene.approvalStatus === "approved").map(scene => scene.ref));
       } catch {
         if (!cancelled) setError("无法读取家庭暴露设置，请稍后重试。");
       } finally {
@@ -125,6 +136,36 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
     metrics.filter(metric => !inventory.roomMetrics[room]?.includes(metric)).map(metric => `${room} · ${metricLabels[metric]}`));
   const eligibleDevices = inventory.devices.filter(device => device.eligible);
   const allSelected = permissionRows.length > 0 && permissionRows.every(row => row.selected);
+  const approvedSceneCount = selectedScenes.length;
+  const visibleScenes = useMemo(() => {
+    const query = sceneSearch.trim().toLocaleLowerCase("zh-CN");
+    return inventory.scenes.filter(scene => {
+      if (sceneRoomFilter !== "all" && sceneGroupName(scene) !== sceneRoomFilter) return false;
+      if (!query) return true;
+      const searchable = [scene.name, ...sceneRooms(scene), ...scene.actionSummaries.flatMap(summary => [
+        summary.device ?? "",
+        ...summary.actions.flatMap(action => [action.label, action.value]),
+      ])].join(" ").toLocaleLowerCase("zh-CN");
+      return searchable.includes(query);
+    });
+  }, [inventory.scenes, sceneRoomFilter, sceneSearch]);
+  const sceneGroups = useMemo(() => {
+    const groups = new Map<string, Inventory["scenes"]>();
+    for (const scene of visibleScenes) {
+      const group = sceneGroupName(scene);
+      groups.set(group, [...(groups.get(group) ?? []), scene]);
+    }
+    return [...groups.entries()].sort(([left], [right]) => {
+      if (left === "多个房间") return 1;
+      if (right === "多个房间") return -1;
+      if (left === "房间未识别") return 1;
+      if (right === "房间未识别") return -1;
+      return left.localeCompare(right, "zh-CN");
+    });
+  }, [visibleScenes]);
+  const selectableVisibleScenes = visibleScenes.filter(scene => scene.risk === "low");
+  const allVisibleScenesSelected = selectableVisibleScenes.length > 0
+    && selectableVisibleScenes.every(scene => selectedScenes.includes(scene.ref));
 
   function setAllEnvironment(next: boolean) {
     const roomMetrics = next
@@ -209,7 +250,7 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
       setExposure(body.exposure);
       setInventory(body.inventory);
       setSelectedDevices(body.inventory.devices.filter(device => device.enabled).map(device => device.ref));
-      setSelectedScenes(body.inventory.scenes.filter(scene => scene.enabled).map(scene => scene.ref));
+      setSelectedScenes(body.inventory.scenes.filter(scene => scene.approvalStatus === "approved").map(scene => scene.ref));
       setSaved(true);
     } catch {
       setError("保存失败，家庭数据未开放给 AI 助手。");
@@ -325,32 +366,110 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
               <button type="button" className="assistant-exposure-clear-filters" onClick={() => { setScopeFilter("all"); setRoomFilter("all"); setKindFilter("all"); setSearch(""); }}>清除筛选</button>
             </> : <p className="assistant-exposure-note">没有找到可配置的环境读数或设备状态。</p>}
           </div>
-          <div className="assistant-exposure-section">
-            <h3>场景操作权限 <small>仅限已识别的低风险灯光场景</small></h3>
-            <label className="assistant-exposure-master">
-              <input type="checkbox" checked={exposure.sceneActionsEnabled} disabled={!homeId || loading} onChange={event => { setExposure(value => ({ ...value, sceneActionsEnabled: event.target.checked })); setSaved(false); }} />
-              <span>允许 AI 执行已选场景</span>
-            </label>
-            {inventory.scenes.length ? <fieldset className="assistant-exposure-group" disabled={!homeId || loading}>
-              <legend>手动场景</legend>
-              {inventory.scenes.map(scene => <label key={scene.ref}>
-                <input
-                  type="checkbox"
-                  checked={selectedScenes.includes(scene.ref)}
-                  disabled={scene.risk !== "low"}
-                  onChange={() => {
-                    setSelectedScenes(current => current.includes(scene.ref)
-                      ? current.filter(ref => ref !== scene.ref)
-                      : [...current, scene.ref]);
-                    setSaved(false);
-                  }}
-                />
-                <span>{scene.name}</span>
-                <small>{scene.risk === "low" ? `${scene.actionCount} 个灯光动作` : "含未知或不支持动作"}</small>
-              </label>)}
-            </fieldset> : <p className="assistant-exposure-note">当前家庭没有可配置的手动场景。</p>}
-            <p className="assistant-exposure-note">场景授权按当前内容版本保存；场景被编辑后需要重新开放。远程执行仍处于关闭状态。</p>
-          </div>
+          <section className="assistant-exposure-section assistant-scene-approvals" aria-labelledby="assistant-scene-approvals-title">
+            <div className="assistant-scene-heading">
+              <div>
+                <h3 id="assistant-scene-approvals-title">场景审批 <small>{approvedSceneCount} 个已选 / {inventory.scenes.length} 个场景</small></h3>
+                <p>选择低风险手动场景并批准当前版本。此设置只保存授权；远程场景执行目前仍关闭。</p>
+              </div>
+              <label className="assistant-scene-master">
+                <input type="checkbox" checked={exposure.sceneActionsEnabled} disabled={!homeId || loading} onChange={event => { setExposure(value => ({ ...value, sceneActionsEnabled: event.target.checked })); setSaved(false); }} />
+                <span>启用场景授权</span>
+              </label>
+            </div>
+            {inventory.scenes.length ? <>
+              <div className="assistant-scene-tools">
+                <label className="assistant-scene-search">
+                  <span>搜索场景</span>
+                  <input type="search" value={sceneSearch} onChange={event => setSceneSearch(event.target.value)} placeholder="按场景、房间、设备或动作搜索" />
+                </label>
+                <label className="assistant-scene-room-filter">
+                  <span>影响房间</span>
+                  <select value={sceneRoomFilter} onChange={event => setSceneRoomFilter(event.target.value)}>
+                    <option value="all">所有房间</option>
+                    {[...new Set(inventory.scenes.map(sceneGroupName))].sort((a, b) => a.localeCompare(b, "zh-CN")).map(room => <option key={room} value={room}>{room}</option>)}
+                  </select>
+                </label>
+                <label className="assistant-scene-select-visible">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleScenesSelected}
+                    disabled={selectableVisibleScenes.length === 0 || loading}
+                    aria-label={`全选筛选结果中的低风险场景，共 ${selectableVisibleScenes.length} 个`}
+                    onChange={event => {
+                      const refs = new Set(selectableVisibleScenes.map(scene => scene.ref));
+                      setSelectedScenes(current => event.target.checked
+                        ? [...new Set([...current, ...refs])]
+                        : current.filter(ref => !refs.has(ref)));
+                      setSaved(false);
+                    }}
+                  />
+                  全选当前筛选结果（{selectableVisibleScenes.length}）
+                </label>
+              </div>
+              <p className="assistant-scene-result-count" aria-live="polite">显示 {visibleScenes.length} 个场景 · 已批准 {approvedSceneCount} 个</p>
+              {sceneGroups.length ? <div className="assistant-scene-groups">
+                {sceneGroups.map(([room, scenes]) => <section className="assistant-scene-room" key={room} aria-label={`场景范围：${room}`}>
+                  <h4>{room}<small>{scenes.length} 个场景</small></h4>
+                  <div className="assistant-scene-list">
+                    {scenes.map(scene => {
+                      const selected = selectedScenes.includes(scene.ref);
+                      const state = scene.risk !== "low" ? "blocked"
+                        : selected && scene.approvalStatus !== "approved" ? "pending"
+                          : !selected && scene.approvalStatus === "approved" ? "revoking"
+                            : scene.approvalStatus;
+                      const stateLabel = state === "approved" ? "已批准当前版本"
+                        : state === "changed" ? "内容已变化，需重新审批"
+                          : state === "blocked" ? "未通过低风险检查"
+                            : state === "revoking" ? "待撤销"
+                              : selected ? "待保存审批" : "待审批";
+                      const actionLines = scene.actionSummaries.flatMap((summary, summaryIndex) => summary.actions.map((action, index) => ({
+                        key: `${summaryIndex}:${summary.room ?? "unknown"}:${summary.device ?? "unknown"}:${action.label}:${index}`,
+                        room: summary.room ?? "房间未识别",
+                        device: summary.device ?? "设备未识别",
+                        label: action.label,
+                        value: action.value,
+                      })));
+                      return <article className={`assistant-scene-card is-${state}`} key={scene.ref}>
+                        <div className="assistant-scene-card-top">
+                          <label className="assistant-scene-checkbox">
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              disabled={scene.risk !== "low" || loading}
+                              aria-label={`批准 AI 使用场景：${scene.name}`}
+                              onChange={() => {
+                                setSelectedScenes(current => current.includes(scene.ref)
+                                  ? current.filter(ref => ref !== scene.ref)
+                                  : [...current, scene.ref]);
+                                setSaved(false);
+                              }}
+                            />
+                            <span>审批</span>
+                          </label>
+                          <div className="assistant-scene-title">
+                            <h5>{scene.name}</h5>
+                            <p>{sceneRooms(scene).length ? sceneRooms(scene).join("、") : "影响房间未识别"} · {scene.actionCount} 个动作</p>
+                          </div>
+                          <span className={`assistant-scene-status is-${state}`}>{stateLabel}</span>
+                        </div>
+                        {actionLines.length ? <details className="assistant-scene-details">
+                          <summary>查看动作明细（{actionLines.length}）</summary>
+                          <ul>{actionLines.map(action => <li key={action.key}>
+                            <span>{action.room} · {action.device}</span>
+                            <strong>{action.label}{action.value ? `：${action.value}` : ""}</strong>
+                          </li>)}</ul>
+                        </details> : <p className="assistant-scene-no-actions">没有可展示的动作摘要。</p>}
+                        {scene.risk === "blocked" && <p className="assistant-scene-explanation">该场景未通过低风险检查，因此不能审批。</p>}
+                        {scene.approvalStatus === "changed" && <p className="assistant-scene-explanation">场景内容与之前批准的版本不同；重新勾选后会批准当前版本。</p>}
+                      </article>;
+                    })}
+                  </div>
+                </section>)}
+              </div> : <p className="assistant-exposure-empty">没有符合筛选条件的场景。调整或清除搜索条件即可查看其他场景。</p>}
+              <button type="button" className="assistant-exposure-clear-filters" onClick={() => { setSceneSearch(""); setSceneRoomFilter("all"); }}>清除场景筛选</button>
+            </> : <p className="assistant-exposure-empty">当前家庭没有可配置的手动场景。</p>}
+          </section>
           <div className="assistant-exposure-footer">
             <span>{exposure.updatedAt ? `上次更新 ${new Date(exposure.updatedAt).toLocaleString()}` : "当前未开放任何家庭数据"}</span>
             <button type="button" disabled={saving || loading} onClick={() => void save()}>{saving ? "保存中…" : "保存家庭授权"}</button>
