@@ -20,11 +20,8 @@ const sceneRevisionMaterial = new WeakMap<ManualScene, unknown>();
 /** Return private source material for server-side revision hashing only. */
 export function manualSceneRevisionMaterial(scene: ManualScene) {
   return sceneRevisionMaterial.get(scene) ?? {
-    name: scene.name,
-    enabled: scene.enabled,
     actions: scene.actions.map(action => ({
       order: action.order,
-      label: action.label,
       deviceName: action.deviceName ?? null,
       room: action.room ?? null,
       details: action.details,
@@ -289,11 +286,8 @@ export function parseManualScenes(response: Record<string, unknown>, homeId: str
     // Keep raw target identifiers and command/property coordinates off all
     // serialized scene projections while binding approvals to their values.
     sceneRevisionMaterial.set(parsedScene, {
-      name,
-      enabled: parsedScene.enabled,
       actions: actionEntries(scene).map(action => ({
         order: action.order ?? null,
-        name: action.name ?? action.action_name ?? null,
         did: action.did ?? parsedSceneRecord(action.payload_json ?? action.payload)?.did ?? null,
         payload: parsedSceneRecord(action.payload_json ?? action.payload) ?? null,
       })),

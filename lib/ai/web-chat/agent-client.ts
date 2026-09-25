@@ -123,7 +123,6 @@ function normalizeAgentSceneSummary(value: unknown): AgentSceneSummary | null {
     || (scene.actionCount as number) < 0
     || typeof scene.revision !== "string"
     || !/^rev_[a-f0-9]{24}$/.test(scene.revision)
-    || (scene.risk !== "low" && scene.risk !== "blocked")
     || !Array.isArray(scene.actionSummaries)
     || scene.actionSummaries.length > 32
   ) return null;
@@ -163,7 +162,6 @@ function normalizeAgentSceneSummary(value: unknown): AgentSceneSummary | null {
     description: scene.description,
     actionCount: scene.actionCount as number,
     revision: scene.revision,
-    risk: scene.risk,
     actionSummaries,
   };
 }

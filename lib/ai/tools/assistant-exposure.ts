@@ -3,7 +3,7 @@ import type { XiaomiSession } from "../../xiaomi-cloud.ts";
 import { listDevices, listHomes } from "../../xiaomi-cloud.ts";
 import { collectHomeEnvironment, type EnvironmentMetric, type EnvironmentSnapshot } from "../../home-environment.ts";
 import { classifyDeviceKind } from "../../device-views.ts";
-import { loadAgentScenes } from "./agent-scene-catalog.ts";
+import { loadAgentScenes, type AgentSceneRecord } from "./agent-scene-catalog.ts";
 import { collectDeviceStatus, type DeviceStatus } from "../../device-status.ts";
 
 export const HOME_METRICS: EnvironmentMetric[] = [
@@ -14,6 +14,7 @@ export type AssistantExposure = {
   version: 1;
   enabled: boolean;
   sceneActionsEnabled: boolean;
+  sceneApprovalBypass: boolean;
   roomMetrics: Record<string, EnvironmentMetric[]>;
   deviceDids: string[];
   sceneApprovals: Record<string, string>;
@@ -26,7 +27,7 @@ export type ExposureInventory = {
   metrics: EnvironmentMetric[];
   roomMetrics: Record<string, EnvironmentMetric[]>;
   devices: Array<{ ref: string; name: string; room: string; kind: string; enabled: boolean; eligible: boolean }>;
-  scenes: Array<{ ref: string; name: string; actionCount: number; risk: "low" | "blocked"; approvalStatus: "approved" | "changed" | "pending" | "blocked"; enabled: boolean; revision: string; actionSummaries: Array<{ room: string | null; device: string | null; actions: Array<{ label: string; value: string }> }> }>;
+  scenes: Array<{ ref: string; name: string; actionCount: number; approvalStatus: "approved" | "changed" | "pending"; enabled: boolean; revision: string; actionSummaries: Array<{ room: string | null; device: string | null; actions: Array<{ label: string; value: string }> }> }>;
 };
 
 type ExposureReaders = {
@@ -53,6 +54,7 @@ type AssistantExposureAuditRecord = {
   exposedDeviceCount: number;
   exposedSceneCount: number;
   sceneActionsEnabled: boolean;
+  sceneApprovalBypass: boolean;
 };
 
 export class AssistantExposureError extends Error {
@@ -86,7 +88,12 @@ async function homeKey(homeId: string) {
 }
 
 function emptyExposure(): AssistantExposure {
-  return { version: 1, enabled: false, sceneActionsEnabled: false, roomMetrics: {}, deviceDids: [], sceneApprovals: {}, updatedAt: null, revision: "exp_default_deny" };
+  return { version: 1, enabled: false, sceneActionsEnabled: false, sceneApprovalBypass: false, roomMetrics: {}, deviceDids: [], sceneApprovals: {}, updatedAt: null, revision: "exp_default_deny" };
+}
+
+export function isSceneExposed(exposure: AssistantExposure, scene: AgentSceneRecord): boolean {
+  return exposure.enabled && exposure.sceneActionsEnabled
+    && (exposure.sceneApprovalBypass || exposure.sceneApprovals[scene.sceneId] === scene.revision);
 }
 
 export async function readAssistantExposure(homeId: string, store?: AssistantExposureStore, env?: ExposureEnvironment): Promise<AssistantExposure> {
@@ -95,7 +102,7 @@ export async function readAssistantExposure(homeId: string, store?: AssistantExp
     if (value === null) return emptyExposure();
     if (!value || typeof value !== "object") throw new Error("invalid exposure");
     const record = value as Record<string, unknown>;
-    if (record.version !== 1 || typeof record.enabled !== "boolean" || (record.sceneActionsEnabled !== undefined && typeof record.sceneActionsEnabled !== "boolean") || !record.roomMetrics || typeof record.roomMetrics !== "object" || !Array.isArray(record.deviceDids) || (record.sceneApprovals !== undefined && (!record.sceneApprovals || typeof record.sceneApprovals !== "object" || Array.isArray(record.sceneApprovals))) || typeof record.revision !== "string") throw new Error("invalid exposure");
+    if (record.version !== 1 || typeof record.enabled !== "boolean" || (record.sceneActionsEnabled !== undefined && typeof record.sceneActionsEnabled !== "boolean") || (record.sceneApprovalBypass !== undefined && typeof record.sceneApprovalBypass !== "boolean") || !record.roomMetrics || typeof record.roomMetrics !== "object" || !Array.isArray(record.deviceDids) || (record.sceneApprovals !== undefined && (!record.sceneApprovals || typeof record.sceneApprovals !== "object" || Array.isArray(record.sceneApprovals))) || typeof record.revision !== "string") throw new Error("invalid exposure");
     const roomMetrics: Record<string, EnvironmentMetric[]> = {};
     for (const [room, metrics] of Object.entries(record.roomMetrics)) {
       if (typeof room !== "string" || !Array.isArray(metrics) || metrics.some(metric => !HOME_METRICS.includes(metric as EnvironmentMetric))) throw new Error("invalid exposure");
@@ -112,6 +119,7 @@ export async function readAssistantExposure(homeId: string, store?: AssistantExp
       version: 1,
       enabled: record.enabled,
       sceneActionsEnabled: record.sceneActionsEnabled === true,
+      sceneApprovalBypass: record.sceneApprovalBypass === true,
       roomMetrics,
       deviceDids: [...new Set(record.deviceDids as string[])],
       sceneApprovals,
@@ -124,8 +132,8 @@ export async function readAssistantExposure(homeId: string, store?: AssistantExp
   }
 }
 
-async function exposureRevision(value: Pick<AssistantExposure, "enabled" | "sceneActionsEnabled" | "roomMetrics" | "deviceDids" | "sceneApprovals">) {
-  const canonical = JSON.stringify({ enabled: value.enabled, sceneActionsEnabled: value.sceneActionsEnabled, roomMetrics: value.roomMetrics, deviceDids: value.deviceDids, sceneApprovals: value.sceneApprovals });
+async function exposureRevision(value: Pick<AssistantExposure, "enabled" | "sceneActionsEnabled" | "sceneApprovalBypass" | "roomMetrics" | "deviceDids" | "sceneApprovals">) {
+  const canonical = JSON.stringify({ enabled: value.enabled, sceneActionsEnabled: value.sceneActionsEnabled, sceneApprovalBypass: value.sceneApprovalBypass, roomMetrics: value.roomMetrics, deviceDids: value.deviceDids, sceneApprovals: value.sceneApprovals });
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
   return `exp_${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("").slice(0, 24)}`;
 }
@@ -138,7 +146,7 @@ async function sceneExposureRef(homeId: string, sceneId: string) {
 export async function saveAssistantExposure(homeId: string, input: unknown): Promise<AssistantExposure> {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
   const body = input as Record<string, unknown>;
-  if (Object.keys(body).some(key => !["enabled", "sceneActionsEnabled", "roomMetrics", "deviceRefs", "sceneRefs"].includes(key)) || typeof body.enabled !== "boolean" || (body.sceneActionsEnabled !== undefined && typeof body.sceneActionsEnabled !== "boolean") || !body.roomMetrics || typeof body.roomMetrics !== "object" || Array.isArray(body.roomMetrics) || !Array.isArray(body.deviceRefs) || (body.sceneRefs !== undefined && !Array.isArray(body.sceneRefs))) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
+  if (Object.keys(body).some(key => !["enabled", "sceneActionsEnabled", "sceneApprovalBypass", "confirmSceneApprovalBypass", "roomMetrics", "deviceRefs", "sceneRefs"].includes(key)) || typeof body.enabled !== "boolean" || (body.sceneActionsEnabled !== undefined && typeof body.sceneActionsEnabled !== "boolean") || (body.sceneApprovalBypass !== undefined && typeof body.sceneApprovalBypass !== "boolean") || (body.confirmSceneApprovalBypass !== undefined && typeof body.confirmSceneApprovalBypass !== "boolean") || !body.roomMetrics || typeof body.roomMetrics !== "object" || Array.isArray(body.roomMetrics) || !Array.isArray(body.deviceRefs) || (body.sceneRefs !== undefined && !Array.isArray(body.sceneRefs))) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
   const roomMetrics: Record<string, EnvironmentMetric[]> = {};
   for (const [room, metrics] of Object.entries(body.roomMetrics)) {
     if (!room || room.length > 200 || !Array.isArray(metrics) || metrics.length > HOME_METRICS.length || metrics.some(metric => typeof metric !== "string" || !HOME_METRICS.includes(metric as EnvironmentMetric))) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
@@ -147,7 +155,7 @@ export async function saveAssistantExposure(homeId: string, input: unknown): Pro
   if (body.deviceRefs.length > 500 || body.deviceRefs.some(ref => typeof ref !== "string" || !/^entity_[a-f0-9]{32}$/.test(ref))) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
   const sceneRefs = body.sceneRefs ?? [];
   if (sceneRefs.length > 200 || sceneRefs.some(ref => typeof ref !== "string" || !/^scene_[a-f0-9]{16}$/.test(ref))) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
-  return { version: 1, enabled: body.enabled, sceneActionsEnabled: body.sceneActionsEnabled === true, roomMetrics, deviceDids: [], sceneApprovals: {}, updatedAt: null, revision: "" };
+  return { version: 1, enabled: body.enabled, sceneActionsEnabled: body.sceneActionsEnabled === true, sceneApprovalBypass: body.sceneApprovalBypass === true, roomMetrics, deviceDids: [], sceneApprovals: {}, updatedAt: null, revision: "" };
 }
 
 export async function listAssistantExposureInventory(
@@ -190,9 +198,7 @@ export async function listAssistantExposureInventory(
     devices: items.map(({ ref, name, room, kind, enabled, eligible }) => ({ ref, name, room, kind, enabled, eligible })),
     scenes: await Promise.all(sceneCatalog.map(async scene => {
       const savedRevision = exposure.sceneApprovals[scene.sceneId];
-      const approvalStatus = scene.risk !== "low"
-        ? "blocked"
-        : savedRevision === scene.revision
+      const approvalStatus = savedRevision === scene.revision
           ? "approved"
           : savedRevision
             ? "changed"
@@ -201,9 +207,8 @@ export async function listAssistantExposureInventory(
         ref: await sceneExposureRef(homeId, scene.sceneId),
         name: scene.name,
         actionCount: scene.actionCount,
-        risk: scene.risk,
         approvalStatus,
-        enabled: exposure.enabled && exposure.sceneActionsEnabled && approvalStatus === "approved",
+        enabled: isSceneExposed(exposure, scene),
         revision: scene.revision,
         actionSummaries: scene.actionSummaries,
       };
@@ -270,6 +275,7 @@ export async function updateAssistantExposure(
   if (!/^usr_[A-Za-z0-9_-]{43}$/.test(actorPrincipalId)) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
   const parsed = await saveAssistantExposure(homeId, input);
   const current = await readAssistantExposure(homeId, dependencies.store, dependencies.env);
+  if (parsed.sceneApprovalBypass && !current.sceneApprovalBypass && (input as { confirmSceneApprovalBypass?: boolean }).confirmSceneApprovalBypass !== true) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
   const inventory = await listObservedAssistantExposureInventory(session, homeId, current, dependencies);
   const requestedRefs = new Set((input as { deviceRefs: string[] }).deviceRefs);
   const selectedDevices = await (dependencies.devices ?? listDevices)(session);
@@ -304,7 +310,7 @@ export async function updateAssistantExposure(
       ? []
       : await loadAgentScenes({ principalId: actorPrincipalId, homeId, session });
   const requestedSceneRefs = new Set(((input as { sceneRefs?: string[] }).sceneRefs ?? []));
-  const validScenes = new Map(await Promise.all(catalog.filter(scene => scene.risk === "low").map(async scene => [await sceneExposureRef(homeId, scene.sceneId), scene] as const)));
+  const validScenes = new Map(await Promise.all(catalog.map(async scene => [await sceneExposureRef(homeId, scene.sceneId), scene] as const)));
   if ([...requestedSceneRefs].some(ref => !validScenes.has(ref))) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
   const sceneApprovals = Object.fromEntries([...requestedSceneRefs].map(ref => {
     const scene = validScenes.get(ref)!;
@@ -331,6 +337,7 @@ export async function updateAssistantExposure(
       exposedDeviceCount: next.deviceDids.length,
       exposedSceneCount: Object.keys(next.sceneApprovals).length,
       sceneActionsEnabled: next.sceneActionsEnabled,
+      sceneApprovalBypass: next.sceneApprovalBypass,
     };
     await store.setJSON(auditKey, auditRecord, { onlyIfNew: true });
     await store.setJSON(baseKey, next);
@@ -344,8 +351,8 @@ export async function updateAssistantExposure(
       devices: inventory.devices.map(device => ({ ...device, enabled: device.eligible && requestedRefs.has(device.ref) })),
       scenes: inventory.scenes.map(scene => ({
         ...scene,
-        approvalStatus: scene.risk !== "low" ? "blocked" : requestedSceneRefs.has(scene.ref) ? "approved" : "pending",
-        enabled: next.enabled && next.sceneActionsEnabled && requestedSceneRefs.has(scene.ref),
+        approvalStatus: requestedSceneRefs.has(scene.ref) ? "approved" : "pending",
+        enabled: next.enabled && next.sceneActionsEnabled && (next.sceneApprovalBypass || requestedSceneRefs.has(scene.ref)),
       })),
     },
   };

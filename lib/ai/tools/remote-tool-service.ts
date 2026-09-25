@@ -7,7 +7,7 @@ import { collectHomeEnvironment } from "../../home-environment.ts";
 import { collectDeviceStatus } from "../../device-status.ts";
 import { loadAgentScenes, sceneSummaries, type AgentSceneRecord } from "./agent-scene-catalog.ts";
 import { runManualScene } from "../../xiaomi-scenes.ts";
-import { AssistantExposureError, readAssistantExposure, type AssistantExposureStore } from "./assistant-exposure.ts";
+import { AssistantExposureError, isSceneExposed, readAssistantExposure, type AssistantExposureStore } from "./assistant-exposure.ts";
 import { claimSceneAction, recordSceneActionOutcome, type SceneActionLedgerStore } from "./scene-action-ledger.ts";
 
 type Environment = Record<string, string | undefined>;
@@ -113,7 +113,7 @@ async function executeApprovedScene(input: {
   if (isPreviewEnvironment(input.env)) throw new RemoteToolError("AI_PREVIEW_READ_ONLY", 403);
   if (input.env.AI_SCENE_EXECUTION_ENABLED !== "true") throw new RemoteToolError("AI_SCENE_EXECUTION_DISABLED", 403);
   const exposure = await currentExposure(input.homeId, input.dependencies.exposureStore, input.env);
-  if (!exposure.enabled || !exposure.sceneActionsEnabled || exposure.sceneApprovals[input.scene.sceneId] !== input.scene.revision) throw new RemoteToolError("AI_SCENE_NOT_EXPOSED", 403);
+  if (!isSceneExposed(exposure, input.scene)) throw new RemoteToolError("AI_SCENE_NOT_EXPOSED", 403);
   if (!await verifySceneActionAuthorization(input.actionAuthorization, {
     principalId: input.principalId,
     homeId: input.homeId,
@@ -179,9 +179,8 @@ async function authorizeSceneAction(input: {
   });
   const scene = scenes.find(item => item.alias === sceneId);
   if (!scene || scene.revision !== revision) throw new RemoteToolError("AI_SCENE_REVISION_CHANGED", 409);
-  if (scene.risk !== "low") throw new RemoteToolError("AI_SCENE_RISK_BLOCKED", 403);
   const exposure = await currentExposure(input.homeId, input.dependencies.exposureStore, input.env);
-  if (!exposure.enabled || !exposure.sceneActionsEnabled || exposure.sceneApprovals[scene.sceneId] !== scene.revision) {
+  if (!isSceneExposed(exposure, scene)) {
     throw new RemoteToolError("AI_SCENE_NOT_EXPOSED", 403);
   }
   const actionAuthorization = await issueSceneActionAuthorization({
@@ -236,7 +235,7 @@ export async function runRemoteTool(body: unknown, env: Environment, dependencie
     if (input.tool === "authorize") return { ok: true };
     const scenes = await (dependencies.scenes ?? loadAgentScenes)({ principalId, homeId, session: binding.session });
     const exposure = await currentExposure(homeId, dependencies.exposureStore, env);
-    const exposedScenes = exposure.enabled && exposure.sceneActionsEnabled ? scenes.filter(scene => scene.risk === "low" && exposure.sceneApprovals[scene.sceneId] === scene.revision) : [];
+    const exposedScenes = scenes.filter(scene => isSceneExposed(exposure, scene));
     return { scenes: sceneSummaries(exposedScenes) };
   }
   if (input.tool === "authorize_scene_action") {
@@ -277,7 +276,6 @@ export async function runRemoteTool(body: unknown, env: Environment, dependencie
   const scenes = await (dependencies.scenes ?? loadAgentScenes)({ principalId, homeId, session: binding.session });
   const approvedScene = scenes.find(scene => scene.alias === sceneId);
   if (!approvedScene || approvedScene.revision !== revision) throw new RemoteToolError("AI_SCENE_REVISION_CHANGED", 409);
-  if (approvedScene.risk !== "low") throw new RemoteToolError("AI_SCENE_RISK_BLOCKED", 403);
   return executeApprovedScene({ principalId, homeId, session: binding.session, scene: approvedScene, idempotencyKey, requestHash, actionAuthorization, env, dependencies });
 }
 
@@ -366,7 +364,7 @@ async function runUserTokenTool(
     if (input.tool === "authorize") return { ok: true, principalId, homeId, scopes: ["ai:chat"] };
     const scenes = await (dependencies.scenes ?? loadAgentScenes)({ principalId, homeId, session: payload.xiaomiSession });
     const exposure = await currentExposure(homeId, dependencies.exposureStore, env);
-    const exposedScenes = exposure.enabled && exposure.sceneActionsEnabled ? scenes.filter(scene => scene.risk === "low" && exposure.sceneApprovals[scene.sceneId] === scene.revision) : [];
+    const exposedScenes = scenes.filter(scene => isSceneExposed(exposure, scene));
     return { scenes: sceneSummaries(exposedScenes) };
   }
   if (input.tool === "get_home_status") {

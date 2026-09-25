@@ -9,7 +9,6 @@ import {
   type XiaomiRequester,
 } from "../../xiaomi-scenes.ts";
 import { listDevices } from "../../xiaomi-cloud.ts";
-import { classifyDeviceKind } from "../../device-views.ts";
 import { getMiotCapabilities } from "../../miot-spec.ts";
 
 export type AgentSceneRecord = {
@@ -21,7 +20,6 @@ export type AgentSceneRecord = {
   enabled: boolean;
   actionCount: number;
   revision: string;
-  risk: "low" | "blocked";
   actionSummaries: Array<{ room: string | null; device: string | null; actions: Array<{ label: string; value: string }> }>;
 };
 
@@ -30,7 +28,6 @@ export type SafeAgentScene = {
   name: string;
   description: string;
   revision: string;
-  risk: "low" | "blocked";
   actionSummaries: AgentSceneRecord["actionSummaries"];
 };
 
@@ -40,12 +37,9 @@ export type AgentSceneSummary = {
   description: string;
   actionCount: number;
   revision: string;
-  risk: "low" | "blocked";
   actionSummaries: AgentSceneRecord["actionSummaries"];
 };
 
-const BLOCKED_ACTION = /lock|camera|doorbell|security|alarm|intercom|gas|access|door/i;
-const LOW_RISK_ACTIONS = new Set(["power", "brightness", "color-temperature"]);
 
 async function sceneRevision(scene: ManualScene) {
   const content = JSON.stringify(manualSceneRevisionMaterial(scene));
@@ -62,16 +56,6 @@ function actionSummaries(scene: ManualScene): AgentSceneRecord["actionSummaries"
   }));
 }
 
-function safeLowRiskScene(scene: ManualScene, devices: Array<{ name: string; room: string; kind: string }>) {
-  if (!scene.actions.length || scene.actions.length > 32 || BLOCKED_ACTION.test(scene.name)) return false;
-  return scene.actions.every(action => {
-    if (!action.deviceName || BLOCKED_ACTION.test(`${action.label} ${action.deviceName}`)) return false;
-    if (!action.details.length || action.details.some(detail => !LOW_RISK_ACTIONS.has(detail.kind))) return false;
-    const matches = devices.filter(device => device.name === action.deviceName && device.room === action.room);
-    return matches.length === 1 && (matches[0].kind === "light" || matches[0].kind === "switch");
-  });
-}
-
 async function sceneAlias(principalId: string, homeId: string, sceneId: string) {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -86,7 +70,6 @@ export async function buildAgentSceneCatalog(
     principalId: string;
     homeId: string;
     scenes: readonly ManualScene[];
-    devices?: Array<{ name: string; room: string; kind: string }>;
   },
 ): Promise<AgentSceneRecord[]> {
   const records: AgentSceneRecord[] = [];
@@ -102,7 +85,6 @@ export async function buildAgentSceneCatalog(
       enabled: scene.enabled,
       actionCount: scene.actionCount,
       revision,
-      risk: safeLowRiskScene(scene, input.devices ?? []) ? "low" : "blocked",
       actionSummaries: actionSummaries(scene),
     });
   }
@@ -134,42 +116,30 @@ export async function loadAgentScenes(
     deviceList.devices,
     sceneCapabilities,
   );
-  const devices = deviceList.devices.flatMap(device => {
-    if (String(device.homeId ?? "") !== input.homeId) return [];
-    const name = typeof device.name === "string" ? device.name : "";
-    const room = typeof device.roomName === "string" ? device.roomName : "";
-    const model = typeof device.model === "string" ? device.model : "";
-    const logicalType = typeof device.logicalType === "string" ? device.logicalType : "";
-    if (!name || !room) return [];
-    return [{ name, room, kind: classifyDeviceKind(model, name, logicalType) }];
-  });
   return buildAgentSceneCatalog({
     principalId: input.principalId,
     homeId: input.homeId,
     scenes,
-    devices,
   });
 }
 
 export function safeScenesForModel(scenes: readonly AgentSceneRecord[]): SafeAgentScene[] {
-  return scenes.map(({ alias, name, description, revision, risk, actionSummaries }) => ({
+  return scenes.map(({ alias, name, description, revision, actionSummaries }) => ({
     id: alias,
     name,
     description,
     revision,
-    risk,
     actionSummaries,
   }));
 }
 
 export function sceneSummaries(scenes: readonly AgentSceneRecord[]): AgentSceneSummary[] {
-  return scenes.map(({ alias, name, description, actionCount, revision, risk, actionSummaries }) => ({
+  return scenes.map(({ alias, name, description, actionCount, revision, actionSummaries }) => ({
     alias,
     name,
     description,
     actionCount,
     revision,
-    risk,
     actionSummaries,
   }));
 }

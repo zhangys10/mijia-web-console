@@ -115,7 +115,8 @@ test("scene approvals are readable, grouped by room, and never promise remote ex
   assert.match(source, /<details className="assistant-scene-details">/, "each scene must expose its action summary on demand");
   assert.match(source, /启用场景授权/);
   assert.doesNotMatch(source, /允许 AI 执行已选场景/);
-  assert.match(source, /disabled=\{selectableVisibleScenes\.length === 0 \|\| loading\}/, "bulk approval configuration must not require the master permission to be on");
+  assert.match(source, /disabled=\{selectableVisibleScenes\.length === 0 \|\| loading \|\| exposure\.sceneApprovalBypass\}/, "bulk approval configuration must not require the master permission to be on");
+  assert.match(source, /确认跳过逐项审批/);
   assert.match(styles, /\.assistant-scene-groups\{display:grid;gap:24px\}/);
   assert.match(styles, /\.assistant-scene-search input,.assistant-scene-room-filter select\{[^}]*min-height:44px/);
   assert.match(styles, /@media\(max-width:560px\).*\.assistant-scene-tools input,.assistant-scene-tools select\{font-size:16px!important\}/s, "mobile scene filters must avoid browser auto-zoom");

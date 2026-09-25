@@ -110,10 +110,9 @@ test("web chat derives principal, issues a bound conversation, and exposes only 
       scenes: [{
         alias: "scene_safe_alias",
         name: "回家模式",
-        description: "当前家庭已审核的低风险手动场景：回家模式",
+        description: "当前家庭已授权的手动场景：回家模式",
         actionCount: 2,
         revision: `rev_${"a".repeat(24)}`,
-        risk: "low",
         actionSummaries: [{ room: "客厅", device: "客厅灯", actions: [{ label: "电源", value: "开启" }] }],
       }, {
         alias: "scene_old_contract",
@@ -141,7 +140,7 @@ test("web chat derives principal, issues a bound conversation, and exposes only 
   assert.equal(data.quota.remainingTokensThisMonth, 99970);
   assert.deepEqual(data.scenes, [{
     name: "回家模式",
-    description: "当前家庭已审核的低风险手动场景：回家模式",
+    description: "当前家庭已授权的手动场景：回家模式",
     actionCount: 2,
   }]);
   assert.equal(JSON.stringify(data).includes("scene_safe_alias"), false);

@@ -17,7 +17,7 @@ async function input(scopes = ["ai:chat"]) {
     sessionBinding: await createAgentBinding({ principalId, homeId: "test-home", scopes, session, expiresAt: Date.now() + 60000 }, env.XIAOMI_SESSION_SECRET),
     tool: "list_scenes", arguments: {} };
 }
-const approvedScene = { alias: "scene_0123456789abcdef", sceneId: "private-real-id", homeId: "test-home", name: "回家模式", description: "审核场景", enabled: true, actionCount: 1, revision: sceneRevision, risk: "low", actionSummaries: [{ room: "客厅", device: "客厅灯", actions: [{ label: "电源", value: "开启" }] }] };
+const approvedScene = { alias: "scene_0123456789abcdef", sceneId: "private-real-id", homeId: "test-home", name: "回家模式", description: "审核场景", enabled: true, actionCount: 1, revision: sceneRevision, actionSummaries: [{ room: "客厅", device: "客厅灯", actions: [{ label: "电源", value: "开启" }] }] };
 const dependencies = { homes: async () => [{ id: "test-home" }], scenes: async () => [approvedScene], exposureStore };
 
 test("remote tools require independent service authentication", async () => {
@@ -26,7 +26,7 @@ test("remote tools require independent service authentication", async () => {
   assert.equal(await authorizeRemoteTool("Bearer wrong", secret), false);
   assert.equal(await authorizeRemoteTool(null, secret), false);
 });
-test("catalog response exposes approved low-risk summaries without private scene or Xiaomi credentials", async () => {
+test("catalog response exposes approved scenes without private scene or Xiaomi credentials", async () => {
   const result = await runRemoteTool(await input(), env, dependencies);
   assert.equal(result.scenes[0].alias, "scene_0123456789abcdef");
   for (const secret of ["private-real-id", "fake-token", "fake-security", "test-user"]) assert.ok(!JSON.stringify(result).includes(secret));
@@ -37,6 +37,14 @@ test("catalog response is empty when per-home exposure has no scene approval", a
     exposureStore: { get: async () => null, setJSON: async () => {} },
   });
   assert.deepEqual(result.scenes, []);
+});
+test("confirmed home bypass lists current scenes without individual approvals", async () => {
+  const result = await runRemoteTool(await input(), env, {
+    ...dependencies,
+    exposureStore: { get: async () => ({ ...exposure, sceneApprovalBypass: true, sceneApprovals: {} }), setJSON: async () => {} },
+  });
+  assert.equal(result.scenes.length, 1);
+  assert.equal(result.scenes[0].alias, approvedScene.alias);
 });
 test("binding prevents forged principal or home", async () => {
   const body = await input();

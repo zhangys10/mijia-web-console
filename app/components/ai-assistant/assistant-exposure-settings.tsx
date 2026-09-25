@@ -8,9 +8,9 @@ type Inventory = {
   metrics: Metric[];
   roomMetrics: Record<string, Metric[]>;
   devices: Array<{ ref: string; name: string; room: string; kind: string; enabled: boolean; eligible: boolean }>;
-  scenes: Array<{ ref: string; name: string; actionCount: number; risk: "low" | "blocked"; approvalStatus: "approved" | "changed" | "pending" | "blocked"; enabled: boolean; revision: string; actionSummaries: Array<{ room: string | null; device: string | null; actions: Array<{ label: string; value: string }> }> }>;
+  scenes: Array<{ ref: string; name: string; actionCount: number; approvalStatus: "approved" | "changed" | "pending"; enabled: boolean; revision: string; actionSummaries: Array<{ room: string | null; device: string | null; actions: Array<{ label: string; value: string }> }> }>;
 };
-type Exposure = { enabled: boolean; sceneActionsEnabled: boolean; roomMetrics: Record<string, Metric[]>; updatedAt: string | null; revision: string };
+type Exposure = { enabled: boolean; sceneActionsEnabled: boolean; sceneApprovalBypass: boolean; roomMetrics: Record<string, Metric[]>; updatedAt: string | null; revision: string };
 type PermissionRow = {
   id: string;
   name: string;
@@ -49,7 +49,9 @@ function sceneGroupName(scene: Inventory["scenes"][number]) {
 }
 
 export default function AssistantExposureSettings({ homeId, homeName }: { homeId?: string; homeName?: string }) {
-  const [exposure, setExposure] = useState<Exposure>({ enabled: false, sceneActionsEnabled: false, roomMetrics: {}, updatedAt: null, revision: "exp_default_deny" });
+  const [exposure, setExposure] = useState<Exposure>({ enabled: false, sceneActionsEnabled: false, sceneApprovalBypass: false, roomMetrics: {}, updatedAt: null, revision: "exp_default_deny" });
+  const [confirmingBypass, setConfirmingBypass] = useState(false);
+  const [bypassConfirmed, setBypassConfirmed] = useState(false);
   const [inventory, setInventory] = useState<Inventory>({ rooms: [], metrics: [], roomMetrics: {}, devices: [], scenes: [] });
   const [selectedDevices, setSelectedDevices] = useState<string[]>([]);
   const [selectedScenes, setSelectedScenes] = useState<string[]>([]);
@@ -72,6 +74,8 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
     void (async () => {
       await Promise.resolve();
       if (cancelled) return;
+      setConfirmingBypass(false);
+      setBypassConfirmed(false);
       setLoading(true);
       setError("");
       try {
@@ -163,7 +167,7 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
       return left.localeCompare(right, "zh-CN");
     });
   }, [visibleScenes]);
-  const selectableVisibleScenes = visibleScenes.filter(scene => scene.risk === "low");
+  const selectableVisibleScenes = visibleScenes;
   const allVisibleScenesSelected = selectableVisibleScenes.length > 0
     && selectableVisibleScenes.every(scene => selectedScenes.includes(scene.ref));
 
@@ -243,7 +247,7 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ homeId, enabled: exposure.enabled, sceneActionsEnabled: exposure.sceneActionsEnabled, roomMetrics, deviceRefs: selectedDevices, sceneRefs: selectedScenes }),
+        body: JSON.stringify({ homeId, enabled: exposure.enabled, sceneActionsEnabled: exposure.sceneActionsEnabled, sceneApprovalBypass: exposure.sceneApprovalBypass, confirmSceneApprovalBypass: bypassConfirmed, roomMetrics, deviceRefs: selectedDevices, sceneRefs: selectedScenes }),
       });
       const body = await response.json().catch(() => null) as { code?: string; exposure?: Exposure; inventory?: Inventory } | null;
       if (!response.ok || !body?.exposure || !body.inventory) throw new Error(body?.code ?? "AI_AGENT_UNAVAILABLE");
@@ -251,6 +255,7 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
       setInventory(body.inventory);
       setSelectedDevices(body.inventory.devices.filter(device => device.enabled).map(device => device.ref));
       setSelectedScenes(body.inventory.scenes.filter(scene => scene.approvalStatus === "approved").map(scene => scene.ref));
+      setBypassConfirmed(false);
       setSaved(true);
     } catch {
       setError("保存失败，家庭数据未开放给 AI 助手。");
@@ -370,13 +375,32 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
             <div className="assistant-scene-heading">
               <div>
                 <h3 id="assistant-scene-approvals-title">场景审批 <small>{approvedSceneCount} 个已选 / {inventory.scenes.length} 个场景</small></h3>
-                <p>选择低风险手动场景并批准当前版本。此设置只保存授权；远程场景执行目前仍关闭。</p>
+                <p>可逐项批准手动场景，或确认后允许当前家庭的所有手动场景。此设置只保存授权；远程场景执行目前仍关闭。</p>
               </div>
               <label className="assistant-scene-master">
                 <input type="checkbox" checked={exposure.sceneActionsEnabled} disabled={!homeId || loading} onChange={event => { setExposure(value => ({ ...value, sceneActionsEnabled: event.target.checked })); setSaved(false); }} />
                 <span>启用场景授权</span>
               </label>
             </div>
+            <div className="assistant-scene-bypass">
+              <label className="assistant-scene-master">
+                <input type="checkbox" checked={exposure.sceneApprovalBypass} disabled={!homeId || loading} onChange={event => {
+                  if (event.target.checked) setConfirmingBypass(true);
+                  else { setExposure(value => ({ ...value, sceneApprovalBypass: false })); setBypassConfirmed(false); setSaved(false); }
+                }} />
+                <span>跳过逐项审批</span>
+              </label>
+              <p>开启后，当前家庭现有及将来新增的已启用手动场景均可供 AI 选择；关闭后恢复逐项审批列表。</p>
+            </div>
+            {confirmingBypass && <div className="assistant-scene-confirm" role="alertdialog" aria-labelledby="assistant-scene-confirm-title" aria-describedby="assistant-scene-confirm-description">
+              <strong id="assistant-scene-confirm-title">确认跳过逐项审批？</strong>
+              <p id="assistant-scene-confirm-description">保存后，AI 可以选择当前家庭所有已启用的手动场景，包括以后新增或修改的场景。场景可能控制门锁等设备。场景总开关和部署执行开关仍需开启。</p>
+              <div className="assistant-scene-confirm-actions">
+                <button type="button" onClick={() => setConfirmingBypass(false)}>取消</button>
+                <button type="button" onClick={() => { setExposure(value => ({ ...value, sceneApprovalBypass: true })); setBypassConfirmed(true); setConfirmingBypass(false); setSaved(false); }}>确认开启</button>
+              </div>
+            </div>}
+            {exposure.sceneApprovalBypass && <p className="assistant-scene-bypass-active" role="status">逐项审批已跳过。下方列表仅供查看；保存后对当前家庭的所有已启用手动场景生效。</p>}
             {inventory.scenes.length ? <>
               <div className="assistant-scene-tools">
                 <label className="assistant-scene-search">
@@ -394,8 +418,8 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
                   <input
                     type="checkbox"
                     checked={allVisibleScenesSelected}
-                    disabled={selectableVisibleScenes.length === 0 || loading}
-                    aria-label={`全选筛选结果中的低风险场景，共 ${selectableVisibleScenes.length} 个`}
+                    disabled={selectableVisibleScenes.length === 0 || loading || exposure.sceneApprovalBypass}
+                    aria-label={`全选筛选结果中的场景，共 ${selectableVisibleScenes.length} 个`}
                     onChange={event => {
                       const refs = new Set(selectableVisibleScenes.map(scene => scene.ref));
                       setSelectedScenes(current => event.target.checked
@@ -407,21 +431,21 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
                   全选当前筛选结果（{selectableVisibleScenes.length}）
                 </label>
               </div>
-              <p className="assistant-scene-result-count" aria-live="polite">显示 {visibleScenes.length} 个场景 · 已批准 {approvedSceneCount} 个</p>
+              <p className="assistant-scene-result-count" aria-live="polite">显示 {visibleScenes.length} 个场景 · {exposure.sceneApprovalBypass ? "已跳过逐项审批" : `已批准 ${approvedSceneCount} 个`}</p>
               {sceneGroups.length ? <div className="assistant-scene-groups">
                 {sceneGroups.map(([room, scenes]) => <section className="assistant-scene-room" key={room} aria-label={`场景范围：${room}`}>
                   <h4>{room}<small>{scenes.length} 个场景</small></h4>
                   <div className="assistant-scene-list">
                     {scenes.map(scene => {
                       const selected = selectedScenes.includes(scene.ref);
-                      const state = scene.risk !== "low" ? "blocked"
+                      const state = exposure.sceneApprovalBypass ? "bypassed"
                         : selected && scene.approvalStatus !== "approved" ? "pending"
                           : !selected && scene.approvalStatus === "approved" ? "revoking"
                             : scene.approvalStatus;
-                      const stateLabel = state === "approved" ? "已批准当前版本"
+                      const stateLabel = state === "bypassed" ? "已跳过逐项审批"
+                        : state === "approved" ? "已批准当前版本"
                         : state === "changed" ? "内容已变化，需重新审批"
-                          : state === "blocked" ? "未通过低风险检查"
-                            : state === "revoking" ? "待撤销"
+                          : state === "revoking" ? "待撤销"
                               : selected ? "待保存审批" : "待审批";
                       const actionLines = scene.actionSummaries.flatMap((summary, summaryIndex) => summary.actions.map((action, index) => ({
                         key: `${summaryIndex}:${summary.room ?? "unknown"}:${summary.device ?? "unknown"}:${action.label}:${index}`,
@@ -436,7 +460,7 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
                             <input
                               type="checkbox"
                               checked={selected}
-                              disabled={scene.risk !== "low" || loading}
+                              disabled={exposure.sceneApprovalBypass || loading}
                               aria-label={`批准 AI 使用场景：${scene.name}`}
                               onChange={() => {
                                 setSelectedScenes(current => current.includes(scene.ref)
@@ -460,8 +484,7 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
                             <strong>{action.label}{action.value ? `：${action.value}` : ""}</strong>
                           </li>)}</ul>
                         </details> : <p className="assistant-scene-no-actions">没有可展示的动作摘要。</p>}
-                        {scene.risk === "blocked" && <p className="assistant-scene-explanation">该场景未通过低风险检查，因此不能审批。</p>}
-                        {scene.approvalStatus === "changed" && <p className="assistant-scene-explanation">场景内容与之前批准的版本不同；重新勾选后会批准当前版本。</p>}
+                        {!exposure.sceneApprovalBypass && scene.approvalStatus === "changed" && <p className="assistant-scene-explanation">场景内容与之前批准的版本不同；重新勾选后会批准当前版本。</p>}
                       </article>;
                     })}
                   </div>

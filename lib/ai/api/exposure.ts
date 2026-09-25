@@ -49,7 +49,7 @@ export async function onRequest(context: AiWebContext, dependencies: {
     if (context.request.method === "GET") {
       const exposure = await readAssistantExposure(homeId, dependencies.store, context.env);
       const inventory = await listObservedAssistantExposureInventory(session, homeId, exposure, dependencies);
-      return jsonResponse({ exposure: { enabled: exposure.enabled, sceneActionsEnabled: exposure.sceneActionsEnabled, roomMetrics: exposure.roomMetrics, updatedAt: exposure.updatedAt, revision: exposure.revision }, inventory }, 200);
+      return jsonResponse({ exposure: { enabled: exposure.enabled, sceneActionsEnabled: exposure.sceneActionsEnabled, sceneApprovalBypass: exposure.sceneApprovalBypass, roomMetrics: exposure.roomMetrics, updatedAt: exposure.updatedAt, revision: exposure.revision }, inventory }, 200);
     }
     const actorPrincipalId = await derivePrincipalId(session, context.env);
     // homeId selects the authorized home; it is transport context, not an exposure setting.
@@ -64,7 +64,7 @@ export async function onRequest(context: AiWebContext, dependencies: {
       environment: dependencies.environment,
       deviceStatus: dependencies.deviceStatus,
     });
-    return jsonResponse({ exposure: { enabled: result.exposure.enabled, sceneActionsEnabled: result.exposure.sceneActionsEnabled, roomMetrics: result.exposure.roomMetrics, updatedAt: result.exposure.updatedAt, revision: result.exposure.revision }, inventory: result.inventory }, 200);
+    return jsonResponse({ exposure: { enabled: result.exposure.enabled, sceneActionsEnabled: result.exposure.sceneActionsEnabled, sceneApprovalBypass: result.exposure.sceneApprovalBypass, roomMetrics: result.exposure.roomMetrics, updatedAt: result.exposure.updatedAt, revision: result.exposure.revision }, inventory: result.inventory }, 200);
   } catch (error) {
     if (error instanceof AssistantExposureError) {
       return jsonResponse({ code: error.code }, error.status);

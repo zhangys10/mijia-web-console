@@ -59,7 +59,7 @@ async function sceneCatalog(principal = principalId, home = homeId) {
 }
 
 test("parsed scene revisions bind hidden target identifiers without exposing them", async () => {
-  async function revision(targetDid) {
+  async function revision(targetDid, sceneName = "回家模式") {
     const devices = [{ did: targetDid, homeId, roomName: "客厅", name: "客厅灯" }];
     const capabilities = new Map([[sceneDeviceCapabilityKey(homeId, targetDid), [{
       name: "light",
@@ -68,7 +68,7 @@ test("parsed scene revisions bind hidden target identifiers without exposing the
     const [scene] = parseManualScenes({ result: [{
       scene_id: "private-real-id",
       home_id: homeId,
-      name: "回家模式",
+      name: sceneName,
       enable: 1,
       scene_trigger: { triggers: [{ src: "user" }] },
       scene_action: { actions: [{
@@ -86,12 +86,14 @@ test("parsed scene revisions bind hidden target identifiers without exposing the
   }
   const first = await revision("private-target-a");
   const replacement = await revision("private-target-b");
+  const renamed = await revision("private-target-a", "新的场景名称");
   assert.notEqual(first[0].revision, replacement[0].revision);
-  assert.equal(first[0].risk, "low");
+  assert.equal(first[0].revision, renamed[0].revision);
+  assert.equal("risk" in first[0], false);
   assert.doesNotMatch(JSON.stringify(safeScenesForModel(first)), /private-target-a|private-real-id/);
 });
 
-test("live catalog loader enriches manual scenes before risk classification", async () => {
+test("live catalog loader enriches manual scenes", async () => {
   const rawScene = {
     scene_id: "private-real-id",
     home_id: homeId,
@@ -116,7 +118,7 @@ test("live catalog loader enriches manual scenes before risk classification", as
     }] }),
   });
   assert.equal(catalog.length, 1);
-  assert.equal(catalog[0].risk, "low");
+  assert.equal("risk" in catalog[0], false);
   assert.deepEqual(catalog[0].actionSummaries[0], { room: "客厅", device: "客厅灯", actions: [{ label: "电源", value: "开启" }] });
   assert.doesNotMatch(JSON.stringify(safeScenesForModel(catalog)), /private-target|private-real-id/);
 });
@@ -176,7 +178,7 @@ test("agent bindings default to read-only scope", async () => {
   );
 });
 
-test("scene catalog exposes sanitized, risk-classified scenes of the home as principal-scoped aliases", async () => {
+test("scene catalog exposes sanitized scenes of the home as principal-scoped aliases", async () => {
   const catalog = await sceneCatalog();
   const safeScenes = safeScenesForModel(catalog);
   const serialized = JSON.stringify(safeScenes);
@@ -188,10 +190,31 @@ test("scene catalog exposes sanitized, risk-classified scenes of the home as pri
   assert.equal(serialized.includes("real-scene-id"), false);
   assert.equal(serialized.includes("real-other-scene-id"), false);
   assert.equal(serialized.includes("raw-user-id"), false);
-  assert.deepEqual(safeScenes.map(scene => [scene.name, scene.risk]), [["回家模式", "low"], ["观影模式", "low"]]);
+  assert.deepEqual(safeScenes.map(scene => scene.name), ["回家模式", "观影模式"]);
   assert.match(safeScenes[0].revision, /^rev_[a-f0-9]{24}$/);
   assert.deepEqual(safeScenes[0].actionSummaries, [{ room: "客厅", device: "客厅灯", actions: [{ label: "电源", value: "开启" }] }]);
 
   const otherPrincipalCatalog = await sceneCatalog(otherPrincipalId);
   assert.notEqual(otherPrincipalCatalog[0].alias, catalog[0].alias);
+});
+
+test("scene catalog does not filter manual scenes by action type or device category", async () => {
+  const catalog = await buildAgentSceneCatalog({
+    principalId,
+    homeId,
+    scenes: [{ id: "private-lock-scene", homeId, name: "门锁场景", enabled: true, actionCount: 1,
+      actions: [{ order: 0, label: "开锁", deviceName: "门锁", room: "玄关", details: [{ kind: "unknown", label: "开锁", value: "执行" }] }] }],
+  });
+  assert.equal(catalog.length, 1);
+  assert.equal(catalog[0].name, "门锁场景");
+  assert.equal("risk" in catalog[0], false);
+});
+
+test("scene display name changes do not revoke an unchanged action approval", async () => {
+  const original = { id: "private-scene", homeId, name: "旧名称", enabled: true, actionCount: 1, actions: [lightAction("客厅灯")] };
+  const [before] = await buildAgentSceneCatalog({ principalId, homeId, scenes: [original] });
+  const [renamed] = await buildAgentSceneCatalog({ principalId, homeId, scenes: [{ ...original, name: "新名称" }] });
+  const [changed] = await buildAgentSceneCatalog({ principalId, homeId, scenes: [{ ...original, actions: [lightAction("另一盏灯")] }] });
+  assert.equal(before.revision, renamed.revision);
+  assert.notEqual(before.revision, changed.revision);
 });

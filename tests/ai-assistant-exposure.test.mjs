@@ -185,7 +185,7 @@ test("observed read inventory preserves scene approvals through settings save", 
     devices: async () => ({ homes: [{ id: homeId }], devices: [] }),
     environment: async () => ({ capturedAt: "2026-09-24T00:00:00Z", completeness: "empty", groups: [], warnings: [] }),
     deviceStatus: async () => ({ capturedAt: "2026-09-24T00:00:00Z", completeness: "empty", poweredOn: 0, rooms: [], warnings: [] }),
-    sceneCatalog: async () => [{ sceneId, homeId, name: "客厅灯", actionCount: 1, risk: "low", revision: currentSceneRevision, actionSummaries: [] }],
+    sceneCatalog: async () => [{ sceneId, homeId, name: "客厅灯", actionCount: 1, revision: currentSceneRevision, actionSummaries: [] }],
   };
   const session = { userId: "fake-user" };
   const principalId = `usr_${"a".repeat(43)}`;
@@ -205,6 +205,15 @@ test("observed read inventory preserves scene approvals through settings save", 
   const changed = await listObservedAssistantExposureInventory(session, homeId, updated.exposure, dependencies);
   assert.equal(changed.scenes[0].approvalStatus, "changed");
   assert.equal(changed.scenes[0].enabled, false, "an edited scene must lose its previous approval");
+
+  const bypassInput = { enabled: true, sceneActionsEnabled: true, sceneApprovalBypass: true, roomMetrics: {}, deviceRefs: [], sceneRefs: [] };
+  await assert.rejects(updateAssistantExposure(session, homeId, bypassInput, principalId, dependencies), error => error.code === "AI_INVALID_REQUEST");
+  const bypassed = await updateAssistantExposure(session, homeId, { ...bypassInput, confirmSceneApprovalBypass: true }, principalId, dependencies);
+  assert.equal(bypassed.exposure.sceneApprovalBypass, true);
+  assert.deepEqual(bypassed.exposure.sceneApprovals, {});
+  assert.equal(bypassed.inventory.scenes[0].enabled, true, "confirmed bypass exposes scenes without individual approval");
+  const restored = await updateAssistantExposure(session, homeId, { ...bypassInput, sceneApprovalBypass: false }, principalId, dependencies);
+  assert.equal(restored.inventory.scenes[0].enabled, false, "turning bypass off restores the individual approval gate");
 });
 
 test("home exposure update rejects an entity reference that is not in the selected home", async () => {
