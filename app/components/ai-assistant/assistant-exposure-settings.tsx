@@ -48,6 +48,16 @@ function sceneGroupName(scene: Inventory["scenes"][number]) {
   return rooms.length === 1 ? rooms[0] : rooms.length > 1 ? "多个房间" : "房间未识别";
 }
 
+function exposureSaveErrorMessage(error: unknown) {
+  const code = error instanceof Error ? error.message : "";
+  if (code === "AI_INVALID_REQUEST") return "保存失败：授权内容未通过校验（AI_INVALID_REQUEST），设置未更改。请刷新后重试。";
+  if (code === "AI_HOME_NOT_FOUND") return "保存失败：当前家庭已不可用，请重新选择家庭。";
+  if (code === "AI_EXPOSURE_STORE_UNAVAILABLE") return "保存失败：家庭授权存储暂不可用，请稍后重试。";
+  if (code === "AI_UNAUTHENTICATED") return "保存失败：米家登录已过期，请重新登录。";
+  if (code === "AI_AGENT_UNAVAILABLE") return "保存失败：家庭数据服务暂不可用，请稍后重试（AI_AGENT_UNAVAILABLE）。";
+  return "保存失败：家庭授权服务暂不可用，请稍后重试。";
+}
+
 export default function AssistantExposureSettings({ homeId, homeName }: { homeId?: string; homeName?: string }) {
   const [exposure, setExposure] = useState<Exposure>({ enabled: false, sceneActionsEnabled: false, sceneApprovalBypass: false, roomMetrics: {}, updatedAt: null, revision: "exp_default_deny" });
   const [confirmingBypass, setConfirmingBypass] = useState(false);
@@ -257,8 +267,8 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
       setSelectedScenes(body.inventory.scenes.filter(scene => scene.approvalStatus === "approved").map(scene => scene.ref));
       setBypassConfirmed(false);
       setSaved(true);
-    } catch {
-      setError("保存失败，家庭数据未开放给 AI 助手。");
+    } catch (error) {
+      setError(exposureSaveErrorMessage(error));
     } finally {
       setSaving(false);
     }

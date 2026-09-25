@@ -174,6 +174,8 @@ test("observed read inventory preserves scene approvals through settings save", 
   const sceneId = "private-scene-id";
   const revision = `rev_${"a".repeat(24)}`;
   let currentSceneRevision = revision;
+  let deviceReads = 0;
+  let sceneReads = 0;
   const ref = await sceneRef(homeId, sceneId);
   let stored = null;
   const dependencies = {
@@ -182,16 +184,18 @@ test("observed read inventory preserves scene approvals through settings save", 
       async setJSON(key, value, options) { if (!options?.onlyIfNew) stored = value; },
     },
     homes: async () => [{ id: homeId, name: "测试家庭" }],
-    devices: async () => ({ homes: [{ id: homeId }], devices: [] }),
+    devices: async () => { deviceReads += 1; return { homes: [{ id: homeId }], devices: [] }; },
     environment: async () => ({ capturedAt: "2026-09-24T00:00:00Z", completeness: "empty", groups: [], warnings: [] }),
     deviceStatus: async () => ({ capturedAt: "2026-09-24T00:00:00Z", completeness: "empty", poweredOn: 0, rooms: [], warnings: [] }),
-    sceneCatalog: async () => [{ sceneId, homeId, name: "客厅灯", actionCount: 1, revision: currentSceneRevision, actionSummaries: [] }],
+    sceneCatalog: async () => { sceneReads += 1; return [{ sceneId, homeId, name: "客厅灯", actionCount: 1, revision: currentSceneRevision, actionSummaries: [] }]; },
   };
   const session = { userId: "fake-user" };
   const principalId = `usr_${"a".repeat(43)}`;
   const updated = await updateAssistantExposure(session, homeId, {
     enabled: true, sceneActionsEnabled: true, roomMetrics: {}, deviceRefs: [], sceneRefs: [ref],
   }, principalId, dependencies);
+  assert.equal(deviceReads, 1, "settings save reuses the device inventory read");
+  assert.equal(sceneReads, 1, "settings save reuses the scene catalog read");
   assert.equal(updated.exposure.sceneApprovals[sceneId], revision);
   assert.equal(updated.inventory.scenes[0].approvalStatus, "approved");
   assert.equal(updated.inventory.scenes[0].enabled, true);

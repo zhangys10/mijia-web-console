@@ -276,9 +276,21 @@ export async function updateAssistantExposure(
   const parsed = await saveAssistantExposure(homeId, input);
   const current = await readAssistantExposure(homeId, dependencies.store, dependencies.env);
   if (parsed.sceneApprovalBypass && !current.sceneApprovalBypass && (input as { confirmSceneApprovalBypass?: boolean }).confirmSceneApprovalBypass !== true) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
-  const inventory = await listObservedAssistantExposureInventory(session, homeId, current, dependencies);
+  const [selectedDevices, catalog] = await Promise.all([
+    (dependencies.devices ?? listDevices)(session),
+    dependencies.sceneCatalog
+      ? dependencies.sceneCatalog({ principalId: actorPrincipalId, homeId, session })
+      : dependencies.homes || dependencies.devices
+        ? Promise.resolve([])
+        : loadAgentScenes({ principalId: actorPrincipalId, homeId, session }),
+  ]);
+  const observedDependencies: ExposureReaders = {
+    ...dependencies,
+    devices: async () => selectedDevices,
+    sceneCatalog: async () => catalog,
+  };
+  const inventory = await listObservedAssistantExposureInventory(session, homeId, current, observedDependencies);
   const requestedRefs = new Set((input as { deviceRefs: string[] }).deviceRefs);
-  const selectedDevices = await (dependencies.devices ?? listDevices)(session);
   const homeDevices = selectedDevices.devices.filter(device => String(device.homeId ?? "") === homeId).flatMap(device => {
     const did = typeof device.did === "string" || typeof device.did === "number" ? String(device.did) : "";
     if (!did) return [];
@@ -304,11 +316,6 @@ export async function updateAssistantExposure(
   }
   const deviceDids = [...requestedRefs].map(ref => validRefs.get(ref));
   if (deviceDids.some(did => !did)) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
-  const catalog = dependencies.sceneCatalog
-    ? await dependencies.sceneCatalog({ principalId: actorPrincipalId, homeId, session })
-    : dependencies.homes || dependencies.devices
-      ? []
-      : await loadAgentScenes({ principalId: actorPrincipalId, homeId, session });
   const requestedSceneRefs = new Set(((input as { sceneRefs?: string[] }).sceneRefs ?? []));
   const validScenes = new Map(await Promise.all(catalog.map(async scene => [await sceneExposureRef(homeId, scene.sceneId), scene] as const)));
   if ([...requestedSceneRefs].some(ref => !validScenes.has(ref))) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
