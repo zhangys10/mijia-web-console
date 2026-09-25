@@ -82,7 +82,7 @@ AI Web 助手的 Agent 运行时已迁移到独立的 `mijia-agent` 仓库（Edg
 
 Phase 2 的家庭读取通过 `/api/internal/assistant/v1/capabilities` 与
 `/api/internal/assistant/v1/tools:invoke` 提供。在「设置 → AI 助手访问权限」中，家庭成员
-逐房间开放环境指标、逐设备开放只读状态；初始状态全部关闭。生产授权配置保存在
+逐房间开放环境指标、逐设备开放只读状态；初始状态全部关闭。设置页只列出环境采集器当前读到有效数值的房间与指标组合，以及设备状态采集器实际报告的设备；不会把全部指标套到每个房间。生产授权配置保存在
 EdgeOne Makers Blob 的 `mijia-ai-assistant-exposure-v1` 命名空间，并使用强一致读取。该授权配置按哈希化的 `homeId` 保存，不绑定某个米家 `userId`；每次读取前仍会校验当前登录会话是否属于该家庭。因此同一家庭的授权对有权访问该家庭的成员共享，不会改变米家账号本身的权限。
 EdgeOne Pages 运行时，Blob SDK 使用平台提供的部署凭据。Node/Next 本地开发在
 `AI_ENVIRONMENT=development` 时将配置读写到 `AI_ASSISTANT_EXPOSURE_DIR` 指定的本地文件目录；

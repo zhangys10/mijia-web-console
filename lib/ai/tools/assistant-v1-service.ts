@@ -33,14 +33,22 @@ export type AssistantV1Dependencies = {
 const NO_STORE = { "Cache-Control": "no-store" };
 const deviceStates = new Set(["on", "off", "unknown"]);
 
-function invalid() { throw new RemoteToolError("AI_INVALID_REQUEST", 400); }
+class AssistantV1RequestError extends RemoteToolError {
+  readonly diagnosticCode: string;
+  constructor(diagnosticCode: string) {
+    super("AI_INVALID_REQUEST", 400);
+    this.diagnosticCode = diagnosticCode;
+  }
+}
+
+function invalid(reason: string): never { throw new AssistantV1RequestError(reason); }
 
 function validateBody(body: unknown, allowed: readonly string[]) {
-  if (!body || typeof body !== "object" || Array.isArray(body)) invalid();
+  if (!body || typeof body !== "object" || Array.isArray(body)) invalid("BODY_NOT_OBJECT");
   const record = body as Record<string, unknown>;
-  if (Object.keys(record).some(key => !allowed.includes(key))) invalid();
-  if (typeof record.requestId !== "string" || !/^[A-Za-z0-9_.-]{6,128}$/.test(record.requestId)) invalid();
-  if (record.home !== undefined && (typeof record.home !== "string" || !record.home.trim() || record.home.length > 100)) invalid();
+  if (Object.keys(record).some(key => !allowed.includes(key))) invalid("BODY_UNKNOWN_FIELD");
+  if (typeof record.requestId !== "string" || !/^[A-Za-z0-9_.-]{6,128}$/.test(record.requestId)) invalid("REQUEST_ID_INVALID");
+  if (record.home !== undefined && (typeof record.home !== "string" || !record.home.trim() || record.home.length > 100)) invalid("HOME_SELECTOR_INVALID");
   return record;
 }
 
@@ -111,6 +119,12 @@ export async function getAssistantCapabilitiesV1(
       rooms: projection.rooms,
       measurementTypes: projection.measurementTypes,
       deviceKinds: projection.deviceKinds,
+      roomMetrics: Object.fromEntries(Object.entries(context.exposure.roomMetrics)
+        .filter(([room]) => context.inventory.rooms.includes(room))
+        .map(([room, metrics]) => [room, metrics])),
+      roomDeviceKinds: Object.fromEntries(projection.rooms.map(room => [room, [...new Set(context.inventory.devices
+        .filter(device => device.room === room && device.eligible && device.enabled)
+        .map(device => device.kind))]]).filter(([, kinds]) => (kinds as string[]).length > 0)),
       sceneSearchAvailable: false,
     },
   };
@@ -124,16 +138,16 @@ function statusIsPartial(diagnostics: HomeEnvironmentDiagnostics) {
 function stringFilter(args: Record<string, unknown>, name: string, allowed: readonly string[], max: number): string[] | undefined {
   const value = args[name];
   if (value === undefined) return undefined;
-  if (!Array.isArray(value) || value.length > max || value.some(item => typeof item !== "string" || !allowed.includes(item))) invalid();
+  if (!Array.isArray(value) || value.length > max || value.some(item => typeof item !== "string" || !allowed.includes(item))) invalid(`FILTER_${name.toUpperCase()}_INVALID`);
   return [...new Set(value as string[])];
 }
 
 function validateArguments(operation: unknown, value: unknown, projection: ReturnType<typeof assistantExposureProjection>) {
-  if (typeof operation !== "string" || !["get_home_environment", "get_device_status"].includes(operation)) invalid();
-  if (!value || typeof value !== "object" || Array.isArray(value)) invalid();
+  if (typeof operation !== "string" || !["get_home_environment", "get_device_status"].includes(operation)) invalid("OPERATION_INVALID");
+  if (!value || typeof value !== "object" || Array.isArray(value)) invalid("ARGUMENTS_NOT_OBJECT");
   const args = value as Record<string, unknown>;
   const keys = operation === "get_home_environment" ? ["rooms", "metrics"] : ["rooms", "kinds", "states"];
-  if (Object.keys(args).some(key => !keys.includes(key))) invalid();
+  if (Object.keys(args).some(key => !keys.includes(key))) invalid("ARGUMENTS_UNKNOWN_FIELD");
   const rooms = stringFilter(args, "rooms", projection.rooms, 20);
   const metrics = operation === "get_home_environment" ? stringFilter(args, "metrics", projection.measurementTypes, 9) : undefined;
   const kinds = operation === "get_device_status" ? stringFilter(args, "kinds", projection.deviceKinds, 40) : undefined;
@@ -206,8 +220,14 @@ export async function invokeAssistantToolV1(
   if (operation === "get_home_environment") {
     if (!projection.capabilities.some(item => item.name === "get_home_environment")) throw new RemoteToolError("AI_CAPABILITY_UNAVAILABLE", 403);
     const exposedRooms = operationProjection.rooms;
-    const exposedRoomMetrics = Object.fromEntries(exposedRooms.map(room => [room, context.exposure.roomMetrics[room] ?? []]));
-    const exposedMetrics = [...new Set(Object.values(exposedRoomMetrics).flat())];
+    const rooms = filters.rooms ?? exposedRooms;
+    const requestedMetrics = filters.metrics;
+    const roomMetrics = Object.fromEntries(rooms.flatMap(room => {
+      const exposed = context.exposure.roomMetrics[room] ?? [];
+      const selected = requestedMetrics ? exposed.filter(metric => requestedMetrics.includes(metric)) : exposed;
+      return selected.length ? [[room, selected]] : [];
+    }));
+    const metrics = [...new Set(Object.values(roomMetrics).flat())];
     const requestId = typeof input.requestId === "string" && /^[A-Za-z0-9_.-]{6,128}$/.test(input.requestId) ? input.requestId : undefined;
     const logDiagnostic = dependencies.diagnosticLogger ?? (record => console.info(JSON.stringify(record)));
     const status = await (dependencies.environment ?? collectHomeEnvironment)(context.session, context.homeId, {
@@ -218,17 +238,10 @@ export async function invokeAssistantToolV1(
         }
       },
     }, {
-      rooms: exposedRooms,
-      metrics: exposedMetrics,
-      roomMetrics: exposedRoomMetrics,
+      rooms,
+      metrics,
+      roomMetrics,
     });
-    const rooms = filters.rooms ?? exposedRooms;
-    const requestedMetrics = filters.metrics;
-    const roomMetrics = Object.fromEntries(rooms.flatMap(room => {
-      const exposed = context.exposure.roomMetrics[room] ?? [];
-      const selected = requestedMetrics ? exposed.filter(metric => requestedMetrics.includes(metric)) : exposed;
-      return selected.length ? [[room, selected]] : [];
-    }));
     return filterEnvironmentByExposure(status, roomMetrics, details => {
       logDiagnostic({ event: "assistant_environment_partial", requestId, route: "/api/internal/assistant/v1/tools:invoke", stage: "EXPOSURE_FILTER", httpStatus: 200, category: "RESPONSE_TRUNCATED", ...details });
     });
@@ -273,6 +286,7 @@ export function createAssistantV1Handler(
       return respond(result);
     } catch (error) {
       if (error instanceof AssistantExposureError) return respond({ code: error.code }, error.status);
+      if (error instanceof AssistantV1RequestError) return respond({ code: error.message, diagnosticCode: error.diagnosticCode }, error.status);
       if (error instanceof RemoteToolError) return respond({ code: error.message }, error.status);
       (dependencies.diagnosticLogger ?? (record => console.error(JSON.stringify(record))))({
         event: "assistant_api_exception",

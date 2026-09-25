@@ -1,8 +1,9 @@
 import { getStore } from "@edgeone/pages-blob";
 import type { XiaomiSession } from "../../xiaomi-cloud.ts";
 import { listDevices, listHomes } from "../../xiaomi-cloud.ts";
-import type { EnvironmentMetric } from "../../home-environment.ts";
+import { collectHomeEnvironment, type EnvironmentMetric, type EnvironmentSnapshot } from "../../home-environment.ts";
 import { classifyDeviceKind } from "../../device-views.ts";
+import { collectDeviceStatus, type DeviceStatus } from "../../device-status.ts";
 
 export const HOME_METRICS: EnvironmentMetric[] = [
   "temperature", "humidity", "co2", "formaldehyde", "pm25", "pm10", "tvoc", "pressure", "battery",
@@ -20,7 +21,15 @@ export type AssistantExposure = {
 export type ExposureInventory = {
   rooms: string[];
   metrics: EnvironmentMetric[];
+  roomMetrics?: Record<string, EnvironmentMetric[]>;
   devices: Array<{ ref: string; name: string; room: string; kind: string; enabled: boolean; eligible: boolean }>;
+};
+
+type ExposureReaders = {
+  homes?: typeof listHomes;
+  devices?: typeof listDevices;
+  environment?: typeof collectHomeEnvironment;
+  deviceStatus?: typeof collectDeviceStatus;
 };
 
 export type AssistantExposureStore = {
@@ -154,17 +163,65 @@ export async function listAssistantExposureInventory(
   };
 }
 
+/** Settings choices come from values the existing read tools actually report. */
+export async function listObservedAssistantExposureInventory(
+  session: XiaomiSession,
+  homeId: string,
+  exposure: AssistantExposure,
+  dependencies: ExposureReaders = {},
+): Promise<ExposureInventory> {
+  const discovery = await (dependencies.devices ?? listDevices)(session);
+  const base = await listAssistantExposureInventory(session, homeId, exposure, {
+    homes: dependencies.homes,
+    devices: async () => discovery,
+  });
+  const [environment, status] = await Promise.all([
+    (dependencies.environment ?? collectHomeEnvironment)(session, homeId, { listDevices: async () => discovery }),
+    (dependencies.deviceStatus ?? collectDeviceStatus)(session, homeId, { listDevices: async () => discovery }),
+  ]);
+  return observedExposureInventory(base, environment, status);
+}
+
+export function observedExposureInventory(base: ExposureInventory, environment: EnvironmentSnapshot, status: DeviceStatus): ExposureInventory {
+  const roomMetrics: Record<string, EnvironmentMetric[]> = {};
+  for (const group of environment.groups) {
+    for (const reading of group.readings) {
+      const room = reading.roomName;
+      if (!room || !base.rooms.includes(room)) continue;
+      const metrics = roomMetrics[room] ?? [];
+      if (!metrics.includes(group.metric)) roomMetrics[room] = [...metrics, group.metric];
+    }
+  }
+  const key = (room: string, name: string, kind: string) => `${room}\u0000${name}\u0000${kind}`;
+  const statusCounts = new Map<string, number>();
+  for (const group of status.rooms) for (const item of group.items) {
+    const value = key(group.room, item.name, item.kind);
+    statusCounts.set(value, (statusCounts.get(value) ?? 0) + 1);
+  }
+  const baseCounts = new Map<string, number>();
+  for (const device of base.devices) {
+    const value = key(device.room, device.name, device.kind);
+    baseCounts.set(value, (baseCounts.get(value) ?? 0) + 1);
+  }
+  const devices = base.devices.filter(device => {
+    const value = key(device.room, device.name, device.kind);
+    return statusCounts.get(value) === baseCounts.get(value);
+  });
+  const metrics = HOME_METRICS.filter(metric => Object.values(roomMetrics).some(values => values.includes(metric)));
+  return { rooms: base.rooms, metrics, roomMetrics, devices };
+}
+
 export async function updateAssistantExposure(
   session: XiaomiSession,
   homeId: string,
   input: unknown,
   actorPrincipalId: string,
-  dependencies: { homes?: typeof listHomes; devices?: typeof listDevices; store?: AssistantExposureStore; env?: ExposureEnvironment } = {},
+  dependencies: ExposureReaders & { store?: AssistantExposureStore; env?: ExposureEnvironment } = {},
 ): Promise<{ exposure: AssistantExposure; inventory: ExposureInventory }> {
   if (!/^usr_[A-Za-z0-9_-]{43}$/.test(actorPrincipalId)) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
   const parsed = await saveAssistantExposure(homeId, input);
   const current = await readAssistantExposure(homeId, dependencies.store, dependencies.env);
-  const inventory = await listAssistantExposureInventory(session, homeId, current, dependencies);
+  const inventory = await listObservedAssistantExposureInventory(session, homeId, current, dependencies);
   const requestedRefs = new Set((input as { deviceRefs: string[] }).deviceRefs);
   const selectedDevices = await (dependencies.devices ?? listDevices)(session);
   const homeDevices = selectedDevices.devices.filter(device => String(device.homeId ?? "") === homeId).flatMap(device => {
@@ -179,18 +236,23 @@ export async function updateAssistantExposure(
     }];
   });
   const validRefs = new Map<string, string>();
+  const eligibleRefs = new Set(inventory.devices.filter(item => item.eligible).map(item => item.ref));
   for (const device of homeDevices) {
-    if (!inventory.rooms.includes(device.room)) continue;
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${homeId}:${device.did}`));
+    const ref = `entity_${Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, "0")).join("").slice(0, 32)}`;
+    if (!eligibleRefs.has(ref)) continue;
     const name = typeof device.name === "string" ? device.name : "";
     const model = typeof device.model === "string" ? device.model : "";
     const kind = classifyDeviceKind(model, name, typeof device.logicalType === "string" ? device.logicalType : "");
     if (/(?:lock|camera|doorbell|security|alarm|intercom)/i.test(`${kind} ${model} ${name}`)) continue;
-    validRefs.set(`entity_${Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, "0")).join("").slice(0, 32)}`, device.did);
+    validRefs.set(ref, device.did);
   }
   const deviceDids = [...requestedRefs].map(ref => validRefs.get(ref));
   if (deviceDids.some(did => !did)) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
   for (const room of Object.keys(parsed.roomMetrics)) if (!inventory.rooms.includes(room)) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
+  for (const [room, metrics] of Object.entries(parsed.roomMetrics)) {
+    if (metrics.some(metric => !(inventory.roomMetrics?.[room] ?? []).includes(metric))) throw new AssistantExposureError("AI_INVALID_REQUEST", 400);
+  }
   const changedAt = new Date().toISOString();
   const next: AssistantExposure = { ...parsed, deviceDids: deviceDids as string[], updatedAt: changedAt, revision: await exposureRevision({ ...parsed, deviceDids: deviceDids as string[] }) };
   try {
@@ -212,7 +274,10 @@ export async function updateAssistantExposure(
   } catch {
     throw new AssistantExposureError("AI_EXPOSURE_STORE_UNAVAILABLE", 503);
   }
-  return { exposure: next, inventory: await listAssistantExposureInventory(session, homeId, next, dependencies) };
+  return {
+    exposure: next,
+    inventory: { ...inventory, devices: inventory.devices.map(device => ({ ...device, enabled: device.eligible && requestedRefs.has(device.ref) })) },
+  };
 }
 
 export function assistantExposureProjection(exposure: AssistantExposure, inventory: ExposureInventory) {
