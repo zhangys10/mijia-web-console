@@ -47,7 +47,7 @@
 - API 在访问小米云前校验方法、参数、标识符和请求体，并返回稳定、可测试的错误码。
 - `XIAOMI_SESSION_SECRET`、`serviceToken`、`ssecurity`、Cookie、二维码状态和真实账号数据不得进入源码、日志、错误消息、测试夹具或提交记录。
 - 会话字段只允许在服务端边界处理；客户端响应仅返回实现界面所需的最小数据。
-- 预览使用 `AI_PREVIEW_MODE=true`；本地文件存储由 `NODE_ENV=development` 选择。不要恢复已删除的环境分支或命令路由。
+- AI 运行环境由 `AI_ENVIRONMENT` 统一选择（`development`、`preview` 或 `production`）；本地文件存储仅在 `development` 使用。不要恢复已删除的环境分支或命令路由。
 - 不提交任何 `.env*` 文件。测试凭据必须是明显虚构、局部设置且不可用于真实环境的值。
 
 ### UI 与样式

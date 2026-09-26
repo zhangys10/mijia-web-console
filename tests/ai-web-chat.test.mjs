@@ -232,7 +232,7 @@ test("preview chat returns a local mock without Agent activity", async () => {
   }));
   const response = await handler({
     request: await chatRequest({ homeId: home.id, message: "打开回家模式" }),
-    env: env({ AI_PREVIEW_MODE: "true" }),
+    env: env({ AI_ENVIRONMENT: "preview" }),
   });
 
   assert.equal(response.status, 200);
@@ -258,7 +258,7 @@ test("preview chat still enforces authentication, home, and conversation binding
   const handler = createChatHandler(handlerOptions({
     fetchImpl: async () => assert.fail("Agent must not be called"),
   }));
-  const previewEnv = env({ AI_PREVIEW_MODE: "true" });
+  const previewEnv = env({ AI_ENVIRONMENT: "preview" });
   const unauthenticated = await handler({
     request: new Request("http://localhost/api/ai/chat", {
       method: "POST",
@@ -294,7 +294,7 @@ test("preview delete returns a local no-op without Agent calls", async () => {
       headers: { "Content-Type": "application/json", Cookie: await cookie(sessionA) },
       body: JSON.stringify({ homeId: home.id }),
     }),
-    env: env({ AI_PREVIEW_MODE: "true" }),
+    env: env({ AI_ENVIRONMENT: "preview" }),
   });
   const { conversationId } = await created.json();
   const calls = [];
@@ -309,7 +309,7 @@ test("preview delete returns a local no-op without Agent calls", async () => {
       method: "DELETE",
       headers: { Cookie: await cookie(sessionA) },
     }),
-    env: env({ AI_PREVIEW_MODE: "true" }),
+    env: env({ AI_ENVIRONMENT: "preview" }),
   });
 
   assert.equal(response.status, 200);

@@ -148,11 +148,7 @@ test("remote execution stays read-only in the preview environment", async () => 
     arguments: { sceneId: "scene_0123456789abcdef", revision: sceneRevision },
   };
   await assert.rejects(
-    runRemoteTool(body, { ...env, AI_PREVIEW_MODE: "true" }, dependencies),
-    /AI_PREVIEW_READ_ONLY/,
-  );
-  await assert.rejects(
-    runRemoteTool(body, { ...env, VERCEL_ENV: "preview" }, dependencies),
+    runRemoteTool(body, { ...env, AI_ENVIRONMENT: "preview" }, dependencies),
     /AI_PREVIEW_READ_ONLY/,
   );
 });
@@ -181,7 +177,7 @@ test("get_home_status rejects non-empty arguments and preview environments", asy
     /AI_INVALID_REQUEST/,
   );
   await assert.rejects(
-    runRemoteTool({ ...await input(), tool: "get_home_status" }, { ...env, AI_PREVIEW_MODE: "true" }, dependencies),
+    runRemoteTool({ ...await input(), tool: "get_home_status" }, { ...env, AI_ENVIRONMENT: "preview" }, dependencies),
     /AI_PREVIEW_READ_ONLY/,
   );
 });
@@ -462,7 +458,7 @@ test("get_device_status rejects non-empty arguments and preview environments", a
     /AI_INVALID_REQUEST/,
   );
   await assert.rejects(
-    runRemoteTool({ ...await input(), tool: "get_device_status" }, { ...env, AI_PREVIEW_MODE: "true" }, dependencies),
+    runRemoteTool({ ...await input(), tool: "get_device_status" }, { ...env, AI_ENVIRONMENT: "preview" }, dependencies),
     /AI_PREVIEW_READ_ONLY/,
   );
 });

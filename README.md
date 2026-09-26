@@ -83,7 +83,7 @@ Phase 2 的家庭读取通过 `/api/internal/assistant/v1/capabilities` 与
 逐房间开放环境指标、逐设备开放只读状态；初始状态全部关闭。设置页只列出环境采集器当前读到有效数值的房间与指标组合，以及设备状态采集器实际报告的设备；不会把全部指标套到每个房间。生产授权配置保存在
 EdgeOne Makers Blob 的 `mijia-ai-assistant-exposure-v1` 命名空间，并使用强一致读取。该授权配置按哈希化的 `homeId` 保存，不绑定某个米家 `userId`；每次读取前仍会校验当前登录会话是否属于该家庭。因此同一家庭的授权对有权访问该家庭的成员共享，不会改变米家账号本身的权限。
 EdgeOne Pages 运行时，Blob SDK 使用平台提供的部署凭据。本地
-`NODE_ENV=development` 使用 `AI_ASSISTANT_EXPOSURE_DIR` 指定的文件目录
+`AI_ENVIRONMENT=development` 使用 `AI_ASSISTANT_EXPOSURE_DIR` 指定的文件目录
 （默认 `.local/assistant-exposure/`）。其他运行时使用 Blob；Blob 不可用时
 返回 `503 AI_EXPOSURE_STORE_UNAVAILABLE`。`scripts/local-integration.py start`
 可以配置本地联调。生产 Next Route Handler 使用 Blob namespace 和强一致读取。
@@ -141,7 +141,7 @@ Phase 5 提供 Cookie 鉴权的非流式 Web Chat API，浏览器不提交 princ
 
 Web API 通过 `AI_AGENT_BASE_URL` 指定的远程 Agent origin 的 `/ai-home` 与 `/ai-home/delete` 路由通信；未设置该变量时，非预览聊天与删除返回 502 `AI_AGENT_UNAVAILABLE`。内部请求使用 `Makers-Conversation-Id` 与 `Authorization: Bearer <AI_AGENT_INTERNAL_SECRET>`。客户端响应不会返回 Agent usage 明细、真实场景 ID、DID、原始 Xiaomi userId 或任何 Secret。
 
-`AI_PREVIEW_MODE=true` 或 `VERCEL_ENV=preview` 时，聊天在 Cookie、家庭与会话
+`AI_ENVIRONMENT=preview` 时，聊天在 Cookie、家庭与会话
 校验后返回固定 mock 文本，不调用模型或设备，也不消耗配额。预览部署不要配置
 真实 Agent 地址。
 
@@ -155,7 +155,7 @@ Phase 6 在主要页面挂载右下角的 AI 助手按钮，打开对话面板�
 - 桌面端为右侧面板，移动端（≤760px）为全屏抽屉；发送中可点"停止"中断本地请求——服务端可能仍在处理该轮对话。
 - "清除会话"只清除 Agent 对话记忆，不影响设备、场景或配额账本。
 - 配额 `mode: "disabled"` 时面板显示"配额已停用/不可用"，不会显示为零剩余；429 时显示恢复时间并禁用重试，绝不自动重试。
-- 本地联调注意：Agent 运行时已迁出本仓库，非预览聊天必须设置 `AI_AGENT_BASE_URL`（否则 502 `AI_AGENT_UNAVAILABLE`）。本地开发请使用 `AI_PREVIEW_MODE=true`（固定 mock）或指向本地/远程 Agent。
+- 本地联调注意：Agent 运行时已迁出本仓库，非预览聊天必须设置 `AI_AGENT_BASE_URL`（否则 502 `AI_AGENT_UNAVAILABLE`）。本地开发请使用 `AI_ENVIRONMENT=preview`（固定 mock）或指向本地/远程 Agent。
 
 本地人工验证通过 Next 路由运行 Console，并连接 `mijia-agent` 仓库的本地 Agent：运行 `npm run dev`（或本地集成脚本）启动控制台后，将 `AI_AGENT_BASE_URL` 指向本地 Agent origin（或直接使用 `https://agent.fabloki.xyz`），并准备已登录浏览器中的 `xiaomi_session` Cookie。以下命令中的 Secret 和 Cookie 只应保存在当前终端，不要写入仓库或 shell history：
 
@@ -221,7 +221,7 @@ npm test           # 构建并运行全部 Node 测试
 | `AI_QUOTA_ENABLED` | 建议显式设置 | `false` 完全停用配额；其他合法配置见 AI Quota 一节 |
 | `AI_SCENE_EXECUTION_ENABLED` | 保持 unset/`false`，直到 agent `docs/TODO.md` 中的 Phase 3 部署门禁全部完成 | 允许完成执行门禁后的已授权场景进入执行路径 |
 
-Production 不得设置 `AI_PREVIEW_MODE=true`。环境变量新增或修改后必须重新部署；仅保存变量但继续运行旧部署，可能仍使用旧的绑定快照。部署后先验证 Web Chat 能签发 token，再确认 Agent 可通过 `/api/ai/tools` 打开同一 token。
+Production 不得设置 `AI_ENVIRONMENT=preview`。环境变量新增或修改后必须重新部署；仅保存变量但继续运行旧部署，可能仍使用旧的绑定快照。部署后先验证 Web Chat 能签发 token，再确认 Agent 可通过 `/api/ai/tools` 打开同一 token。
 
 ### Vercel
 

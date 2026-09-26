@@ -1,8 +1,8 @@
 export function isPreviewEnvironment(env: Record<string, string | undefined>) {
-  return env.AI_PREVIEW_MODE === "true" || env.VERCEL_ENV === "preview";
+  return env.AI_ENVIRONMENT === "preview";
 }
 
-/** Local Next/Vite development stores exposure settings in the filesystem. */
+/** Local development stores exposure settings in the filesystem. */
 export function isLocalAssistantExposureRuntime(env: Record<string, string | undefined>) {
-  return env.NODE_ENV === "development" && !isPreviewEnvironment(env);
+  return env.AI_ENVIRONMENT === "development";
 }

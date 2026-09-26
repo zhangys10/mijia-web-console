@@ -44,8 +44,8 @@ Python、模型消息或浏览器响应。控制台从认证会话派生 princip
 | `/api/ai/tools` | Agent 回调时验证 token 并调用服务端工具 |
 | `/api/internal/assistant/v1/**` | Python 助手的受控能力调用 |
 
-预览模式由 `AI_PREVIEW_MODE=true` 或 `VERCEL_ENV=preview` 触发，返回固定 mock
-文本，不调用模型或物理设备。本地 `NODE_ENV=development` 使用文件式家庭授权
+预览模式由 `AI_ENVIRONMENT=preview` 触发，返回固定 mock
+文本，不调用模型或物理设备。本地 `AI_ENVIRONMENT=development` 使用文件式家庭授权
 存储；其他运行时使用 EdgeOne Blob，缺失时失败关闭。Automation Token 的 AAD
 realm 固定为 `production`；各部署环境用不同的 token Secret 隔离。
 
