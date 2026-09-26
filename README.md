@@ -76,9 +76,7 @@ npm run dev
 
 ### AI Home
 
-AI Web 助手的 Agent 运行时已迁移到独立的 `mijia-agent` 仓库（EdgeOne Makers Agent + Python agent，独立部署，生产地址 `https://agent.fabloki.xyz`）。本仓库只保留 Cookie 鉴权的 Web Chat / 会话 / 配额 API、principal 派生、短期 Automation Token 和 `/api/ai/tools` 只读工具 facade；模型调用、场景执行和配额记账全部由远程 Agent 完成。
-
-模型与能力编排由独立的 `mijia-agent` 仓库负责。直接客户端使用其 `POST /ai/assistant`；本仓库签发只包含米家会话和可选家庭绑定的 Automation Token，并提供服务端只读工具。
+AI Agent 运行时位于独立的 `mijia-agent` 仓库（EdgeOne Makers Agent + Python assistant，生产地址 `https://agent.fabloki.xyz`）。本仓库保留 Cookie 鉴权的 Web Chat、会话、配额 API、principal 派生、短期 Automation Token 和 `/api/ai/tools` 服务端工具。直接客户端使用 Agent 的 `POST /ai/assistant`；模型访问由 Makers Gateway 提供，当前物理场景执行仍关闭。
 
 Phase 2 的家庭读取通过 `/api/internal/assistant/v1/capabilities` 与
 `/api/internal/assistant/v1/tools:invoke` 提供。在「设置 → AI 助手访问权限」中，家庭成员
