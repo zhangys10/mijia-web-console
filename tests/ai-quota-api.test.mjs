@@ -13,7 +13,7 @@ const session = {
 };
 const baseEnv = (overrides = {}) => ({
   XIAOMI_SESSION_SECRET: sessionSecret, AI_PRINCIPAL_SECRET: principalSecret,
-  AI_QUOTA_ENABLED: "true", APP_ENV: "test", ...overrides,
+  AI_QUOTA_ENABLED: "true", ...overrides,
 });
 async function cookie() { return `xiaomi_session=${await seal(session, sessionSecret)}`; }
 async function request(headers = {}) {

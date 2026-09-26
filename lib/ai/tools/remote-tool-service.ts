@@ -2,7 +2,7 @@ import { listHomes, type XiaomiSession } from "../../xiaomi-cloud.ts";
 import { isPreviewEnvironment } from "../config.ts";
 import { verifyAgentBinding, type AgentScope } from "../security/agent-binding.ts";
 import { derivePrincipalId } from "../security/principal.ts";
-import { AutomationTokenError, openAutomationToken } from "../security/automation-token.ts";
+import { AUTOMATION_TOKEN_REALM, AutomationTokenError, openAutomationToken } from "../security/automation-token.ts";
 import { collectHomeEnvironment } from "../../home-environment.ts";
 import { collectDeviceStatus } from "../../device-status.ts";
 import { loadAgentScenes, sceneSummaries, type AgentSceneRecord } from "./agent-scene-catalog.ts";
@@ -318,16 +318,12 @@ async function runUserTokenTool(
     throw new RemoteToolError("AI_INVALID_REQUEST", 400);
   }
   if (requestHash !== undefined && (typeof requestHash !== "string" || !/^[a-f0-9]{64}$/.test(requestHash))) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
-  const tokenEnvironment = env.APP_ENV?.trim();
-  if (!tokenEnvironment) {
-    throw new RemoteToolError("AI_AUTOMATION_TOKEN_ENV_NOT_CONFIGURED", 500);
-  }
   let payload;
   try {
     payload = await openAutomationToken(userToken, {
       secret: env.AI_AUTOMATION_TOKEN_SECRET || undefined,
       expectedKeyId: env.AI_AUTOMATION_TOKEN_KEY_ID || undefined,
-      env: tokenEnvironment,
+      env: AUTOMATION_TOKEN_REALM,
     });
   } catch (error) {
     if (error instanceof AutomationTokenError) {

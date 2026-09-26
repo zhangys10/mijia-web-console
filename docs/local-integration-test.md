@@ -30,7 +30,10 @@ python3 scripts/local-integration.py start
 
 Console 原有 `.env.local` 中其他未托管的配置行会保留；脚本管理的 AI 本地联调变量会更新为 loopback 地址和随机本地密钥。不会配置 `PAGES_PROJECT_ID` 或 `PAGES_BLOB_API_TOKEN`，也不会读取或覆盖 `adapters/edgeone/.env`。
 
-本地 `/api/ai/exposure` 和 assistant v1 API 在 `AI_ENVIRONMENT=development` 时使用开发存储：Cloudflare Vite Worker 开发运行时使用进程内存（重启后清空），Node 运行时使用 `AI_ASSISTANT_EXPOSURE_DIR` 指定的文件存储（未指定时为 `.local/assistant-exposure/`）。直接运行 Node 开发服务器且未设置 `AI_ENVIRONMENT` 时也会自动选用该本地存储；显式设置为 `preview` 或 `production` 时仍走 Blob 路径，不可用则失败关闭。默认拒绝和曝光过滤逻辑与 Blob 实现相同。本地与 EdgeOne 部署均由 Next Route Handler 处理；生产路径继续使用现有 Pages Blob namespace。部署迁移后需在 staging 验证 SSR 运行时能够读取/写入该 namespace。
+本地 `/api/ai/exposure` 和 assistant v1 API 在 `AI_ENVIRONMENT=development` 时使用
+`AI_ASSISTANT_EXPOSURE_DIR` 文件存储（默认 `.local/assistant-exposure/`）。
+其他运行时使用 Blob，不可用则失败关闭；预览模式由 `AI_ENVIRONMENT=preview` 控制，且不会调用模型或设备。
+
 
 打开 `http://127.0.0.1:3000`，登录米家账号，选择用于测试的家庭，再到「设置 → AI 助手访问权限」开放所需的只读指标/设备。
 
@@ -57,7 +60,7 @@ Fake Gateway 终端只应显示 `scripted tool call` 与 `scripted final answer`
 ## 故障排查
 
 - **`Service URL must use HTTPS`**：本脚本用 Uvicorn 启动 Python，并注入 `AI_ENVIRONMENT=development`。如果改用 PythonFunctionBuilder，必须在该构建器实际读取的本地环境中设置此值；不要放宽生产 URL 校验。
-- **Console 曝光 API 返回 `AI_EXPOSURE_STORE_UNAVAILABLE`**：检查 Console 是否运行在本地 Node 开发模式，或显式设置 `AI_ENVIRONMENT=development`；如设置了 `AI_ASSISTANT_EXPOSURE_DIR`，确认该目录可写。显式 `preview`/`production` 环境需要可用的 Pages Blob 配置。
+- **Console 曝光 API 返回 `AI_EXPOSURE_STORE_UNAVAILABLE`**：检查 Console 是否运行在本地 Node 开发模式，或显式设置 `AI_ENVIRONMENT=development`；如设置了 `AI_ASSISTANT_EXPOSURE_DIR`，确认该目录可写。非本地开发环境需要可用的 Pages Blob 配置。
 - **Agent shim 返回 `AI_UNAUTHENTICATED`**：检查 Console 与 adapter 的 `AI_AGENT_INTERNAL_SECRET`，以及 adapter/Python/Console 共同使用的 `AI_TOOLS_INTERNAL_SECRET`。
 - **Python 返回 `AI_UNAUTHENTICATED`**：检查 adapter 与 Python 的 `AI_PYTHON_INTERNAL_SECRET` 是否一致。
 - **Fake Gateway 返回 `AI_GATEWAY_UNAVAILABLE`**：确认 `AI_GATEWAY_BASE_URL` 是 `http://127.0.0.1:9901/v1`，并且 fake server 正在运行。

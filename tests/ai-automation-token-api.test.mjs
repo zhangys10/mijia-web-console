@@ -7,7 +7,6 @@ import { openAutomationToken } from "../lib/ai/security/automation-token.ts";
 process.env.XIAOMI_SESSION_SECRET = "ai-automation-token-test-secret-at-least-32-chars";
 process.env.AI_AUTOMATION_TOKEN_SECRET = "ai-automation-token-test-secret-at-least-32-chars";
 process.env.NODE_ENV = "test";
-process.env.APP_ENV = "test";
 
 const fakeSession = {
   userId: "user-test-1",
@@ -23,12 +22,12 @@ const fakeSession = {
 async function getWorker() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `ai-auto-token-${process.pid}-${Date.now()}-${Math.random()}`);
-  const { default: worker } = await import(workerUrl.href);
+  const { default: handler } = await import(workerUrl.href);
+  const worker = { fetch: (request, _env, context) => handler(request, context) };
   const env = {
     ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
     XIAOMI_SESSION_SECRET: process.env.XIAOMI_SESSION_SECRET,
     AI_AUTOMATION_TOKEN_SECRET: process.env.AI_AUTOMATION_TOKEN_SECRET,
-    APP_ENV: "test",
   };
   const context = { waitUntil() {}, passThroughOnException() {} };
   return { worker, env, context };
@@ -125,7 +124,7 @@ test("automation token API issues a session-only token without leaking secrets",
   // Decrypt the token: 只封装会话与主体，不包含任何模型凭据。
   const opened = await openAutomationToken(data.token, {
     secret: process.env.AI_AUTOMATION_TOKEN_SECRET,
-    env: process.env.NODE_ENV || "development",
+    env: "production",
   });
   assert.equal(opened.audience, "mijia-agent");
   assert.equal(opened.xiaomiSession.userId, "user-test-1");

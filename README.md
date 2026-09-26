@@ -1,6 +1,6 @@
 # 米家 Web 控制台
 
-一个基于 Next.js、Vinext 和 Cloudflare Workers 的米家设备管理界面。它通过小米二维码登录同步家庭、房间和设备，并提供设备控制、能力发现、开关拓扑以及实际照明视图。
+一个基于 Next.js 和 Vinext/Vite 的米家设备管理界面。它通过小米二维码登录同步家庭、房间和设备，并提供设备控制、能力发现、开关拓扑以及实际照明视图。
 
 ## 功能
 
@@ -11,7 +11,7 @@
 - 真实自动化同步、IF/THEN 详情、定时创建及安全修改
 - 实体开关、中控、智能灯具和普通回路的统一管理
 - 按家庭隔离的开关/照明拓扑
-- Siri 快捷指令驱动的“回家模式”AI 场景控制 PoC
+- 与独立 Python 助手集成的只读家庭问答
 - 桌面端和移动端响应式界面
 
 ## 自动化支持范围
@@ -36,7 +36,7 @@
 - Node.js `>=22.13.0`
 - Next.js 16 / React 19
 - Vinext / Vite
-- Cloudflare Workers
+- EdgeOne Makers / Vercel（原生 Next.js 构建）
 - TypeScript / ESLint
 
 ## 本地开发
@@ -76,27 +76,22 @@ npm run dev
 
 ### AI Home
 
-AI Web 助手的 Agent 运行时已迁移到独立的 `mijia-agent` 仓库（EdgeOne Makers Agent + Python agent，独立部署，生产地址 `https://agent.fabloki.xyz`）。本仓库只保留 Cookie 鉴权的 Web Chat / 会话 / 配额 API、principal 派生、短期 Automation Token 和 `/api/ai/tools` 只读工具 facade；模型调用、场景执行和配额记账全部由远程 Agent 完成。
-
-旧嵌入式 `/api/ai/command` 编排已下线：该路由现在返回 `410 AI_COMMAND_RETIRED`，命令流量由 mijia-agent 的 `POST /ai/command`（automation token 直连入口）承接。本仓库保留 AI 设置页的 Automation Token 签发（不含 BYOK 模型字段，令牌只封装米家会话与可选绑定家庭）；模型访问统一由 Agent 侧的 Makers Gateway 提供。
+AI Agent 运行时位于独立的 `mijia-agent` 仓库（EdgeOne Makers Agent + Python assistant，生产地址 `https://agent.fabloki.xyz`）。本仓库保留 Cookie 鉴权的 Web Chat、会话、配额 API、principal 派生、短期 Automation Token 和 `/api/ai/tools` 服务端工具。直接客户端使用 Agent 的 `POST /ai/assistant`；模型访问由 Makers Gateway 提供，当前物理场景执行仍关闭。
 
 Phase 2 的家庭读取通过 `/api/internal/assistant/v1/capabilities` 与
 `/api/internal/assistant/v1/tools:invoke` 提供。在「设置 → AI 助手访问权限」中，家庭成员
 逐房间开放环境指标、逐设备开放只读状态；初始状态全部关闭。设置页只列出环境采集器当前读到有效数值的房间与指标组合，以及设备状态采集器实际报告的设备；不会把全部指标套到每个房间。生产授权配置保存在
 EdgeOne Makers Blob 的 `mijia-ai-assistant-exposure-v1` 命名空间，并使用强一致读取。该授权配置按哈希化的 `homeId` 保存，不绑定某个米家 `userId`；每次读取前仍会校验当前登录会话是否属于该家庭。因此同一家庭的授权对有权访问该家庭的成员共享，不会改变米家账号本身的权限。
-EdgeOne Pages 运行时，Blob SDK 使用平台提供的部署凭据。本地开发在
-`AI_ENVIRONMENT=development` 时使用开发存储；Cloudflare Vite Worker 开发运行时使用进程内存（重启后清空），Node 运行时使用 `AI_ASSISTANT_EXPOSURE_DIR` 指定的本地文件目录（默认 `.local/assistant-exposure/`）。未指定 `AI_ENVIRONMENT` 的 Node 开发服务器也会自动使用开发存储；
-其他环境不会使用此开发存储，Blob 不可用时返回 `503 AI_EXPOSURE_STORE_UNAVAILABLE`，不会回退到内存或 KV。
-可运行 `scripts/local-integration.py start` 自动生成本地 `.env.local` 并启动端到端联调，
-无需 Pages Blob 凭据。生产 Next Route Handler 使用 Blob namespace 和强一致读取；EdgeOne 部署切换后需在 staging 单独验证现有 namespace 的读取与写入。
+EdgeOne Pages 运行时，Blob SDK 使用平台提供的部署凭据。本地
+`AI_ENVIRONMENT=development` 使用 `AI_ASSISTANT_EXPOSURE_DIR` 指定的文件目录
+（默认 `.local/assistant-exposure/`）。其他运行时使用 Blob；Blob 不可用时
+返回 `503 AI_EXPOSURE_STORE_UNAVAILABLE`。`scripts/local-integration.py start`
+可以配置本地联调。生产 Next Route Handler 使用 Blob namespace 和强一致读取。
 敏感设备类别不会列为可开放项，读取过滤只会减少已授权数据。
 
-Phase 3 场景授权复用同一家庭 Blob 配置：家庭成员可以单独开放通过保守规则识别的
-低风险灯光场景，授权绑定规范化动作内容的 revision；场景内容变化后旧授权不再匹配。
-执行前控制台会重新读取场景、校验风险与授权，并通过独立 Blob namespace 的
-`onlyIfNew` claim 和强一致读取领取跨会话执行回执。缺少 claim/outcome 回执时按结果未知
-处理，不会重发。`AI_SCENE_EXECUTION_ENABLED` 默认关闭；在 mijia-agent `docs/TODO.md`
-所列的 EdgeOne 并发、故障恢复和一次低风险端到端门禁完成前不得启用。
+场景授权复用同一家庭 Blob 配置：可按场景动作 revision 授权，也可在二次确认后为
+当前家庭启用审批列表绕过。场景修改仅在动作内容变化时使旧授权失效。当前远程
+物理执行仍关闭；须完成 `mijia-agent/docs/TODO.md` 中的持久化执行器门禁。
 
 ### 远程 Makers Agent
 
@@ -105,9 +100,9 @@ Agent 运行时位于独立的 `mijia-agent` 仓库。本仓库的 Web Chat API 
 - `AI_AGENT_BASE_URL`：远程 Makers Agent origin，非预览聊天与会话删除的必填配置。生产环境的 `mijia-agent` EdgeOne 部署地址为 `https://agent.fabloki.xyz`；未设置时非预览请求返回 502 `AI_AGENT_UNAVAILABLE` 配置错误。除 `localhost`、`127.0.0.1` 和 IPv6 loopback 的本地开发地址外，HTTP origin 会被拒绝。
 - `AI_AGENT_INTERNAL_SECRET`：Web API 调用 Agent 的内部 Bearer Secret，每个部署环境独立，至少 32 个字符。
 - `AI_AUTOMATION_TOKEN_SECRET`：签发和验证短期 Automation Token 的独立高熵密钥；Web Chat、Siri 和本地生产验证使用同一 token 工具信封。缺失时非预览聊天会安全失败，不会回退到 session binding。
-- `APP_ENV`：Automation Token 的 AES-GCM AAD 环境边界。生产环境必须显式设为 `production`；签发 token 的 `/api/ai/chat`、验证 token 的 `/api/ai/tools` 和离线 token 生成器必须使用相同值。
+- Automation Token 的 AAD realm 固定为 `production`，以兼容既有生产 token。各部署环境必须使用不同的 `AI_AUTOMATION_TOKEN_SECRET`，签发方和验证方使用同一密钥及 Key ID。
 - `AI_AUTOMATION_TOKEN_KEY_ID`：可选的 token 密钥版本标签；未设置时使用内置默认值。开始密钥轮换后，所有签发方和验证方必须同时配置相同标签。
-- `/api/ai/tools` 的 `list_scenes` 只返回当前家庭中已启用、通过低风险筛选、且其当前动作 revision 已由成员授权的场景；每个家庭还需启用场景操作。模型只看到不透明场景别名和脱敏动作摘要；小米会话、真实场景 ID、DID 和原始用户 ID 不进入模型上下文。
+- `/api/ai/tools` 的 `list_scenes` 只返回当前家庭中已启用且按家庭授权规则可见的场景；每个家庭还需启用场景操作。模型只看到不透明场景别名和脱敏动作摘要；小米会话、真实场景 ID、DID 和原始用户 ID 不进入模型上下文。
 - 连续对话由 Makers Agent 的 `Makers-Conversation-Id` 和服务端 principal/home 派生的存储键隔离。
 - `idempotencyKey` 是请求/回执标识，不是授权；Web Chat 固定为 `ai:chat`，不会因为客户端提供 key 而获得 `scene:activate`。物理动作还必须经过服务器签发的 action scope、暴露/修订校验、durable action ledger 和幂等 claim。
 
@@ -146,7 +141,9 @@ Phase 5 提供 Cookie 鉴权的非流式 Web Chat API，浏览器不提交 princ
 
 Web API 通过 `AI_AGENT_BASE_URL` 指定的远程 Agent origin 的 `/ai-home` 与 `/ai-home/delete` 路由通信；未设置该变量时，非预览聊天与删除返回 502 `AI_AGENT_UNAVAILABLE`。内部请求使用 `Makers-Conversation-Id` 与 `Authorization: Bearer <AI_AGENT_INTERNAL_SECRET>`。客户端响应不会返回 Agent usage 明细、真实场景 ID、DID、原始 Xiaomi userId 或任何 Secret。
 
-`AI_ENVIRONMENT=preview` 时，聊天在完成 Cookie 鉴权、家庭归属和会话句柄校验后直接返回固定 mock 文本 `预览模式：不会调用模型或控制真实设备。`，配额模式为 `disabled`。该路径不创建执行 scope、不调用 Makers Agent，也不预留或消耗配额；删除会话返回本地幂等成功。预览判定只读取 `AI_ENVIRONMENT`，不读取 `VERCEL_ENV` 等平台特定变量；各平台的预览部署需显式设置该变量。Preview 部署应保持 `AI_AGENT_BASE_URL` 未设置，避免在进入服务层 mock 之前因无效远程配置失败。
+`AI_ENVIRONMENT=preview` 时，聊天在 Cookie、家庭与会话
+校验后返回固定 mock 文本，不调用模型或设备，也不消耗配额。预览部署不要配置
+真实 Agent 地址。
 
 配额数据由远程 Agent 持有；Console 在 Agent 缺失或请求失败时 fail closed，不维护 KV 或内存配额账本。
 
@@ -191,7 +188,7 @@ curl -i -X DELETE "$BASE/api/ai/conversations/$CONV" \
 
 ```bash
 npm run dev        # 启动 Vite/Vinext 开发服务器
-npm run build      # 生成 Cloudflare Worker 构建产物
+npm run build      # 生成 Vinext 构建产物
 npm run build:edgeone # 生成 EdgeOne Makers 使用的 Next.js 构建产物
 npm run build:vercel # 生成 Vercel 使用的 Next.js 构建产物
 npm run start      # 启动已构建的 Vinext 应用
@@ -202,24 +199,17 @@ npm test           # 构建并运行全部 Node 测试
 
 ## 部署
 
-构建产物是 Cloudflare Worker 应用，入口为 `worker/index.ts`：
-
-```bash
-npm ci
-npm run build
-```
-
-部署前，在目标 Cloudflare 环境中安全设置 `XIAOMI_SESSION_SECRET`。不要在命令历史、远程 URL、公开构建日志或版本库文件中传递实际值。具体发布命令可以按使用的 Cloudflare Workers 项目或 CI 流程配置。
+本地使用 `npm run dev`；可用 `npm run build && npm run start` 检查 Vinext
+构建。部署使用以下平台配置和原生 Next.js 构建。
 
 ### EdgeOne Makers
 
-仓库中的 `edgeone.json` 会让 EdgeOne Makers 执行原生 Next.js 构建并使用 `.next` 产物。不要把 EdgeOne 的构建命令改回 `npm run build`：该命令面向 Cloudflare Workers，生成的是 Vinext `dist`，不包含 EdgeOne 的 OpenNext 插件所需的 `.next/required-server-files.json`。
+仓库中的 `edgeone.json` 会让 EdgeOne Makers 执行原生 Next.js 构建并使用 `.next` 产物。不要把 EdgeOne 的构建命令改回 `npm run build`：该命令面向 Vinext，生成的是 `dist`，不包含 EdgeOne 的 OpenNext 插件所需的 `.next/required-server-files.json`。
 
 部署前，在 EdgeOne Makers 项目的 Production Environment Variables 中配置以下变量；Secret 只保存在平台的加密配置中：
 
 | 变量 | 要求 | 用途 |
 | --- | --- | --- |
-| `APP_ENV` | 必填，固定为 `production` | 绑定 Automation Token 的加密环境，签发与验证必须一致 |
 | `XIAOMI_SESSION_SECRET` | 必填，独立高熵 Secret | 加密登录会话 Cookie |
 | `AI_PRINCIPAL_SECRET` | 必填，至少 32 字符 | 从服务端会话派生稳定 principalId |
 | `AI_AUTOMATION_TOKEN_SECRET` | 必填，独立高熵 Secret | 加密 Web Chat 与工具调用间的短期 token |
@@ -229,13 +219,13 @@ npm run build
 | `AI_SCENE_ACTION_AUTHORIZATION_SECRET` | 保持 unset，若执行门禁全部通过且服务端 scope 流程上线时，配置一个独立的 32 字符以上随机密钥；不要提供给 Agent | Console 签发与校验短时、绑定家庭/场景 revision/幂等请求的动作授权票据 |
 | `AI_AUTOMATION_TOKEN_KEY_ID` | 可选 | token 密钥版本；设置后签发方和验证方必须一致 |
 | `AI_QUOTA_ENABLED` | 建议显式设置 | `false` 完全停用配额；其他合法配置见 AI Quota 一节 |
-| `AI_SCENE_EXECUTION_ENABLED` | 保持 unset/`false`，直到 agent `docs/TODO.md` 中的 Phase 3 部署门禁全部完成 | 允许已授权的低风险灯光场景进入执行路径 |
+| `AI_SCENE_EXECUTION_ENABLED` | 保持 unset/`false`，直到 agent `docs/TODO.md` 中的 Phase 3 部署门禁全部完成 | 允许完成执行门禁后的已授权场景进入执行路径 |
 
 Production 不得设置 `AI_ENVIRONMENT=preview`。环境变量新增或修改后必须重新部署；仅保存变量但继续运行旧部署，可能仍使用旧的绑定快照。部署后先验证 Web Chat 能签发 token，再确认 Agent 可通过 `/api/ai/tools` 打开同一 token。
 
 ### Vercel
 
-仓库中的 `vercel.json` 会让 Vercel 使用原生 Next.js 构建，而不是面向 Cloudflare Workers 的 Vinext 构建。Vercel 项目的 Framework Preset 应为 Next.js，Output Directory 保持为空或默认值，不要设置为 `dist`。
+仓库中的 `vercel.json` 会让 Vercel 使用原生 Next.js 构建，而不是 Vinext 构建。Vercel 项目的 Framework Preset 应为 Next.js，Output Directory 保持为空或默认值，不要设置为 `dist`。
 
 部署前，在 Vercel 项目的 Environment Variables 中设置高熵的 `XIAOMI_SESSION_SECRET`，并为 Production、Preview 等需要登录能力的环境分别配置。配置后重新部署，使 Route Handlers 能够安全加密米家会话。
 

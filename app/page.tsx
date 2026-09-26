@@ -770,7 +770,7 @@ function SettingsView({ onOpenLogin, homes, selectedHomeId, selectedHomeName }: 
             <section className="ai-card">
               <div className="ai-chip">外部入口</div>
               <h2 style={{ marginTop: "10px" }}>Postman / Siri 直连 Agent</h2>
-              <p>为当前账号签发专属自动化令牌后，把令牌填入请求的 Authorization 标头（Bearer &lt;Token&gt;），即可通过 mijia-agent 的 /ai/command 入口发送控制指令。</p>
+              <p>为当前账号签发专属自动化令牌后，把令牌填入请求的 Authorization 标头（Bearer &lt;Token&gt;），即可通过 mijia-agent 的 /ai/assistant 入口发起助手对话。</p>
             </section>
             <section className="ai-card">
               <h2>使用步骤</h2>
@@ -793,7 +793,7 @@ function SettingsView({ onOpenLogin, homes, selectedHomeId, selectedHomeName }: 
                   <span>3</span>
                   <div>
                     <strong>复制 Automation Token</strong>
-                    <p>作为 Bearer Token 调用 mijia-agent 的 POST /ai/command 发送控制指令。</p>
+                    <p>作为 Bearer Token 调用 mijia-agent 的 POST /ai/assistant 发起只读家庭问答。</p>
                   </div>
                 </div>
               </div>

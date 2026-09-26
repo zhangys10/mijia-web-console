@@ -166,7 +166,7 @@ export default function AutomationTokenForm({
             <div className="ai-chip">Automation Token</div>
             <h2 style={{ marginTop: "10px" }}>生成当前账号专属的 Agent 入口令牌</h2>
             <p>
-              为当前米家账号签发 Agent 直连令牌（不含任何模型 Key）。签发完成后，把它作为 Bearer Token 粘贴到 mijia-agent /ai/command 的 Authorization 标头。
+              为当前米家账号签发 Agent 直连令牌（不含任何模型 Key）。签发完成后，把它作为 Bearer Token 粘贴到 mijia-agent /ai/assistant 的 Authorization 标头。
             </p>
           </div>
           <div className="ai-status" style={{ minWidth: "164px" }}>
@@ -229,7 +229,7 @@ export default function AutomationTokenForm({
             <div>
               <div className="ai-chip">已签发</div>
               <h2 style={{ marginTop: "10px" }}>自动化凭据已生成</h2>
-              <p>复制后作为 Bearer Token 使用（mijia-agent /ai/command）。页面刷新不会恢复该 Token。</p>
+              <p>复制后作为 Bearer Token 使用（mijia-agent /ai/assistant）。页面刷新不会恢复该 Token。</p>
             </div>
             <div style={{ textAlign: "right" }}>
               <strong>过期时间</strong>

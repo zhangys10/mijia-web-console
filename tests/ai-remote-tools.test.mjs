@@ -151,10 +151,6 @@ test("remote execution stays read-only in the preview environment", async () => 
     runRemoteTool(body, { ...env, AI_ENVIRONMENT: "preview" }, dependencies),
     /AI_PREVIEW_READ_ONLY/,
   );
-  await assert.rejects(
-    runRemoteTool(body, { ...env, VERCEL_ENV: "preview" }, dependencies),
-    /AI_SCENE_EXECUTION_DISABLED/,
-  );
 });
 
 test("get_home_status returns a sanitized read-only snapshot", async () => {
@@ -192,7 +188,6 @@ const tokenEnv = {
   ...env,
   AI_AUTOMATION_TOKEN_SECRET: "test-automation-secret-not-real-12345",
   AI_AUTOMATION_TOKEN_KEY_ID: "test-key-2026-09",
-  APP_ENV: "test",
 };
 const tokenHomes = [{ id: "home-a", name: "我的家" }, { id: "home-b", name: "度假屋" }];
 
@@ -213,7 +208,7 @@ async function automationToken(overrides = {}) {
   }, {
     secret: tokenEnv.AI_AUTOMATION_TOKEN_SECRET,
     keyId: tokenEnv.AI_AUTOMATION_TOKEN_KEY_ID,
-    env: tokenEnv.APP_ENV,
+    env: "production",
   });
 }
 
@@ -288,10 +283,9 @@ test("automation tokens without the mijia-agent audience cannot authorize direct
   );
 });
 
-test("web-issued token opens with the request environment rather than global process state", async () => {
+test("web-issued token opens with the stable automation-token realm", async () => {
   const integrationEnv = {
     ...tokenEnv,
-    APP_ENV: "edge-context-only",
     AI_AUTOMATION_TOKEN_KEY_ID: "edge-key-2026-09",
     AI_QUOTA_ENABLED: "false",
   };
@@ -362,7 +356,7 @@ test("token-bound homeId is used when no request home is provided", async () => 
   assert.equal(seen[0].homeId, "home-b");
 });
 
-test("request home may match by id, exact name, or substring like /api/ai/command", async () => {
+test("request home may match by id, exact name, or substring for direct token calls", async () => {
   const seen = [];
   await runRemoteTool(tokenInput("list_scenes", { home: "home-b" }), tokenEnv, tokenDeps(seen), await automationToken());
   assert.equal(seen[0].homeId, "home-b");
@@ -397,17 +391,8 @@ test("expired and malformed tokens are rejected without secret leakage", async (
     /AUTOMATION_TOKEN_INVALID/,
   );
   await assert.rejects(
-    runRemoteTool(tokenInput(), { ...env, APP_ENV: "test" }, tokenDeps(), await automationToken()),
+    runRemoteTool(tokenInput(), env, tokenDeps(), await automationToken()),
     /AI_AUTOMATION_TOKEN_SECRET_NOT_CONFIGURED/,
-  );
-  await assert.rejects(
-    runRemoteTool(
-      tokenInput(),
-      { ...tokenEnv, APP_ENV: undefined },
-      tokenDeps(),
-      await automationToken(),
-    ),
-    /AI_AUTOMATION_TOKEN_ENV_NOT_CONFIGURED/,
   );
 });
 

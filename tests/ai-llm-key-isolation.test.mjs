@@ -3,10 +3,9 @@ import test from "node:test";
 
 import { openAutomationToken, sealAutomationToken, computePrincipalId } from "../lib/ai/security/automation-token.ts";
 
-process.env.APP_ENV = "test";
 process.env.XIAOMI_SESSION_SECRET = "test-secret-at-least-32-chars-long-for-isolation-test";
 process.env.AI_AUTOMATION_TOKEN_SECRET = "test-secret-at-least-32-chars-long-for-isolation-test";
-const tokenOptions = { secret: process.env.AI_AUTOMATION_TOKEN_SECRET, env: "test" };
+const tokenOptions = { secret: process.env.AI_AUTOMATION_TOKEN_SECRET, env: "production" };
 
 const sessionA = {
   userId: "user-alpha",

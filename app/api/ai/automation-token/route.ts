@@ -3,11 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { listHomes, readXiaomiSession } from "../../../../lib/xiaomi-cloud.ts";
 import {
   computePrincipalId,
+  AUTOMATION_TOKEN_REALM,
   sealAutomationToken,
   type AutomationTokenPayload,
 } from "../../../../lib/ai/security/automation-token.ts";
 
-// Phase 3 之后，automation token 是 mijia-agent /ai/command 的入口凭据：
+// Phase 3 之后，automation token 是 mijia-agent /ai/assistant 的入口凭据：
 // 只封装小米会话与可选的绑定家庭，不再携带 BYOK 模型字段（模型访问由
 // agent 侧的 Makers Gateway 提供）。
 
@@ -130,7 +131,7 @@ export async function POST(request: NextRequest) {
     const token = await sealAutomationToken(payload, {
       secret: process.env.AI_AUTOMATION_TOKEN_SECRET,
       keyId: process.env.AI_AUTOMATION_TOKEN_KEY_ID,
-      env: process.env.APP_ENV ?? process.env.NODE_ENV ?? "development",
+      env: AUTOMATION_TOKEN_REALM,
     });
 
     return NextResponse.json(
