@@ -4,7 +4,7 @@ import { isPreviewEnvironment } from "../config.ts";
 import { isQuotaEnabled } from "../quota/policy.ts";
 import { disabledQuotaSummary, type QuotaSummary } from "../quota/quota-service.ts";
 import type { AgentScope } from "../security/agent-binding.ts";
-import { sealAutomationToken } from "../security/automation-token.ts";
+import { AUTOMATION_TOKEN_REALM, sealAutomationToken } from "../security/automation-token.ts";
 import { derivePrincipalId } from "../security/principal.ts";
 import type { WebAgentClient } from "./agent-client.ts";
 import {
@@ -122,14 +122,6 @@ function previewQuota(): PublicQuotaSummary {
   };
 }
 
-function automationTokenEnvironment(env: WebChatEnvironment) {
-  const environment = env.APP_ENV?.trim();
-  if (!environment) {
-    throw new WebChatError("AI_AGENT_UNAVAILABLE", "AI 助手鉴权环境尚未配置", 502);
-  }
-  return environment;
-}
-
 export class AiWebService {
   private readonly env: WebChatEnvironment;
   private readonly agent: WebAgentClient | undefined;
@@ -190,7 +182,7 @@ export class AiWebService {
       }, {
         secret: this.env.AI_AUTOMATION_TOKEN_SECRET,
         keyId: this.env.AI_AUTOMATION_TOKEN_KEY_ID,
-        env: automationTokenEnvironment(this.env),
+        env: AUTOMATION_TOKEN_REALM,
       });
     } catch {
       throw new WebChatError("AI_AGENT_UNAVAILABLE", "AI 助手鉴权暂时不可用", 502);

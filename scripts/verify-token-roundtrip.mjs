@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sealWithSecret } from "../lib/xiaomi-cloud.ts";
-import { openAutomationToken } from "../lib/ai/security/automation-token.ts";
+import { AUTOMATION_TOKEN_REALM, openAutomationToken } from "../lib/ai/security/automation-token.ts";
 
 // Fake-only credentials per AGENTS.md; nothing here is a real account.
 const secrets = {
@@ -36,7 +36,7 @@ try {
   const payload = await openAutomationToken(token, {
     secret: secrets.AI_AUTOMATION_TOKEN_SECRET,
     expectedKeyId: secrets.AI_AUTOMATION_TOKEN_KEY_ID,
-    env: secrets.APP_ENV ?? secrets.NODE_ENV ?? "development",
+    env: AUTOMATION_TOKEN_REALM,
   });
   if (payload.xiaomiSession.userId !== session.userId) throw new Error("userId mismatch");
   if (payload.purpose !== "ai-home-automation" || payload.version !== 1) throw new Error("payload mismatch");

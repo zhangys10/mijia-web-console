@@ -37,7 +37,7 @@ test("token generator reports a cookie and secret mismatch without a Node stack 
         "--env-file",
         envFile,
       ],
-      { cwd: repoRoot, env: { PATH: process.env.PATH, APP_ENV: "production" }, encoding: "utf8" },
+      { cwd: repoRoot, env: { PATH: process.env.PATH }, encoding: "utf8" },
     );
 
     assert.equal(result.status, 1);
@@ -77,7 +77,7 @@ test("token generator combines the selected token secret with the console sessio
         "--session-env-file",
         sessionEnvFile,
       ],
-      { cwd: repoRoot, env: { PATH: process.env.PATH, APP_ENV: "production" }, encoding: "utf8" },
+      { cwd: repoRoot, env: { PATH: process.env.PATH }, encoding: "utf8" },
     );
 
     assert.equal(result.status, 0, result.stderr);

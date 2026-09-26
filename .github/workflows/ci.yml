@@ -38,7 +38,7 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Build for Cloudflare
+      - name: Build Vinext app
         run: npm run build
 
       - name: Build for Vercel

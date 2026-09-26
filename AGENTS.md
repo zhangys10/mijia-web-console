@@ -5,7 +5,7 @@
 ## 项目基线
 
 - 运行时：Node.js `>=22.13.0`，依赖必须通过 `npm` 和已提交的 `package-lock.json` 管理。
-- 应用：Next.js 16、React 19、Vinext/Vite，部署目标为 Cloudflare Workers。
+- 应用：Next.js 16、React 19；本地使用 Vinext/Vite，部署使用 EdgeOne 或 Vercel 的原生 Next.js 构建。
 - 代码：应用与领域逻辑使用 TypeScript；测试使用 Node.js Test Runner。
 - 开始改动前先阅读 `README.md`；涉及设备、开关、照明或拓扑时，还必须阅读 `docs/device-management-design.md`。
 
@@ -13,10 +13,9 @@
 
 - `app/`：页面、样式和 Route Handlers。客户端组件只负责交互与展示，不得持有小米会话凭据。
 - `lib/`：米家云访问、MIoT 能力解析和设备领域模型。优先把可测试的规则写成无副作用函数。
-- `worker/`：Cloudflare Worker 入口及运行时适配，避免在此重复领域逻辑。
 - `tests/`：单元、API、构建产物和响应式回归测试。修复缺陷时先补能复现问题的测试。
 - `docs/`：跨模块设计约束。实现改变既有业务语义时同步更新文档。
-- `dist/`、`.next/`、`.wrangler/`：生成目录，不直接编辑或提交。
+- `dist/`、`.next/`：生成目录，不直接编辑或提交。
 
 ## 标准开发流程
 
@@ -48,6 +47,7 @@
 - API 在访问小米云前校验方法、参数、标识符和请求体，并返回稳定、可测试的错误码。
 - `XIAOMI_SESSION_SECRET`、`serviceToken`、`ssecurity`、Cookie、二维码状态和真实账号数据不得进入源码、日志、错误消息、测试夹具或提交记录。
 - 会话字段只允许在服务端边界处理；客户端响应仅返回实现界面所需的最小数据。
+- 预览使用 `AI_PREVIEW_MODE=true`；本地文件存储由 `NODE_ENV=development` 选择。不要恢复已删除的环境分支或命令路由。
 - 不提交任何 `.env*` 文件。测试凭据必须是明显虚构、局部设置且不可用于真实环境的值。
 
 ### UI 与样式
@@ -67,7 +67,7 @@ npm run lint
 npm test
 ```
 
-- `npm test` 会先构建应用，再运行 `tests/*.test.mjs`，用于验证 Cloudflare Worker 构建产物和全部测试。
+- `npm test` 会先构建应用，再运行 `tests/*.test.mjs`，用于验证 Vinext 构建产物和全部测试。
 - 开发中可先用 `npm run test:unit -- tests/<相关文件>.test.mjs` 运行定向测试，但它不能替代最终的 `npm test`。
 - 纯文档改动可以不运行构建和测试，但仍需检查 Markdown 内容、链接和 `git diff`。
 - 不得删除、跳过或放宽测试来让失败消失，除非产品行为已明确改变，并同时更新实现依据和相关文档。

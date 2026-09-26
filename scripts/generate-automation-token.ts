@@ -21,7 +21,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { unsealWithSecret, type XiaomiSession } from "../lib/xiaomi-cloud.ts";
-import { computePrincipalId, sealAutomationToken } from "../lib/ai/security/automation-token.ts";
+import { AUTOMATION_TOKEN_REALM, computePrincipalId, sealAutomationToken } from "../lib/ai/security/automation-token.ts";
 
 function args(argv: string[]) {
   const parsed: Record<string, string | undefined> = {};
@@ -159,7 +159,7 @@ const payload = {
 const token = await sealAutomationToken(payload, {
   secret,
   keyId: process.env.AI_AUTOMATION_TOKEN_KEY_ID,
-  env: process.env.APP_ENV ?? process.env.NODE_ENV ?? "development",
+  env: AUTOMATION_TOKEN_REALM,
 });
 
 if (parsed.out) {

@@ -8,7 +8,6 @@ import { derivePrincipalId, PrincipalError } from "../lib/ai/security/principal.
 process.env.XIAOMI_SESSION_SECRET = "ai-principal-test-secret-at-least-32-characters";
 process.env.AI_PRINCIPAL_SECRET = "ai-principal-hmac-secret-at-least-32-characters";
 process.env.NODE_ENV = "test";
-process.env.APP_ENV = "test";
 
 const principalSecret = "ai-principal-hmac-secret-at-least-32-characters";
 const fakeSession = {
@@ -25,12 +24,12 @@ const fakeSession = {
 async function getWorker() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `ai-principal-${process.pid}-${Date.now()}-${Math.random()}`);
-  const { default: worker } = await import(workerUrl.href);
+  const { default: handler } = await import(workerUrl.href);
+  const worker = { fetch: (request, _env, context) => handler(request, context) };
   const env = {
     ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
     XIAOMI_SESSION_SECRET: process.env.XIAOMI_SESSION_SECRET,
     AI_PRINCIPAL_SECRET: process.env.AI_PRINCIPAL_SECRET,
-    APP_ENV: "test",
   };
   const context = { waitUntil() {}, passThroughOnException() {} };
   return { worker, env, context };

@@ -4,7 +4,8 @@ import test from "node:test";
 test("renders the Xiaomi smart home dashboard", async () => {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+  const { default: handler } = await import(workerUrl.href);
+  const worker = { fetch: (request, _env, context) => handler(request, context) };
 
   const response = await worker.fetch(
     new Request("http://localhost/", {
@@ -50,7 +51,8 @@ test("renders the Xiaomi smart home dashboard", async () => {
 test("reading or changing device settings requires an authenticated Xiaomi session", async () => {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `control-${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+  const { default: handler } = await import(workerUrl.href);
+  const worker = { fetch: (request, _env, context) => handler(request, context) };
   const env = {
     ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
     XIAOMI_SESSION_SECRET: process.env.XIAOMI_SESSION_SECRET,
@@ -75,7 +77,8 @@ test("reading or changing device settings requires an authenticated Xiaomi sessi
 test("device capability discovery requires an authenticated Xiaomi session", async () => {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `spec-${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+  const { default: handler } = await import(workerUrl.href);
+  const worker = { fetch: (request, _env, context) => handler(request, context) };
   const response = await worker.fetch(
     new Request("http://localhost/api/xiaomi/spec?model=vendor.switch.triple"),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
@@ -89,7 +92,8 @@ test("device capability discovery requires an authenticated Xiaomi session", asy
 test("device synchronization requires an authenticated Xiaomi session", async () => {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `devices-${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+  const { default: handler } = await import(workerUrl.href);
+  const worker = { fetch: (request, _env, context) => handler(request, context) };
   const response = await worker.fetch(
     new Request("http://localhost/api/xiaomi/devices"),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
@@ -103,7 +107,8 @@ test("device synchronization requires an authenticated Xiaomi session", async ()
 test("reading, running or writing scenes requires an authenticated Xiaomi session", async () => {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `scenes-${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+  const { default: handler } = await import(workerUrl.href);
+  const worker = { fetch: (request, _env, context) => handler(request, context) };
   const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
   const context = { waitUntil() {}, passThroughOnException() {} };
 
@@ -136,7 +141,8 @@ test("reading, running or writing scenes requires an authenticated Xiaomi sessio
 test("the web chat API delegates require an authenticated Xiaomi session", async () => {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `ai-delegates-${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+  const { default: handler } = await import(workerUrl.href);
+  const worker = { fetch: (request, _env, context) => handler(request, context) };
   const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
   const context = { waitUntil() {}, passThroughOnException() {} };
 
@@ -164,7 +170,8 @@ test("the web chat API delegates require an authenticated Xiaomi session", async
 test("reading or writing automations requires an authenticated Xiaomi session", async () => {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `automations-${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+  const { default: handler } = await import(workerUrl.href);
+  const worker = { fetch: (request, _env, context) => handler(request, context) };
   const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
   const context = { waitUntil() {}, passThroughOnException() {} };
 
@@ -199,7 +206,8 @@ test("scene APIs reject malformed identifiers before contacting Xiaomi", async (
   }, process.env.XIAOMI_SESSION_SECRET);
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `scene-validation-${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+  const { default: handler } = await import(workerUrl.href);
+  const worker = { fetch: (request, _env, context) => handler(request, context) };
   const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
   const context = { waitUntil() {}, passThroughOnException() {} };
   const headers = { cookie: `xiaomi_session=${cookie}` };

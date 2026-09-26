@@ -281,8 +281,6 @@ test("assistant environment response stays within the Python reading and body li
 
 test("assistant tool reuses one authenticated device discovery for inventory and readings", async () => {
   const env = {
-    APP_ENV: "test",
-    AI_ENVIRONMENT: "production",
     AI_AUTOMATION_TOKEN_SECRET: "test-automation-secret-not-real-12345",
     AI_PRINCIPAL_SECRET: "test-principal-secret-not-real-123456789",
   };
@@ -297,7 +295,7 @@ test("assistant tool reuses one authenticated device discovery for inventory and
     homeId: "test-home",
     issuedAt: Date.now() - 1000,
     expiresAt: Date.now() + 60000,
-  }, { secret: env.AI_AUTOMATION_TOKEN_SECRET, env: env.APP_ENV });
+  }, { secret: env.AI_AUTOMATION_TOKEN_SECRET, env: "production" });
   const discovery = {
     homes: [{ id: "test-home", name: "测试家庭" }],
     devices: [

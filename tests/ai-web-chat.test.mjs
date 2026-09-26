@@ -43,7 +43,6 @@ function env(overrides = {}) {
     AI_QUOTA_DEFAULT_REQUESTS_PER_DAY: "10",
     AI_QUOTA_DEFAULT_TOKENS_PER_MONTH: "100000",
     AI_QUOTA_FAIL_MODE: "closed",
-    APP_ENV: "test",
     ...overrides,
   };
 }
@@ -157,7 +156,7 @@ test("web chat derives principal, issues a bound conversation, and exposes only 
   assert.equal(JSON.stringify(call.body).includes(sessionA.serviceToken), false);
   const token = await openAutomationToken(call.body.automationToken, {
     secret: automationTokenSecret,
-    env: "test",
+    env: "production",
     now: fixedTime,
   });
   assert.equal(token.homeId, home.id);
@@ -233,7 +232,7 @@ test("preview chat returns a local mock without Agent activity", async () => {
   }));
   const response = await handler({
     request: await chatRequest({ homeId: home.id, message: "打开回家模式" }),
-    env: env({ AI_ENVIRONMENT: "preview" }),
+    env: env({ AI_PREVIEW_MODE: "true" }),
   });
 
   assert.equal(response.status, 200);
@@ -259,7 +258,7 @@ test("preview chat still enforces authentication, home, and conversation binding
   const handler = createChatHandler(handlerOptions({
     fetchImpl: async () => assert.fail("Agent must not be called"),
   }));
-  const previewEnv = env({ AI_ENVIRONMENT: "preview" });
+  const previewEnv = env({ AI_PREVIEW_MODE: "true" });
   const unauthenticated = await handler({
     request: new Request("http://localhost/api/ai/chat", {
       method: "POST",
@@ -295,7 +294,7 @@ test("preview delete returns a local no-op without Agent calls", async () => {
       headers: { "Content-Type": "application/json", Cookie: await cookie(sessionA) },
       body: JSON.stringify({ homeId: home.id }),
     }),
-    env: env({ AI_ENVIRONMENT: "preview" }),
+    env: env({ AI_PREVIEW_MODE: "true" }),
   });
   const { conversationId } = await created.json();
   const calls = [];
@@ -310,7 +309,7 @@ test("preview delete returns a local no-op without Agent calls", async () => {
       method: "DELETE",
       headers: { Cookie: await cookie(sessionA) },
     }),
-    env: env({ AI_ENVIRONMENT: "preview" }),
+    env: env({ AI_PREVIEW_MODE: "true" }),
   });
 
   assert.equal(response.status, 200);
@@ -337,21 +336,7 @@ test("non-preview chat without AI_AGENT_BASE_URL fails as a configuration error"
   assert.equal(body.message, "AI 助手尚未配置");
 });
 
-test("non-preview chat requires an explicit automation-token environment", async () => {
-  const handler = createChatHandler(handlerOptions({
-    fetchImpl: async () => assert.fail("Agent must not be called"),
-  }));
-  const response = await handler({
-    request: await chatRequest({ homeId: home.id, message: "你好" }),
-    env: env({ AI_AGENT_BASE_URL: "http://localhost", APP_ENV: undefined }),
-  });
 
-  assert.equal(response.status, 502);
-  assert.deepEqual(await response.json(), {
-    code: "AI_AGENT_UNAVAILABLE",
-    message: "AI 助手鉴权暂时不可用",
-  });
-});
 
 test("non-preview conversation delete without AI_AGENT_BASE_URL fails as a configuration error", async () => {
   const createHandler = createConversationHandler(handlerOptions());

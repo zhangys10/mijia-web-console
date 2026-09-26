@@ -35,6 +35,8 @@ export class AutomationTokenError extends Error {
 
 const TOKEN_PREFIX = "v1";
 const DEFAULT_KEY_ID = "key-2026-01";
+/** Stable AAD realm preserves production token compatibility. */
+export const AUTOMATION_TOKEN_REALM = "production";
 const MAX_TOKEN_LENGTH = 8192;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();

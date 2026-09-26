@@ -148,12 +148,12 @@ test("remote execution stays read-only in the preview environment", async () => 
     arguments: { sceneId: "scene_0123456789abcdef", revision: sceneRevision },
   };
   await assert.rejects(
-    runRemoteTool(body, { ...env, AI_ENVIRONMENT: "preview" }, dependencies),
+    runRemoteTool(body, { ...env, AI_PREVIEW_MODE: "true" }, dependencies),
     /AI_PREVIEW_READ_ONLY/,
   );
   await assert.rejects(
     runRemoteTool(body, { ...env, VERCEL_ENV: "preview" }, dependencies),
-    /AI_SCENE_EXECUTION_DISABLED/,
+    /AI_PREVIEW_READ_ONLY/,
   );
 });
 
@@ -181,7 +181,7 @@ test("get_home_status rejects non-empty arguments and preview environments", asy
     /AI_INVALID_REQUEST/,
   );
   await assert.rejects(
-    runRemoteTool({ ...await input(), tool: "get_home_status" }, { ...env, AI_ENVIRONMENT: "preview" }, dependencies),
+    runRemoteTool({ ...await input(), tool: "get_home_status" }, { ...env, AI_PREVIEW_MODE: "true" }, dependencies),
     /AI_PREVIEW_READ_ONLY/,
   );
 });
@@ -192,7 +192,6 @@ const tokenEnv = {
   ...env,
   AI_AUTOMATION_TOKEN_SECRET: "test-automation-secret-not-real-12345",
   AI_AUTOMATION_TOKEN_KEY_ID: "test-key-2026-09",
-  APP_ENV: "test",
 };
 const tokenHomes = [{ id: "home-a", name: "我的家" }, { id: "home-b", name: "度假屋" }];
 
@@ -213,7 +212,7 @@ async function automationToken(overrides = {}) {
   }, {
     secret: tokenEnv.AI_AUTOMATION_TOKEN_SECRET,
     keyId: tokenEnv.AI_AUTOMATION_TOKEN_KEY_ID,
-    env: tokenEnv.APP_ENV,
+    env: "production",
   });
 }
 
@@ -288,10 +287,9 @@ test("automation tokens without the mijia-agent audience cannot authorize direct
   );
 });
 
-test("web-issued token opens with the request environment rather than global process state", async () => {
+test("web-issued token opens with the stable automation-token realm", async () => {
   const integrationEnv = {
     ...tokenEnv,
-    APP_ENV: "edge-context-only",
     AI_AUTOMATION_TOKEN_KEY_ID: "edge-key-2026-09",
     AI_QUOTA_ENABLED: "false",
   };
@@ -362,7 +360,7 @@ test("token-bound homeId is used when no request home is provided", async () => 
   assert.equal(seen[0].homeId, "home-b");
 });
 
-test("request home may match by id, exact name, or substring like /api/ai/command", async () => {
+test("request home may match by id, exact name, or substring for direct token calls", async () => {
   const seen = [];
   await runRemoteTool(tokenInput("list_scenes", { home: "home-b" }), tokenEnv, tokenDeps(seen), await automationToken());
   assert.equal(seen[0].homeId, "home-b");
@@ -397,17 +395,8 @@ test("expired and malformed tokens are rejected without secret leakage", async (
     /AUTOMATION_TOKEN_INVALID/,
   );
   await assert.rejects(
-    runRemoteTool(tokenInput(), { ...env, APP_ENV: "test" }, tokenDeps(), await automationToken()),
+    runRemoteTool(tokenInput(), env, tokenDeps(), await automationToken()),
     /AI_AUTOMATION_TOKEN_SECRET_NOT_CONFIGURED/,
-  );
-  await assert.rejects(
-    runRemoteTool(
-      tokenInput(),
-      { ...tokenEnv, APP_ENV: undefined },
-      tokenDeps(),
-      await automationToken(),
-    ),
-    /AI_AUTOMATION_TOKEN_ENV_NOT_CONFIGURED/,
   );
 });
 
@@ -473,7 +462,7 @@ test("get_device_status rejects non-empty arguments and preview environments", a
     /AI_INVALID_REQUEST/,
   );
   await assert.rejects(
-    runRemoteTool({ ...await input(), tool: "get_device_status" }, { ...env, AI_ENVIRONMENT: "preview" }, dependencies),
+    runRemoteTool({ ...await input(), tool: "get_device_status" }, { ...env, AI_PREVIEW_MODE: "true" }, dependencies),
     /AI_PREVIEW_READ_ONLY/,
   );
 });

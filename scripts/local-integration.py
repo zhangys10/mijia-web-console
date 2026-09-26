@@ -20,8 +20,7 @@ CONSOLE_ENV = CONSOLE_ROOT / ".env.local"
 EXPOSURE_DIR = CONSOLE_ROOT / ".local" / "assistant-exposure"
 
 LOCAL_VALUES = {
-    "AI_ENVIRONMENT": "development",
-    "APP_ENV": "development",
+    "NODE_ENV": "development",
     "LOCAL_AGENT_PORT": "8789",
     "AI_AGENT_BASE_URL": "http://127.0.0.1:8789/",
     "MIJIA_CONSOLE_BASE_URL": "http://127.0.0.1:3000",
@@ -41,8 +40,6 @@ SECRET_KEYS = (
     "XIAOMI_SESSION_SECRET",
 )
 CONSOLE_KEYS = (
-    "AI_ENVIRONMENT",
-    "APP_ENV",
     "AI_AGENT_BASE_URL",
     "AI_AGENT_INTERNAL_SECRET",
     "AI_TOOLS_INTERNAL_SECRET",

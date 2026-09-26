@@ -1,7 +1,7 @@
 import { listDevices, listHomes, type XiaomiDeviceList, type XiaomiSession } from "../../xiaomi-cloud.ts";
 import { isPreviewEnvironment } from "../config.ts";
 import { derivePrincipalId } from "../security/principal.ts";
-import { AutomationTokenError, openAutomationToken } from "../security/automation-token.ts";
+import { AUTOMATION_TOKEN_REALM, AutomationTokenError, openAutomationToken } from "../security/automation-token.ts";
 import { collectDeviceStatus, type DeviceStatus } from "../../device-status.ts";
 import { classifyDeviceKind } from "../../device-views.ts";
 import { collectHomeEnvironment, type EnvironmentMetric, type EnvironmentSnapshot, type HomeEnvironmentDiagnostics } from "../../home-environment.ts";
@@ -59,14 +59,12 @@ async function resolveHomeContext(
   dependencies: AssistantV1Dependencies,
 ): Promise<HomeContext> {
   if (token.length > 8192) throw new RemoteToolError("AUTOMATION_TOKEN_INVALID", 401);
-  const tokenEnvironment = env.APP_ENV?.trim();
-  if (!tokenEnvironment) throw new RemoteToolError("AI_AUTOMATION_TOKEN_ENV_NOT_CONFIGURED", 500);
   let payload;
   try {
     payload = await openAutomationToken(token, {
       secret: env.AI_AUTOMATION_TOKEN_SECRET || undefined,
       expectedKeyId: env.AI_AUTOMATION_TOKEN_KEY_ID || undefined,
-      env: tokenEnvironment,
+      env: AUTOMATION_TOKEN_REALM,
     });
   } catch (error) {
     if (error instanceof AutomationTokenError && error.code === "AUTOMATION_TOKEN_EXPIRED") throw new RemoteToolError("AUTOMATION_TOKEN_EXPIRED", 401);
