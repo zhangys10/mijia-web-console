@@ -5,6 +5,7 @@ import { createAgentBinding } from "../lib/ai/security/agent-binding.ts";
 import { derivePrincipalId } from "../lib/ai/security/principal.ts";
 import { sealAutomationToken } from "../lib/ai/security/automation-token.ts";
 import { AiWebService } from "../lib/ai/web-chat/web-chat-service.ts";
+import { matchSceneActionIntent } from "../lib/ai/tools/scene-action-intent.ts";
 
 const env = { XIAOMI_SESSION_SECRET: "test-session-secret-not-real-123456789", AI_PRINCIPAL_SECRET: "test-principal-secret-not-real-123456789" };
 const session = { userId: "test-user", serviceToken: "fake-token", ssecurity: "fake-security", region: "cn" };
@@ -498,4 +499,71 @@ test("automation-token activation stays blocked without a server-issued action s
     runRemoteTool(tokenInput("activate_scene", { arguments: { sceneId: "scene_0123456789abcdef", revision: sceneRevision } }), tokenEnv, tokenDeps(), token),
     /AI_SCOPE_FORBIDDEN/,
   );
+});
+
+test("scene intent accepts only one exact present-tense scene name", () => {
+  assert.equal(matchSceneActionIntent("执行回家模式", [approvedScene])?.alias, approvedScene.alias);
+  for (const message of ["不要执行回家模式", "如果回家就执行回家模式", "明天执行回家模式", "“执行回家模式”", "执行回家", "执行回家模式吗？"]) {
+    assert.equal(matchSceneActionIntent(message, [approvedScene]), null, message);
+  }
+  assert.equal(matchSceneActionIntent("执行回家模式", [approvedScene, approvedScene]), null);
+});
+
+test("web-issued action grant executes once through the token path and replays from Blob", async () => {
+  const actionEnv = { ...tokenEnv, AI_QUOTA_ENABLED: "false", AI_SCENE_EXECUTION_ENABLED: "true",
+    AI_SCENE_ACTION_AUTHORIZATION_SECRET: "test-console-action-ticket-secret-32chars" };
+  const objects = new Map();
+  const ledger = {
+    async get(key) { return objects.get(key) ?? null; },
+    async setJSON(key, value, options) {
+      assert.equal(options?.onlyIfNew, true);
+      if (objects.has(key)) throw new Error("EEXIST");
+      objects.set(key, value);
+    },
+  };
+  let runs = 0;
+  let captured;
+  const agent = { async run(input) { captured = input; return { requestId: input.requestId,
+    conversationId: input.conversationId, message: "accepted", intent: "activate_scene" }; } };
+  const service = new AiWebService({ env: actionEnv, agent,
+    loadHomes: async () => tokenHomes, loadScenes: async () => [{ ...approvedScene, homeId: "home-a" }],
+    readExposure: async () => exposure });
+  await service.chat(session, { homeId: "home-a", message: "执行回家模式",
+    idempotencyKey: "scene-test-idempotency-0001" });
+  assert.deepEqual(captured.scopes, ["ai:chat", "scene:activate"]);
+  const request = { requestId: captured.requestId, tool: "authorize", arguments: {} };
+  const authorized = await runRemoteTool(request, actionEnv, tokenDeps(), captured.automationToken);
+  assert.equal(authorized.actionIdempotencyKey, captured.idempotencyKey);
+  assert.deepEqual(authorized.scopes, ["ai:chat", "scene:activate"]);
+  const invoke = { requestId: captured.requestId, tool: "activate_scene", idempotencyKey: captured.idempotencyKey,
+    arguments: { sceneId: approvedScene.alias, revision: sceneRevision } };
+  const deps = { ...tokenDeps(), actionLedgerStore: ledger, runScene: async () => { runs++; } };
+  assert.equal((await runRemoteTool(invoke, actionEnv, deps, captured.automationToken)).status, "success");
+  assert.equal((await runRemoteTool(invoke, actionEnv, deps, captured.automationToken)).status, "success");
+  assert.equal(runs, 1);
+  await assert.rejects(runRemoteTool({ ...invoke, arguments: { sceneId: "scene_ffffffffffffffff", revision: sceneRevision } },
+    actionEnv, deps, captured.automationToken), /AI_SCOPE_FORBIDDEN/);
+});
+
+test("a timed-out scene request remains unknown and its action key never redispatches", async () => {
+  const actionEnv = { ...tokenEnv, AI_SCENE_EXECUTION_ENABLED: "true",
+    AI_SCENE_ACTION_AUTHORIZATION_SECRET: "test-console-action-ticket-secret-32chars" };
+  const idempotencyKey = "scene-timeout-idempotency-0001";
+  const grant = { requestId: "req_test_token_tool", idempotencyKey,
+    sceneAlias: approvedScene.alias, revision: sceneRevision,
+    messageHash: "a".repeat(64), expiresAt: Date.now() + 30_000 };
+  const token = await automationToken({ homeId: "home-a", actionGrant: grant });
+  const objects = new Map();
+  const actionLedgerStore = {
+    async get(key) { return objects.get(key) ?? null; },
+    async setJSON(key, value) { if (objects.has(key)) throw new Error("EEXIST"); objects.set(key, value); },
+  };
+  let runs = 0;
+  const deps = { ...tokenDeps(), actionLedgerStore,
+    runScene: async () => { runs++; throw new Error("simulated timeout"); } };
+  const invoke = tokenInput("activate_scene", { idempotencyKey,
+    arguments: { sceneId: approvedScene.alias, revision: sceneRevision } });
+  await assert.rejects(runRemoteTool(invoke, actionEnv, deps, token), /AI_EXECUTION_STATUS_UNKNOWN/);
+  await assert.rejects(runRemoteTool(invoke, actionEnv, deps, token), /AI_EXECUTION_STATUS_UNKNOWN/);
+  assert.equal(runs, 1);
 });

@@ -91,7 +91,7 @@ EdgeOne Pages 运行时，Blob SDK 使用平台提供的部署凭据。本地
 
 场景授权复用同一家庭 Blob 配置：可按场景动作 revision 授权，也可在二次确认后为
 当前家庭启用审批列表绕过。场景修改仅在动作内容变化时使旧授权失效。当前远程
-物理执行仍关闭；须完成 `mijia-agent/docs/TODO.md` 中的持久化执行器门禁。
+物理执行仍关闭；须完成 `mijia-agent/docs/scene-execution-runbook.md` 中的部署门禁。
 
 ### 远程 Makers Agent
 
@@ -216,10 +216,10 @@ npm test           # 构建并运行全部 Node 测试
 | `AI_AGENT_BASE_URL` | 必填，HTTPS origin | 远程 `mijia-agent` 地址，不包含路径 |
 | `AI_AGENT_INTERNAL_SECRET` | 必填，至少 32 字符 | Web Console 调用 Agent 的内部 Bearer 鉴权 |
 | `AI_TOOLS_INTERNAL_SECRET` | 必填，至少 32 字符 | Agent 回调 `/api/ai/tools` 的内部 Bearer 鉴权 |
-| `AI_SCENE_ACTION_AUTHORIZATION_SECRET` | 保持 unset，若执行门禁全部通过且服务端 scope 流程上线时，配置一个独立的 32 字符以上随机密钥；不要提供给 Agent | Console 签发与校验短时、绑定家庭/场景 revision/幂等请求的动作授权票据 |
+| `AI_SCENE_ACTION_AUTHORIZATION_SECRET` | 场景动作路径使用独立的 32 字符以上随机密钥；在部署验证前保持 unset，不提供给 Agent | Console 签发与校验短时、绑定家庭/场景 revision/幂等请求的动作授权票据 |
 | `AI_AUTOMATION_TOKEN_KEY_ID` | 可选 | token 密钥版本；设置后签发方和验证方必须一致 |
 | `AI_QUOTA_ENABLED` | 建议显式设置 | `false` 完全停用配额；其他合法配置见 AI Quota 一节 |
-| `AI_SCENE_EXECUTION_ENABLED` | 保持 unset/`false`，直到 agent `docs/TODO.md` 中的 Phase 3 部署门禁全部完成 | 允许完成执行门禁后的已授权场景进入执行路径 |
+| `AI_SCENE_EXECUTION_ENABLED` | 保持 unset/`false`，直到 agent `docs/scene-execution-runbook.md` 中的 Phase 3 部署门禁全部完成 | 允许完成执行门禁后的已授权场景进入执行路径 |
 
 Production 不得设置 `AI_ENVIRONMENT=preview`。环境变量新增或修改后必须重新部署；仅保存变量但继续运行旧部署，可能仍使用旧的绑定快照。部署后先验证 Web Chat 能签发 token，再确认 Agent 可通过 `/api/ai/tools` 打开同一 token。
 
