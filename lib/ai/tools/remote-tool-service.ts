@@ -353,11 +353,29 @@ async function runUserTokenTool(
   }
   const args = input.arguments;
   if (!args || typeof args !== "object" || Array.isArray(args)) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
+  const toolArgs = args as Record<string, unknown>;
+  const grant = payload.actionGrant;
+  const validGrant = env.AI_SCENE_EXECUTION_ENABLED === "true"
+    && !isPreviewEnvironment(env)
+    && (env.AI_SCENE_ACTION_AUTHORIZATION_SECRET?.length ?? 0) >= 32
+    && grant !== undefined && grant !== null
+    && grant.requestId === input.requestId
+    && typeof grant.expiresAt === "number" && grant.expiresAt > Date.now()
+    && grant.expiresAt <= payload.expiresAt
+    && typeof grant.messageHash === "string" && /^[a-f0-9]{64}$/.test(grant.messageHash)
+    && typeof grant.sceneAlias === "string" && /^scene_[a-f0-9]{16}$/.test(grant.sceneAlias)
+    && typeof grant.revision === "string" && /^rev_[a-f0-9]{24}$/.test(grant.revision)
+    && typeof grant.idempotencyKey === "string"
+    && grant.idempotencyKey.length >= 16 && grant.idempotencyKey.length <= 128
+    && payload.homeId === homeId;
   if (input.tool === "authorize" || input.tool === "list_scenes") {
     if (Object.keys(args).length) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
     // The Makers adapter compares this server-derived context with its inbound
     // metadata before it can load conversation state or call Python.
-    if (input.tool === "authorize") return { ok: true, principalId, homeId, scopes: ["ai:chat"] };
+    if (input.tool === "authorize") return validGrant
+      ? { ok: true, principalId, homeId, scopes: ["ai:chat", "scene:activate"],
+        actionMessageHash: grant.messageHash, actionIdempotencyKey: grant.idempotencyKey }
+      : { ok: true, principalId, homeId, scopes: ["ai:chat"] };
     const scenes = await (dependencies.scenes ?? loadAgentScenes)({ principalId, homeId, session: payload.xiaomiSession });
     const exposure = await currentExposure(homeId, dependencies.exposureStore, env);
     const exposedScenes = scenes.filter(scene => isSceneExposed(exposure, scene));
@@ -376,9 +394,24 @@ async function runUserTokenTool(
     return await collector({ session: payload.xiaomiSession, homeId });
   }
   if (input.tool === "activate_scene") {
-    // Automation-token requests do not carry a console-issued action scope.
-    // Keep this canonical ingress read-only until that authorization flow exists.
-    throw new RemoteToolError("AI_SCOPE_FORBIDDEN", 403);
+    if (!validGrant || !grant || input.idempotencyKey !== grant.idempotencyKey
+      || Object.keys(toolArgs).length !== 2
+      || toolArgs.sceneId !== grant.sceneAlias || toolArgs.revision !== grant.revision) {
+      throw new RemoteToolError("AI_SCOPE_FORBIDDEN", 403);
+    }
+    const scenes = await (dependencies.scenes ?? loadAgentScenes)({ principalId, homeId, session: payload.xiaomiSession });
+    const scene = scenes.find(item => item.alias === grant.sceneAlias);
+    if (!scene || scene.revision !== grant.revision) throw new RemoteToolError("AI_SCENE_REVISION_CHANGED", 409);
+    const requestHashBytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({
+      requestId: grant.requestId, messageHash: grant.messageHash, sceneAlias: grant.sceneAlias,
+      revision: grant.revision, idempotencyKey: grant.idempotencyKey,
+    })));
+    const requestHash = Array.from(new Uint8Array(requestHashBytes), byte => byte.toString(16).padStart(2, "0")).join("");
+    const actionAuthorization = await issueSceneActionAuthorization({ principalId, homeId,
+      sceneAlias: scene.alias, revision: scene.revision, idempotencyKey: grant.idempotencyKey,
+      requestHash }, env.AI_SCENE_ACTION_AUTHORIZATION_SECRET);
+    return executeApprovedScene({ principalId, homeId, session: payload.xiaomiSession, scene,
+      idempotencyKey: grant.idempotencyKey, requestHash, actionAuthorization, env, dependencies });
   }
   throw new RemoteToolError("AI_INVALID_REQUEST", 400);
 }

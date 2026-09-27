@@ -8,6 +8,14 @@ export type AutomationTokenPayload = {
   xiaomiSession: XiaomiSession;
   region: string;
   homeId?: string;
+  actionGrant?: {
+    requestId: string;
+    idempotencyKey: string;
+    sceneAlias: string;
+    revision: string;
+    messageHash: string;
+    expiresAt: number;
+  };
   /** Phase 3 之后签发的 token 不再携带 BYOK 字段；旧 token 中可能仍存在，读取方一律忽略。 */
   provider?: string;
   model?: string;

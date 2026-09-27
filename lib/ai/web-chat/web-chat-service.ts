@@ -6,6 +6,9 @@ import { disabledQuotaSummary, type QuotaSummary } from "../quota/quota-service.
 import type { AgentScope } from "../security/agent-binding.ts";
 import { AUTOMATION_TOKEN_REALM, sealAutomationToken } from "../security/automation-token.ts";
 import { derivePrincipalId } from "../security/principal.ts";
+import { loadAgentScenes, type AgentSceneRecord } from "../tools/agent-scene-catalog.ts";
+import { isSceneExposed, readAssistantExposure } from "../tools/assistant-exposure.ts";
+import { matchSceneActionIntent } from "../tools/scene-action-intent.ts";
 import type { WebAgentClient } from "./agent-client.ts";
 import {
   createConversationHandle,
@@ -61,6 +64,8 @@ type AiWebServiceOptions = {
   now?: () => number;
   randomBytes?: (length: number) => Uint8Array;
   randomUuid?: () => string;
+  loadScenes?: typeof loadAgentScenes;
+  readExposure?: typeof readAssistantExposure;
 };
 
 const allowedFields = new Set(["conversationId", "homeId", "message", "idempotencyKey"]);
@@ -129,6 +134,8 @@ export class AiWebService {
   private readonly now: () => number;
   private readonly randomBytes: (length: number) => Uint8Array;
   private readonly randomUuid: () => string;
+  private readonly loadScenes: typeof loadAgentScenes;
+  private readonly readExposure: typeof readAssistantExposure;
 
   constructor(options: AiWebServiceOptions) {
     this.env = options.env;
@@ -138,6 +145,8 @@ export class AiWebService {
     this.randomBytes = options.randomBytes
       ?? ((length) => crypto.getRandomValues(new Uint8Array(length)));
     this.randomUuid = options.randomUuid ?? (() => crypto.randomUUID());
+    this.loadScenes = options.loadScenes ?? loadAgentScenes;
+    this.readExposure = options.readExposure ?? readAssistantExposure;
   }
 
   private async identity(session: XiaomiSession) {
@@ -167,6 +176,7 @@ export class AiWebService {
     homeId: string,
     session: XiaomiSession,
     now: number,
+    actionGrant?: NonNullable<import("../security/automation-token.ts").AutomationTokenPayload["actionGrant"]>,
   ) {
     try {
       return await sealAutomationToken({
@@ -177,6 +187,7 @@ export class AiWebService {
         xiaomiSession: session,
         region: session.region || "cn",
         homeId,
+        actionGrant,
         issuedAt: now,
         expiresAt: now + 5 * 60_000,
       }, {
@@ -248,11 +259,29 @@ export class AiWebService {
     }
 
     const id = requestId(this.randomUuid);
-    // Phase 1 registers read capabilities only.  Do not let a caller-provided
-    // idempotency key grant a future write capability.
+    // The server grants scene scope only for a current, approved exact-name request.
+    // A caller-provided idempotency key never grants write access by itself.
     const scopes: AgentScope[] = ["ai:chat"];
     const now = this.now();
-    const automationToken = await this.issueAutomationToken(principalId, input.homeId, session, now);
+    const idempotencyKey = input.idempotencyKey ?? `readonly_${id}`;
+    let actionGrant: NonNullable<import("../security/automation-token.ts").AutomationTokenPayload["actionGrant"]> | undefined;
+    if (this.env.AI_SCENE_EXECUTION_ENABLED === "true"
+      && (this.env.AI_SCENE_ACTION_AUTHORIZATION_SECRET?.length ?? 0) >= 32
+      && /^(?:执行|运行|启动|run\s|activate\s|execute\s)/iu.test(input.message)) {
+      const scenes: AgentSceneRecord[] = await this.loadScenes({ principalId, homeId: input.homeId, session });
+      const selected = matchSceneActionIntent(input.message, scenes);
+      if (selected) {
+        const exposure = await this.readExposure(input.homeId, undefined, this.env);
+        if (isSceneExposed(exposure, selected)) {
+          const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.message));
+          const messageHash = Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
+          actionGrant = { requestId: id, idempotencyKey, sceneAlias: selected.alias,
+            revision: selected.revision, messageHash, expiresAt: now + 60_000 };
+          scopes.push("scene:activate");
+        }
+      }
+    }
+    const automationToken = await this.issueAutomationToken(principalId, input.homeId, session, now, actionGrant);
     const remoteQuotaDisabled = !isQuotaEnabled(this.env);
     const agentResult = await this.requireAgent().run({
       conversationId,
@@ -260,7 +289,7 @@ export class AiWebService {
       principalId,
       homeId: input.homeId,
       message: input.message,
-      idempotencyKey: input.idempotencyKey ?? `readonly_${id}`,
+      idempotencyKey,
       scopes,
       automationToken,
       locale: "zh-CN",
