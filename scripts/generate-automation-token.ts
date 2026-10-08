@@ -175,14 +175,14 @@ if (parsed.actionMessage) {
     console.error("Action messages must be at most 500 characters.");
     process.exit(2);
   }
-  if (!homeId) {
-    console.error("--home is required when issuing an action grant.");
-    process.exit(2);
-  }
   const homes = await listHomes(session);
-  const selectedHomes = homes.filter(home => home.id === homeId || home.name.trim().toLocaleLowerCase() === homeId?.toLocaleLowerCase());
+  const selectedHomes = homeId
+    ? homes.filter(home => home.id === homeId || home.name.trim().toLocaleLowerCase() === homeId?.toLocaleLowerCase())
+    : homes.length === 1 ? homes : [];
   if (selectedHomes.length !== 1) {
-    console.error("--home must identify exactly one accessible home.");
+    console.error(homeId
+      ? "--home must identify exactly one accessible home."
+      : "ACTION_HOME_REQUIRED: --home must identify one accessible home when the account has multiple homes.");
     process.exit(2);
   }
   homeId = selectedHomes[0].id;
