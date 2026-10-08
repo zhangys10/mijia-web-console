@@ -106,15 +106,15 @@ test("assistant exposure settings use compact filterable rows and select only fi
   assert.match(styles, /\.assistant-exposure-filters input\[type="checkbox"\]\{width:18px;height:18px;min-height:18px/, "filter selection boxes must keep a compact visual checkbox inside the 44px target");
 });
 
-test("scene approvals are readable, grouped by room, and never promise remote execution", async () => {
+test("scene approvals clearly expose separately gated execution", async () => {
   const source = await read("../app/components/ai-assistant/assistant-exposure-settings.tsx");
   const styles = await read("../app/ai-assistant.css");
-  assert.match(source, /场景授权目前仍关闭|远程场景执行目前仍关闭/);
+  assert.match(source, /场景审批与执行/);
+  assert.match(source, /最终执行仍受服务器部署开关保护/);
   assert.match(source, /sceneGroupName\(scene\)/, "scene filters and sections must use the affected room grouping");
   assert.match(source, /value=\{sceneSearch\}/, "scene search must be available");
   assert.match(source, /<details className="assistant-scene-details">/, "each scene must expose its action summary on demand");
-  assert.match(source, /启用场景授权/);
-  assert.doesNotMatch(source, /允许 AI 执行已选场景/);
+  assert.match(source, /允许激活已批准的手动场景/);
   assert.match(source, /disabled=\{selectableVisibleScenes\.length === 0 \|\| loading \|\| exposure\.sceneApprovalBypass\}/, "bulk approval configuration must not require the master permission to be on");
   assert.match(source, /确认跳过逐项审批/);
   assert.match(styles, /\.assistant-scene-groups\{display:grid;gap:24px\}/);

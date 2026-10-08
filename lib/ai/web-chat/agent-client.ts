@@ -10,12 +10,12 @@ export type AgentRunResult = {
   requestId: string;
   conversationId: string;
   message: string;
-  intent: "none" | "list_scenes" | "get_home_status" | "get_device_status" | "activate_scene";
+  intent: "none" | "list_scenes" | "get_home_status" | "get_device_status" | "activate_scene" | "set_device_property";
   scenes?: AgentSceneSummary[];
   homeStatus?: EnvironmentSnapshot;
   deviceStatus?: DeviceStatus;
   tool?: {
-    name: "list_scenes" | "get_home_status" | "get_device_status" | "activate_scene";
+    name: "list_scenes" | "get_home_status" | "get_device_status" | "activate_scene" | "set_device_property";
     status: "success" | "partial_success";
     sceneName?: string;
   };
@@ -87,8 +87,8 @@ type MakersAgentClientOptions = {
   fetchImpl?: typeof fetch;
 };
 
-const knownIntent = new Set(["none", "list_scenes", "get_home_status", "get_device_status", "activate_scene"]);
-const knownTool = new Set(["list_scenes", "get_home_status", "get_device_status", "activate_scene"]);
+const knownIntent = new Set(["none", "list_scenes", "get_home_status", "get_device_status", "activate_scene", "set_device_property"]);
+const knownTool = new Set(["list_scenes", "get_home_status", "get_device_status", "activate_scene", "set_device_property"]);
 const knownToolStatus = new Set(["success", "partial_success"]);
 const knownDeviceState = new Set(["on", "off", "unknown"]);
 const knownEnvironmentMetric = new Set([
@@ -209,6 +209,16 @@ function mappedAgentError(body: Record<string, unknown> | null) {
       return new AgentClientError(code, "请求结果不确定，请检查状态", 409);
     case "AI_SCENE_EXECUTION_DISABLED":
       return new AgentClientError(code, "远程场景执行尚未启用", 403);
+    case "AI_DEVICE_EXECUTION_DISABLED":
+      return new AgentClientError(code, "远程设备操作尚未启用", 403);
+    case "AI_DEVICE_NOT_EXPOSED":
+      return new AgentClientError(code, "该设备没有获得 AI 操作权限", 403);
+    case "AI_DEVICE_OFFLINE":
+      return new AgentClientError(code, "设备当前离线，未发送操作", 409);
+    case "AI_DEVICE_REVISION_CHANGED":
+      return new AgentClientError(code, "设备能力已变化，请刷新授权后重试", 409);
+    case "AI_DEVICE_OPERATION_FAILED":
+      return new AgentClientError(code, "米家拒绝了设备操作", 502);
     case "AI_INVALID_REQUEST":
       return new AgentClientError(code, "AI 请求格式无效", 400);
     case "AI_SCOPE_FORBIDDEN":

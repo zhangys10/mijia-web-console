@@ -9,7 +9,7 @@ export type AssistantSceneSummary = {
 };
 
 export type AssistantToolResult = {
-  name: "list_scenes" | "get_home_status" | "get_device_status" | "activate_scene";
+  name: "list_scenes" | "get_home_status" | "get_device_status" | "activate_scene" | "set_device_property";
   status: "success" | "partial_success";
   sceneName?: string;
 };

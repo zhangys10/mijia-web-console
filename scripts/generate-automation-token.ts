@@ -1,11 +1,13 @@
 /**
- * Offline automation-token generator for local agent testing.
+ * Console-side automation-token generator for local agent testing.
  *
  * Uses the console's own automation-token library, so the issued token is
  * byte-compatible with the settings UI: AES-GCM under
  * AI_AUTOMATION_TOKEN_SECRET, payload v1 / "ai-home-automation", with the
  * sealed Xiaomi session embedded. The token carries no model fields —
  * model access stays on the Makers Gateway in the agent.
+ * Optional scene-test mode reads the selected home's scene catalog to bind
+ * one short-lived action grant; the console rechecks approval before dispatch.
  *
  * Usage:
  *   node --experimental-strip-types scripts/generate-automation-token.ts \
@@ -20,8 +22,13 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { unsealWithSecret, type XiaomiSession } from "../lib/xiaomi-cloud.ts";
+import { listHomes, unsealWithSecret, type XiaomiSession } from "../lib/xiaomi-cloud.ts";
 import { AUTOMATION_TOKEN_REALM, computePrincipalId, sealAutomationToken } from "../lib/ai/security/automation-token.ts";
+import { loadAgentScenes } from "../lib/ai/tools/agent-scene-catalog.ts";
+import {
+  createLocalProdSceneGrant,
+  type LocalProdSceneGrant,
+} from "../lib/ai/tools/local-prod-scene-grant.ts";
 
 function args(argv: string[]) {
   const parsed: Record<string, string | undefined> = {};
@@ -32,6 +39,9 @@ function args(argv: string[]) {
     else if (argv[i] === "--session-env-file") parsed.sessionEnvFile = argv[++i];
     else if (argv[i] === "--home") parsed.home = argv[++i];
     else if (argv[i] === "--days") parsed.days = argv[++i];
+    else if (argv[i] === "--action-message") parsed.actionMessage = argv[++i];
+    else if (argv[i] === "--action-request-id") parsed.actionRequestId = argv[++i];
+    else if (argv[i] === "--action-idempotency-key") parsed.actionIdempotencyKey = argv[++i];
     else if (argv[i] === "--out") parsed.out = argv[++i];
     else if (argv[i] === "--help" || argv[i] === "-h") parsed.help = "1";
     else {
@@ -46,8 +56,9 @@ const parsed = args(process.argv.slice(2));
 if (parsed.help || (!parsed.session && !parsed.sessionFile)) {
   console.log(`Usage: node --experimental-strip-types scripts/generate-automation-token.ts \\
   (--session '<xiaomi_session cookie value>' | --session-file '<cookie file>') \\
-  [--env-file <token secret env file>] [--session-env-file <session secret env file>] \
-  [--home <homeId>] [--days 1-90, default 30] [--out <file>]
+  [--env-file <token secret env file>] [--session-env-file <session secret env file>] \\
+  [--home <homeId>] [--days 1-90, default 30] [--out <file>] \\
+  [--action-message <exact command> --action-request-id <id> --action-idempotency-key <key>]
 
 --session-file reads the pasted cookie from a file (avoids argv/history
 exposure; should be owner-only, mode 0600).
@@ -58,6 +69,11 @@ missing Xiaomi session secret. Explicit env vars win over both files.
 }
 if (parsed.session && parsed.sessionFile) {
   console.error("Use either --session or --session-file, not both.");
+  process.exit(2);
+}
+const actionArgs = [parsed.actionMessage, parsed.actionRequestId, parsed.actionIdempotencyKey];
+if (actionArgs.some(Boolean) && actionArgs.some(value => !value)) {
+  console.error("Scene action grants require --action-message, --action-request-id, and --action-idempotency-key together.");
   process.exit(2);
 }
 
@@ -144,16 +160,54 @@ try {
 }
 
 const now = Date.now();
+const principalId = await computePrincipalId(session.region || "cn", session.userId);
+let actionGrant: LocalProdSceneGrant | undefined;
+let homeId = parsed.home?.trim();
+if (parsed.actionMessage) {
+  if (parsed.out) {
+    console.error("A scene-grant token cannot be written to a reusable token file.");
+    process.exit(2);
+  }
+  if (parsed.actionMessage.trim().length > 500) {
+    console.error("Scene action messages must be at most 500 characters.");
+    process.exit(2);
+  }
+  if (!homeId) {
+    console.error("--home is required when issuing a scene action grant.");
+    process.exit(2);
+  }
+  const homes = await listHomes(session);
+  const selectedHomes = homes.filter(home => home.id === homeId || home.name.trim().toLocaleLowerCase() === homeId?.toLocaleLowerCase());
+  if (selectedHomes.length !== 1) {
+    console.error("--home must identify exactly one accessible home.");
+    process.exit(2);
+  }
+  homeId = selectedHomes[0].id;
+  const scenes = await loadAgentScenes({ principalId, homeId, session });
+  try {
+    actionGrant = await createLocalProdSceneGrant({
+      message: parsed.actionMessage,
+      requestId: parsed.actionRequestId!,
+      idempotencyKey: parsed.actionIdempotencyKey!,
+      scenes,
+      now,
+    });
+  } catch {
+    console.error("The action message must be an exact, present-tense command for one unique manual scene.");
+    process.exit(2);
+  }
+}
 const payload = {
   version: 1 as const,
   purpose: "ai-home-automation" as const,
   audience: "mijia-agent" as const,
-  principalId: await computePrincipalId(session.region || "cn", session.userId),
+  principalId,
   xiaomiSession: session,
   region: session.region || "cn",
-  ...(parsed.home ? { homeId: parsed.home } : {}),
+  ...(homeId ? { homeId } : {}),
+  ...(actionGrant ? { actionGrant } : {}),
   issuedAt: now,
-  expiresAt: now + days * 86_400_000,
+  expiresAt: actionGrant ? now + 5 * 60_000 : now + days * 86_400_000,
 };
 
 const token = await sealAutomationToken(payload, {
