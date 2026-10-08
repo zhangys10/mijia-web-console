@@ -9,14 +9,14 @@ type Claim = {
   version: 1;
   claimId: string;
   requestHash: string;
-  sceneRevision: string;
+  actionRevision: string;
   claimedAt: string;
 };
 
 type Outcome = {
   version: 1;
   requestHash: string;
-  status: "success" | "outcome_unknown";
+  status: "success" | "failed" | "outcome_unknown";
   completedAt: string;
 };
 
@@ -36,7 +36,7 @@ export class SceneActionLedgerError extends Error {
 }
 
 function ledgerStore(): SceneActionLedgerStore {
-  const name = process.env.AI_SCENE_ACTION_LEDGER_STORE?.trim() || "mijia-ai-scene-actions-v1";
+  const name = process.env.AI_ACTION_LEDGER_STORE?.trim() || process.env.AI_SCENE_ACTION_LEDGER_STORE?.trim() || "mijia-ai-scene-actions-v1";
   const projectId = process.env.PAGES_PROJECT_ID?.trim();
   const token = process.env.PAGES_BLOB_API_TOKEN?.trim();
   if (projectId && token) return getStore({ name, projectId, token }) as SceneActionLedgerStore;
@@ -48,27 +48,28 @@ async function digest(value: string) {
   return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export async function claimSceneAction(
-  input: { principalId: string; homeId: string; idempotencyKey: string; requestHash: string; sceneRevision: string },
+export async function claimAction(
+  input: { principalId: string; homeId: string; idempotencyKey: string; requestHash: string; actionRevision: string },
   store = ledgerStore(),
 ): Promise<SceneActionClaim> {
   const scope = await digest(`${input.principalId}\u0000${input.homeId}\u0000${input.idempotencyKey}`);
   const claimKey = `actions/${scope}.claim.json`;
   const outcomeKey = `actions/${scope}.outcome.json`;
-  const claim: Claim = { version: 1, claimId: crypto.randomUUID(), requestHash: input.requestHash, sceneRevision: input.sceneRevision, claimedAt: new Date().toISOString() };
+  const claim: Claim = { version: 1, claimId: crypto.randomUUID(), requestHash: input.requestHash, actionRevision: input.actionRevision, claimedAt: new Date().toISOString() };
   try {
     try { await store.setJSON(claimKey, claim, { onlyIfNew: true }); }
     catch { /* The strong read below decides whether this process owns the claim. */ }
     const existing = await store.get(claimKey, { type: "json", consistency: "strong" });
     if (!existing || typeof existing !== "object") throw new Error("invalid action claim");
     const record = existing as Record<string, unknown>;
-    if (record.version !== 1 || typeof record.claimId !== "string" || typeof record.requestHash !== "string" || typeof record.sceneRevision !== "string") throw new Error("invalid action claim");
+    const actionRevision = typeof record.actionRevision === "string" ? record.actionRevision : record.sceneRevision;
+    if (record.version !== 1 || typeof record.claimId !== "string" || typeof record.requestHash !== "string" || typeof actionRevision !== "string") throw new Error("invalid action claim");
     if (record.claimId === claim.claimId) return { kind: "claimed", claim, claimKey, outcomeKey };
-    if (record.requestHash !== input.requestHash || record.sceneRevision !== input.sceneRevision) return { kind: "conflict" };
+    if (record.requestHash !== input.requestHash || actionRevision !== input.actionRevision) return { kind: "conflict" };
     const rawOutcome = await store.get(outcomeKey, { type: "json", consistency: "strong" });
     if (rawOutcome && typeof rawOutcome === "object") {
       const outcome = rawOutcome as Record<string, unknown>;
-      if (outcome.version === 1 && outcome.requestHash === input.requestHash && (outcome.status === "success" || outcome.status === "outcome_unknown") && typeof outcome.completedAt === "string") {
+      if (outcome.version === 1 && outcome.requestHash === input.requestHash && (outcome.status === "success" || outcome.status === "failed" || outcome.status === "outcome_unknown") && typeof outcome.completedAt === "string") {
         return { kind: "replay", outcome: outcome as Outcome };
       }
       throw new Error("invalid action outcome");
@@ -81,7 +82,7 @@ export async function claimSceneAction(
   }
 }
 
-export async function recordSceneActionOutcome(
+export async function recordActionOutcome(
   claim: Extract<SceneActionClaim, { kind: "claimed" }>,
   status: Outcome["status"],
   store = ledgerStore(),
@@ -100,3 +101,12 @@ export async function recordSceneActionOutcome(
     throw new SceneActionLedgerError("AI_ACTION_LEDGER_UNAVAILABLE");
   }
 }
+
+export async function claimSceneAction(
+  input: { principalId: string; homeId: string; idempotencyKey: string; requestHash: string; sceneRevision: string },
+  store?: SceneActionLedgerStore,
+) {
+  return claimAction({ ...input, actionRevision: input.sceneRevision }, store);
+}
+
+export const recordSceneActionOutcome = recordActionOutcome;

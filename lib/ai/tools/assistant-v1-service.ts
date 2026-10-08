@@ -123,7 +123,8 @@ export async function getAssistantCapabilitiesV1(
       roomDeviceKinds: Object.fromEntries(projection.rooms.map(room => [room, [...new Set(context.inventory.devices
         .filter(device => device.room === room && device.eligible && device.enabled)
         .map(device => device.kind))]]).filter(([, kinds]) => (kinds as string[]).length > 0)),
-      sceneSearchAvailable: false,
+      sceneSearchAvailable: context.inventory.scenes.some(scene => scene.enabled),
+      deviceControlSearchAvailable: context.exposure.deviceActionsEnabled && context.selectedDids.length > 0,
     },
   };
 }

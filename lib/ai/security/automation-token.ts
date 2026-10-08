@@ -9,10 +9,14 @@ export type AutomationTokenPayload = {
   region: string;
   homeId?: string;
   actionGrant?: {
+    kind?: "scene" | "device_property";
     requestId: string;
     idempotencyKey: string;
-    sceneAlias: string;
+    sceneAlias?: string;
+    deviceId?: string;
+    operationId?: string;
     revision: string;
+    value?: boolean | number | string;
     messageHash: string;
     expiresAt: number;
   };

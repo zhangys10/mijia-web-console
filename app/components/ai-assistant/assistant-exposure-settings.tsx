@@ -10,7 +10,7 @@ type Inventory = {
   devices: Array<{ ref: string; name: string; room: string; kind: string; enabled: boolean; eligible: boolean }>;
   scenes: Array<{ ref: string; name: string; actionCount: number; approvalStatus: "approved" | "changed" | "pending"; enabled: boolean; revision: string; actionSummaries: Array<{ room: string | null; device: string | null; actions: Array<{ label: string; value: string }> }> }>;
 };
-type Exposure = { enabled: boolean; sceneActionsEnabled: boolean; sceneApprovalBypass: boolean; roomMetrics: Record<string, Metric[]>; updatedAt: string | null; revision: string };
+type Exposure = { enabled: boolean; deviceActionsEnabled: boolean; sceneActionsEnabled: boolean; sceneApprovalBypass: boolean; roomMetrics: Record<string, Metric[]>; updatedAt: string | null; revision: string };
 type PermissionRow = {
   id: string;
   name: string;
@@ -59,7 +59,7 @@ function exposureSaveErrorMessage(error: unknown) {
 }
 
 export default function AssistantExposureSettings({ homeId, homeName }: { homeId?: string; homeName?: string }) {
-  const [exposure, setExposure] = useState<Exposure>({ enabled: false, sceneActionsEnabled: false, sceneApprovalBypass: false, roomMetrics: {}, updatedAt: null, revision: "exp_default_deny" });
+  const [exposure, setExposure] = useState<Exposure>({ enabled: false, deviceActionsEnabled: false, sceneActionsEnabled: false, sceneApprovalBypass: false, roomMetrics: {}, updatedAt: null, revision: "exp_default_deny" });
   const [confirmingBypass, setConfirmingBypass] = useState(false);
   const [bypassConfirmed, setBypassConfirmed] = useState(false);
   const [inventory, setInventory] = useState<Inventory>({ rooms: [], metrics: [], roomMetrics: {}, devices: [], scenes: [] });
@@ -257,7 +257,7 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ homeId, enabled: exposure.enabled, sceneActionsEnabled: exposure.sceneActionsEnabled, sceneApprovalBypass: exposure.sceneApprovalBypass, confirmSceneApprovalBypass: bypassConfirmed, roomMetrics, deviceRefs: selectedDevices, sceneRefs: selectedScenes }),
+        body: JSON.stringify({ homeId, enabled: exposure.enabled, deviceActionsEnabled: exposure.deviceActionsEnabled, sceneActionsEnabled: exposure.sceneActionsEnabled, sceneApprovalBypass: exposure.sceneApprovalBypass, confirmSceneApprovalBypass: bypassConfirmed, roomMetrics, deviceRefs: selectedDevices, sceneRefs: selectedScenes }),
       });
       const body = await response.json().catch(() => null) as { code?: string; exposure?: Exposure; inventory?: Inventory } | null;
       if (!response.ok || !body?.exposure || !body.inventory) throw new Error(body?.code ?? "AI_AGENT_UNAVAILABLE");
@@ -280,7 +280,7 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
         <div>
           <div className="ai-chip">家庭共享 · 默认关闭</div>
           <h2 id="assistant-exposure-title">AI 助手访问权限</h2>
-          <p>{homeName ? `${homeName} 的授权设置按家庭共享。` : "选择一个真实家庭后管理共享授权。"} 读取权限限定 AI 助手可获取的数据；场景授权按当前版本保存。远程场景执行尚未开放。</p>
+          <p>{homeName ? `${homeName} 的授权设置按家庭共享。` : "选择一个真实家庭后管理共享授权。"} 读取权限限定 AI 助手可获取的数据；设备安全操作和已批准场景的执行权限均默认关闭，并受服务器部署开关保护。</p>
         </div>
         <div className="assistant-exposure-heading-actions">
           <label className="assistant-exposure-master">
@@ -299,6 +299,11 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
         <>
           <div className="assistant-exposure-section">
             <h3>读取权限 <small>已选 {permissionRows.filter(row => row.selected).length} 项</small></h3>
+            <label className="assistant-scene-master">
+              <input type="checkbox" checked={exposure.deviceActionsEnabled} disabled={!homeId || loading || !exposure.enabled || selectedDevices.length === 0} onChange={event => { setExposure(value => ({ ...value, deviceActionsEnabled: event.target.checked })); setSaved(false); }} />
+              <span>允许对已选设备执行安全操作</span>
+            </label>
+            <p className="assistant-exposure-note">默认关闭。开启后仅允许 AI 修改已选设备中经 MIoT 规格确认的读写布尔值、枚举值和有界数值；不会开放任意 Action、门锁或摄像头。</p>
             {unavailableApprovals.length > 0 && <p className="assistant-exposure-note">以下已授权读数当前不可用，保存时会撤销这些授权：{unavailableApprovals.join("、")}</p>}
             {permissionRows.length ? <>
               <div className="assistant-exposure-filters" aria-label="读取权限筛选">
@@ -384,12 +389,12 @@ export default function AssistantExposureSettings({ homeId, homeName }: { homeId
           <section className="assistant-exposure-section assistant-scene-approvals" aria-labelledby="assistant-scene-approvals-title">
             <div className="assistant-scene-heading">
               <div>
-                <h3 id="assistant-scene-approvals-title">场景审批 <small>{approvedSceneCount} 个已选 / {inventory.scenes.length} 个场景</small></h3>
-                <p>可逐项批准手动场景，或确认后允许当前家庭的所有手动场景。此设置只保存授权；远程场景执行目前仍关闭。</p>
+                <h3 id="assistant-scene-approvals-title">场景审批与执行 <small>{approvedSceneCount} 个已选 / {inventory.scenes.length} 个场景</small></h3>
+                <p>可逐项批准手动场景，或确认后允许当前家庭的所有手动场景。开启执行权限后，AI 可响应明确指令激活获批场景；最终执行仍受服务器部署开关保护。</p>
               </div>
               <label className="assistant-scene-master">
                 <input type="checkbox" checked={exposure.sceneActionsEnabled} disabled={!homeId || loading} onChange={event => { setExposure(value => ({ ...value, sceneActionsEnabled: event.target.checked })); setSaved(false); }} />
-                <span>启用场景授权</span>
+                <span>允许激活已批准的手动场景</span>
               </label>
             </div>
             <div className="assistant-scene-bypass">

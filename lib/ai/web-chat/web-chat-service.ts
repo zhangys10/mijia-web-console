@@ -1,4 +1,4 @@
-import { listHomes, type XiaomiHome, type XiaomiSession } from "../../xiaomi-cloud.ts";
+import { listDevices, listHomes, type XiaomiHome, type XiaomiSession } from "../../xiaomi-cloud.ts";
 import type { AgentRunResult } from "./agent-client.ts";
 import { isPreviewEnvironment } from "../config.ts";
 import { isQuotaEnabled } from "../quota/policy.ts";
@@ -9,6 +9,8 @@ import { derivePrincipalId } from "../security/principal.ts";
 import { loadAgentScenes, type AgentSceneRecord } from "../tools/agent-scene-catalog.ts";
 import { isSceneExposed, readAssistantExposure } from "../tools/assistant-exposure.ts";
 import { matchSceneActionIntent } from "../tools/scene-action-intent.ts";
+import { loadDeviceOperationCatalog } from "../tools/device-operation-catalog.ts";
+import { matchDeviceActionIntent } from "../tools/device-action-intent.ts";
 import type { WebAgentClient } from "./agent-client.ts";
 import {
   createConversationHandle,
@@ -66,6 +68,8 @@ type AiWebServiceOptions = {
   randomUuid?: () => string;
   loadScenes?: typeof loadAgentScenes;
   readExposure?: typeof readAssistantExposure;
+  loadDevices?: typeof listDevices;
+  loadDeviceOperations?: typeof loadDeviceOperationCatalog;
 };
 
 const allowedFields = new Set(["conversationId", "homeId", "message", "idempotencyKey"]);
@@ -136,6 +140,8 @@ export class AiWebService {
   private readonly randomUuid: () => string;
   private readonly loadScenes: typeof loadAgentScenes;
   private readonly readExposure: typeof readAssistantExposure;
+  private readonly loadDevices: typeof listDevices;
+  private readonly loadDeviceOperations: typeof loadDeviceOperationCatalog;
 
   constructor(options: AiWebServiceOptions) {
     this.env = options.env;
@@ -147,6 +153,8 @@ export class AiWebService {
     this.randomUuid = options.randomUuid ?? (() => crypto.randomUUID());
     this.loadScenes = options.loadScenes ?? loadAgentScenes;
     this.readExposure = options.readExposure ?? readAssistantExposure;
+    this.loadDevices = options.loadDevices ?? listDevices;
+    this.loadDeviceOperations = options.loadDeviceOperations ?? loadDeviceOperationCatalog;
   }
 
   private async identity(session: XiaomiSession) {
@@ -265,19 +273,32 @@ export class AiWebService {
     const now = this.now();
     const idempotencyKey = input.idempotencyKey ?? `readonly_${id}`;
     let actionGrant: NonNullable<import("../security/automation-token.ts").AutomationTokenPayload["actionGrant"]> | undefined;
-    if (this.env.AI_SCENE_EXECUTION_ENABLED === "true"
-      && (this.env.AI_SCENE_ACTION_AUTHORIZATION_SECRET?.length ?? 0) >= 32
-      && /^(?:执行|运行|启动|run\s|activate\s|execute\s)/iu.test(input.message)) {
-      const scenes: AgentSceneRecord[] = await this.loadScenes({ principalId, homeId: input.homeId, session });
-      const selected = matchSceneActionIntent(input.message, scenes);
-      if (selected) {
-        const exposure = await this.readExposure(input.homeId, undefined, this.env);
-        if (isSceneExposed(exposure, selected)) {
-          const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.message));
-          const messageHash = Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
-          actionGrant = { requestId: id, idempotencyKey, sceneAlias: selected.alias,
+    const actionSecret = this.env.AI_ACTION_AUTHORIZATION_SECRET ?? this.env.AI_SCENE_ACTION_AUTHORIZATION_SECRET;
+    if ((actionSecret?.length ?? 0) >= 32
+      && /^(?:执行|运行|启动|打开|开启|关闭|设置|run\s|activate\s|execute\s|turn\s|set\s)/iu.test(input.message)) {
+      const exposure = await this.readExposure(input.homeId, undefined, this.env);
+      const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.message));
+      const messageHash = Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
+      if (this.env.AI_SCENE_EXECUTION_ENABLED === "true") {
+        const scenes: AgentSceneRecord[] = await this.loadScenes({ principalId, homeId: input.homeId, session });
+        const selected = matchSceneActionIntent(input.message, scenes);
+        if (selected && isSceneExposed(exposure, selected)) {
+          actionGrant = { kind: "scene", requestId: id, idempotencyKey, sceneAlias: selected.alias,
             revision: selected.revision, messageHash, expiresAt: now + 60_000 };
           scopes.push("scene:activate");
+        }
+      }
+      if (!actionGrant && this.env.AI_DEVICE_EXECUTION_ENABLED === "true"
+        && exposure.enabled && exposure.deviceActionsEnabled) {
+        const discovery = await this.loadDevices(session);
+        const catalog = await this.loadDeviceOperations(discovery, input.homeId, exposure.deviceDids);
+        const selected = matchDeviceActionIntent(input.message, catalog);
+        if (selected) {
+          actionGrant = { kind: "device_property", requestId: id, idempotencyKey,
+            deviceId: selected.device.deviceId, operationId: selected.operation.operationId,
+            revision: selected.operation.revision, value: selected.value, messageHash,
+            expiresAt: now + 60_000 };
+          scopes.push("device:operate");
         }
       }
     }

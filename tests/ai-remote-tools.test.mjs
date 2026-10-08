@@ -567,3 +567,62 @@ test("a timed-out scene request remains unknown and its action key never redispa
   await assert.rejects(runRemoteTool(invoke, actionEnv, deps, token), /AI_EXECUTION_STATUS_UNKNOWN/);
   assert.equal(runs, 1);
 });
+
+test("device-property grants revalidate exposure and dispatch exactly once", async () => {
+  const actionEnv = { ...tokenEnv, AI_DEVICE_EXECUTION_ENABLED: "true",
+    AI_ACTION_AUTHORIZATION_SECRET: "test-console-action-ticket-secret-32chars" };
+  const idempotencyKey = "device-action-idempotency-0001";
+  const deviceId = `entity_${"d".repeat(32)}`;
+  const operationId = `op_${"e".repeat(24)}`;
+  const revision = `rev_${"f".repeat(24)}`;
+  const value = 24;
+  const grant = { kind: "device_property", requestId: "req_test_token_tool", idempotencyKey,
+    deviceId, operationId, revision, value, messageHash: "a".repeat(64), expiresAt: Date.now() + 30_000 };
+  const token = await automationToken({ homeId: "home-a", actionGrant: grant });
+  const objects = new Map();
+  const actionLedgerStore = {
+    async get(key) { return objects.get(key) ?? null; },
+    async setJSON(key, stored) { if (objects.has(key)) throw new Error("EEXIST"); objects.set(key, stored); },
+  };
+  const device = { deviceId, name: "空调", room: "客厅", kind: "air-conditioner", online: true,
+    did: "private-did", model: "fake.air-conditioner.v1", operations: [{ operationId, revision,
+      name: "target-temperature", label: "目标温度", valueType: "number", range: { min: 16, max: 30, step: 1 }, siid: 2, piid: 3 }] };
+  let writes = 0;
+  const deps = { ...tokenDeps(), actionLedgerStore,
+    exposureStore: { get: async () => ({ ...exposure, deviceActionsEnabled: true, deviceDids: ["private-did"] }) },
+    discovery: async () => ({ homes: tokenHomes, devices: [], controlObjectResults: [], completeness: "complete", warnings: [], successfulHomeCount: 1, failedHomeCount: 0, requestAttemptCount: 1 }),
+    deviceCatalog: async () => [device],
+    setProperty: async () => { writes++; } };
+  const invoke = tokenInput("set_device_property", { idempotencyKey,
+    arguments: { deviceId, operationId, revision, value } });
+  assert.equal((await runRemoteTool(invoke, actionEnv, deps, token)).status, "success");
+  assert.equal((await runRemoteTool(invoke, actionEnv, deps, token)).status, "success");
+  assert.equal(writes, 1);
+  await assert.rejects(runRemoteTool({ ...invoke, arguments: { deviceId, operationId, revision, value: 25 } },
+    actionEnv, deps, token), /AI_SCOPE_FORBIDDEN/);
+});
+
+test("web chat grants device scope only for one exact selected safe operation", async () => {
+  const actionEnv = { ...tokenEnv, AI_QUOTA_ENABLED: "false", AI_DEVICE_EXECUTION_ENABLED: "true",
+    AI_ACTION_AUTHORIZATION_SECRET: "test-console-action-ticket-secret-32chars" };
+  const device = { deviceId: `entity_${"1".repeat(32)}`, name: "空调", room: "客厅",
+    kind: "air-conditioner", online: true, did: "private-did", model: "fake.model",
+    operations: [{ operationId: `op_${"2".repeat(24)}`, revision: `rev_${"3".repeat(24)}`,
+      name: "target-temperature", label: "目标温度", valueType: "number",
+      range: { min: 16, max: 30, step: 1 }, siid: 2, piid: 3 }] };
+  let captured;
+  const service = new AiWebService({ env: actionEnv,
+    agent: { async run(input) { captured = input; return { requestId: input.requestId,
+      conversationId: input.conversationId, message: "accepted", intent: "set_device_property" }; } },
+    loadHomes: async () => tokenHomes,
+    readExposure: async () => ({ ...exposure, deviceActionsEnabled: true, deviceDids: ["private-did"] }),
+    loadDevices: async () => ({ homes: tokenHomes, devices: [], controlObjectResults: [], completeness: "complete", warnings: [], successfulHomeCount: 1, failedHomeCount: 0, requestAttemptCount: 1 }),
+    loadDeviceOperations: async () => [device] });
+  await service.chat(session, { homeId: "home-a", message: "设置客厅空调目标温度为24度",
+    idempotencyKey: "device-web-idempotency-0001" });
+  assert.deepEqual(captured.scopes, ["ai:chat", "device:operate"]);
+  const authorization = await runRemoteTool(tokenInput("authorize", { requestId: captured.requestId }),
+    actionEnv, tokenDeps(), captured.automationToken);
+  assert.deepEqual(authorization.scopes, ["ai:chat", "device:operate"]);
+  assert.equal(authorization.actionIdempotencyKey, "device-web-idempotency-0001");
+});

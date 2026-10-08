@@ -1,7 +1,7 @@
 import type { XiaomiSession } from "../../xiaomi-cloud.ts";
 import { sealWithSecret, unsealWithSecret } from "../../xiaomi-cloud.ts";
 
-export const AGENT_SCOPES = ["ai:chat", "scene:activate"] as const;
+export const AGENT_SCOPES = ["ai:chat", "scene:activate", "device:operate"] as const;
 export type AgentScope = (typeof AGENT_SCOPES)[number];
 
 export type AgentBindingPayload = {

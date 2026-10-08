@@ -39,8 +39,8 @@ type ChatResponse = {
   requestId: string;
   conversationId: string;
   message: string;
-  intent: "none" | "list_scenes" | "get_home_status" | "get_device_status" | "activate_scene";
-  tool?: { name: "list_scenes" | "get_home_status" | "get_device_status" | "activate_scene"; status: "success" | "partial_success"; sceneName?: string };
+  intent: "none" | "list_scenes" | "get_home_status" | "get_device_status" | "activate_scene" | "set_device_property";
+  tool?: { name: "list_scenes" | "get_home_status" | "get_device_status" | "activate_scene" | "set_device_property"; status: "success" | "partial_success"; sceneName?: string };
   scenes?: Array<{ name: string; description: string; actionCount: number }>;
   homeStatus?: AssistantHomeStatus;
   deviceStatus?: AssistantDeviceStatus;
@@ -69,6 +69,11 @@ function assistantErrorText(code: string, fallback: string) {
     case "AI_INVALID_REQUEST": return "请求无效，请调整输入后重试";
     case "AI_HOME_FORBIDDEN": return "当前账号无权访问所选家庭";
     case "AI_SCENE_EXECUTION_DISABLED": return "场景执行尚未开放，AI 助手目前仅支持查询场景";
+    case "AI_DEVICE_EXECUTION_DISABLED": return "设备操作尚未开放，AI 助手目前仅支持查询状态";
+    case "AI_DEVICE_NOT_EXPOSED": return "该设备没有获得 AI 操作权限";
+    case "AI_DEVICE_OFFLINE": return "设备当前离线，未发送操作";
+    case "AI_DEVICE_REVISION_CHANGED": return "设备能力已变化，请刷新授权后重试";
+    case "AI_EXECUTION_STATUS_UNKNOWN": return "操作结果不确定，请检查设备状态；不要自动重试";
     case "AI_PREVIEW_READ_ONLY": return "预览模式为只读，不会控制真实设备";
     case "AI_QUOTA_STORE_UNAVAILABLE": return "配额服务暂时不可用，请稍后重试";
     case "AI_QUOTA_CONFIG_INVALID": return "配额配置无效，请联系管理员";

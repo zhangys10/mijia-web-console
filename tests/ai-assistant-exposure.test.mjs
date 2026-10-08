@@ -69,6 +69,7 @@ test("home assistant exposure defaults to deny and uses a strongly consistent re
   });
 
   assert.equal(exposure.enabled, false);
+  assert.equal(exposure.deviceActionsEnabled, false);
   assert.deepEqual(exposure.roomMetrics, {});
   assert.deepEqual(exposure.deviceDids, []);
   assert.deepEqual(observed.options, { type: "json", consistency: "strong" });
@@ -142,6 +143,7 @@ test("home exposure update resolves only current-home device references and stor
   }, "usr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", { store, homes, devices, environment, deviceStatus });
 
   assert.equal(result.exposure.enabled, true);
+  assert.equal(result.exposure.deviceActionsEnabled, false);
   assert.equal(result.exposure.deviceDids[0], did);
   assert.equal(result.inventory.devices[0].enabled, true);
   assert.equal(JSON.stringify(result.inventory).includes(did), false);
