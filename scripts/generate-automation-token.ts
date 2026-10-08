@@ -162,7 +162,6 @@ try {
   process.exit(1);
 }
 
-const now = Date.now();
 const principalId = await computePrincipalId(session.region || "cn", session.userId);
 let actionGrant: LocalProdSceneGrant | LocalProdDeviceGrant | undefined;
 let homeId = parsed.home?.trim();
@@ -193,7 +192,6 @@ if (parsed.actionMessage) {
       requestId: parsed.actionRequestId!,
       idempotencyKey: parsed.actionIdempotencyKey!,
       scenes,
-      now,
     });
   } catch {
     const discovery = await listDevices(session);
@@ -208,7 +206,6 @@ if (parsed.actionMessage) {
         requestId: parsed.actionRequestId!,
         idempotencyKey: parsed.actionIdempotencyKey!,
         devices,
-        now,
       });
     } catch {
       console.error("The action message must exactly identify one approved manual scene or one safe device operation.");
@@ -216,6 +213,7 @@ if (parsed.actionMessage) {
     }
   }
 }
+const issuedAt = Date.now();
 const payload = {
   version: 1 as const,
   purpose: "ai-home-automation" as const,
@@ -225,8 +223,8 @@ const payload = {
   region: session.region || "cn",
   ...(homeId ? { homeId } : {}),
   ...(actionGrant ? { actionGrant } : {}),
-  issuedAt: now,
-  expiresAt: actionGrant ? now + 5 * 60_000 : now + days * 86_400_000,
+  issuedAt,
+  expiresAt: actionGrant ? issuedAt + 5 * 60_000 : issuedAt + days * 86_400_000,
 };
 
 const token = await sealAutomationToken(payload, {
