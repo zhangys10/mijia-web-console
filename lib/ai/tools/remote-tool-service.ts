@@ -458,6 +458,10 @@ async function runUserTokenTool(
     const discovery = await (dependencies.discovery ?? listDevices)(payload.xiaomiSession);
     const catalog = await (dependencies.deviceCatalog ?? loadDeviceOperationCatalog)(discovery, homeId, exposure.deviceDids);
     catalog.sort((left, right) => Number(right.deviceId === grant?.deviceId) - Number(left.deviceId === grant?.deviceId));
+    if (grant?.kind === "device_property") {
+      const grantedDevice = catalog.find(device => device.deviceId === grant.deviceId);
+      grantedDevice?.operations.sort((left, right) => Number(right.operationId === grant.operationId) - Number(left.operationId === grant.operationId));
+    }
     return { devices: publicDeviceCatalog(catalog) };
   }
   if (input.tool === "get_home_status") {

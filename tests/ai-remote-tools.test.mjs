@@ -585,7 +585,8 @@ test("device-property grants revalidate exposure and dispatch exactly once", asy
     async setJSON(key, stored) { if (objects.has(key)) throw new Error("EEXIST"); objects.set(key, stored); },
   };
   const device = { deviceId, name: "空调", room: "客厅", kind: "air-conditioner", online: true,
-    did: "private-did", model: "fake.air-conditioner.v1", operations: [{ operationId, revision,
+    did: "private-did", model: "fake.air-conditioner.v1", operations: [{ operationId: `op_${"a".repeat(24)}`, revision: `rev_${"b".repeat(24)}`,
+      name: "mode", label: "模式", valueType: "number", range: { min: 0, max: 3, step: 1 }, siid: 2, piid: 4 }, { operationId, revision,
       name: "target-temperature", label: "目标温度", valueType: "number", range: { min: 16, max: 30, step: 1 }, siid: 2, piid: 3 }] };
   let writes = 0;
   const deps = { ...tokenDeps(), actionLedgerStore,
@@ -593,6 +594,8 @@ test("device-property grants revalidate exposure and dispatch exactly once", asy
     discovery: async () => ({ homes: tokenHomes, devices: [], controlObjectResults: [], completeness: "complete", warnings: [], successfulHomeCount: 1, failedHomeCount: 0, requestAttemptCount: 1 }),
     deviceCatalog: async () => [device],
     setProperty: async () => { writes++; } };
+  const listed = await runRemoteTool(tokenInput("list_device_controls"), actionEnv, deps, token);
+  assert.equal(listed.devices[0].operations[0].operationId, operationId);
   const invoke = tokenInput("set_device_property", { idempotencyKey,
     arguments: { deviceId, operationId, revision, value } });
   assert.equal((await runRemoteTool(invoke, actionEnv, deps, token)).status, "success");
