@@ -15,8 +15,9 @@ export type AutomationTokenPayload = {
     sceneAlias?: string;
     deviceId?: string;
     operationId?: string;
-    revision: string;
+    revision?: string;
     value?: boolean | number | string;
+    operations?: Array<{ operationId: string; revision: string; value: boolean | number | string }>;
     messageHash: string;
     expiresAt: number;
   };

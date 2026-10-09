@@ -1,6 +1,6 @@
 import type { AgentSceneRecord } from "./agent-scene-catalog.ts";
 import type { ControllableDevice } from "./device-operation-catalog.ts";
-import { matchDeviceActionIntent } from "./device-action-intent.ts";
+import { matchDeviceActionBatchIntent } from "./device-action-intent.ts";
 import { matchSceneActionIntent } from "./scene-action-intent.ts";
 
 export type LocalProdSceneGrant = {
@@ -18,9 +18,7 @@ export type LocalProdDeviceGrant = {
   requestId: string;
   idempotencyKey: string;
   deviceId: string;
-  operationId: string;
-  revision: string;
-  value: boolean | number | string;
+  operations: Array<{ operationId: string; revision: string; value: boolean | number | string }>;
   messageHash: string;
   expiresAt: number;
 };
@@ -67,16 +65,14 @@ export async function createLocalProdDeviceGrant(input: {
 }): Promise<LocalProdDeviceGrant> {
   const message = input.message.trim();
   validateRequest(message, input.requestId, input.idempotencyKey);
-  const selected = matchDeviceActionIntent(message, input.devices);
+  const selected = matchDeviceActionBatchIntent(message, input.devices);
   if (!selected) throw new Error("DEVICE_ACTION_MUST_MATCH_ONE_EXACT_SAFE_OPERATION");
   return {
     kind: "device_property",
     requestId: input.requestId,
     idempotencyKey: input.idempotencyKey,
     deviceId: selected.device.deviceId,
-    operationId: selected.operation.operationId,
-    revision: selected.operation.revision,
-    value: selected.value,
+    operations: selected.operations.map(({ operation, value }) => ({ operationId: operation.operationId, revision: operation.revision, value })),
     messageHash: await messageHash(message),
     expiresAt: (input.now ?? Date.now()) + 60_000,
   };

@@ -607,6 +607,47 @@ test("device-property grants revalidate exposure and dispatch exactly once", asy
     actionEnv, deps, token), /AI_SCOPE_FORBIDDEN/);
 });
 
+test("same-device property batch is dispatched once and bound as a whole", async () => {
+  const actionEnv = { ...tokenEnv, AI_DEVICE_EXECUTION_ENABLED: "true",
+    AI_ACTION_AUTHORIZATION_SECRET: "test-console-action-ticket-secret-32chars" };
+  const idempotencyKey = "device-batch-idempotency-0001";
+  const deviceId = `entity_${"7".repeat(32)}`;
+  const operations = [
+    { operationId: `op_${"8".repeat(24)}`, revision: `rev_${"9".repeat(24)}`, value: true },
+    { operationId: `op_${"a".repeat(24)}`, revision: `rev_${"b".repeat(24)}`, value: 2 },
+  ];
+  const grant = { kind: "device_property", requestId: "req_test_token_tool", idempotencyKey,
+    deviceId, operations, messageHash: "c".repeat(64), expiresAt: Date.now() + 30_000 };
+  const token = await automationToken({ homeId: "home-a", actionGrant: grant });
+  const objects = new Map();
+  const actionLedgerStore = {
+    async get(key) { return objects.get(key) ?? null; },
+    async setJSON(key, stored) { if (objects.has(key)) throw new Error("EEXIST"); objects.set(key, stored); },
+  };
+  const device = { deviceId, name: "客厅灯带", room: "客厅", kind: "light", online: true,
+    did: "private-did", model: "fake.light", operations: [
+      { ...operations[0], name: "on", label: "开关", valueType: "boolean", siid: 2, piid: 1 },
+      { ...operations[1], name: "mode", label: "工作模式", valueType: "enum",
+        choices: [{ value: 2, label: "会客" }], siid: 3, piid: 2 },
+    ] };
+  let writes = 0;
+  let submitted;
+  const deps = { ...tokenDeps(), actionLedgerStore,
+    exposureStore: { get: async () => ({ ...exposure, deviceActionsEnabled: true, deviceDids: ["private-did"] }) },
+    discovery: async () => ({ homes: tokenHomes, devices: [], controlObjectResults: [], completeness: "complete", warnings: [], successfulHomeCount: 1, failedHomeCount: 0, requestAttemptCount: 1 }),
+    deviceCatalog: async () => [device],
+    setProperties: async (_session, _device, changes) => { writes++; submitted = changes; } };
+  const invoke = tokenInput("set_device_property", { idempotencyKey,
+    arguments: { deviceId, operations } });
+  const result = await runRemoteTool(invoke, actionEnv, deps, token);
+  assert.equal(result.message, "已为你设置客厅灯带。");
+  assert.deepEqual(submitted.map(item => [item.operation.operationId, item.value]), operations.map(item => [item.operationId, item.value]));
+  await runRemoteTool(invoke, actionEnv, deps, token);
+  assert.equal(writes, 1);
+  await assert.rejects(runRemoteTool({ ...invoke, arguments: { deviceId, operations: [...operations].reverse() } },
+    actionEnv, deps, token), /AI_SCOPE_FORBIDDEN/);
+});
+
 test("a Xiaomi property error after dispatch is unknown and never redispatched", async () => {
   const actionEnv = { ...tokenEnv, AI_DEVICE_EXECUTION_ENABLED: "true",
     AI_ACTION_AUTHORIZATION_SECRET: "test-console-action-ticket-secret-32chars" };

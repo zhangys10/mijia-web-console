@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { matchDeviceActionIntent } from "../lib/ai/tools/device-action-intent.ts";
+import { matchDeviceActionBatchIntent, matchDeviceActionIntent } from "../lib/ai/tools/device-action-intent.ts";
 import { loadDeviceOperationCatalog, validateDeviceOperationValue } from "../lib/ai/tools/device-operation-catalog.ts";
 import { createLocalProdDeviceGrant } from "../lib/ai/tools/local-prod-scene-grant.ts";
 
@@ -27,6 +27,17 @@ const power = {
   piid: 1,
 };
 
+const mode = {
+  operationId: `op_${"1".repeat(24)}`,
+  revision: `rev_${"2".repeat(24)}`,
+  name: "mode",
+  label: "工作模式",
+  valueType: "enum",
+  choices: [{ value: 2, label: "会客" }],
+  siid: 3,
+  piid: 2,
+};
+
 function device(overrides = {}) {
   return {
     deviceId: `entity_${"e".repeat(32)}`,
@@ -36,7 +47,7 @@ function device(overrides = {}) {
     online: true,
     did: "private-did",
     model: "fake.air-conditioner.v1",
-    operations: [power, operation],
+    operations: [power, operation, mode],
     ...overrides,
   };
 }
@@ -47,6 +58,15 @@ test("device intent accepts one exact current safe-property command", () => {
   assert.equal(selected?.operation.operationId, operation.operationId);
   assert.equal(selected?.value, 24);
   assert.equal(matchDeviceActionIntent("打开空调", [device()])?.value, true);
+});
+
+test("device intent accepts a bounded same-device power and mode batch", () => {
+  const selected = matchDeviceActionBatchIntent("打开并设置客厅空调会客模式", [device()]);
+  assert.equal(selected?.device.deviceId, device().deviceId);
+  assert.deepEqual(selected?.operations.map(item => [item.operation.operationId, item.value]), [
+    [power.operationId, true],
+    [mode.operationId, 2],
+  ]);
 });
 
 test("device intent rejects ambiguity, conditions, questions, and out-of-range values", () => {
@@ -74,8 +94,7 @@ test("local production token generation binds the exact device operation", async
 
   assert.equal(grant.kind, "device_property");
   assert.equal(grant.deviceId, device().deviceId);
-  assert.equal(grant.operationId, power.operationId);
-  assert.equal(grant.value, true);
+  assert.deepEqual(grant.operations, [{ operationId: power.operationId, revision: power.revision, value: true }]);
   assert.equal(grant.expiresAt, 61_000);
   assert.match(grant.messageHash, /^[a-f0-9]{64}$/);
 });

@@ -9,7 +9,7 @@ import { loadAgentScenes, sceneSummaries, type AgentSceneRecord } from "./agent-
 import { runManualScene } from "../../xiaomi-scenes.ts";
 import { AssistantExposureError, isSceneExposed, readAssistantExposure, type AssistantExposureStore } from "./assistant-exposure.ts";
 import { claimAction, claimSceneAction, recordActionOutcome, recordSceneActionOutcome, type SceneActionLedgerStore } from "./scene-action-ledger.ts";
-import { loadDeviceOperationCatalog, publicDeviceCatalog, setDeviceProperty, validateDeviceOperationValue, type DeviceOperation } from "./device-operation-catalog.ts";
+import { loadDeviceOperationCatalog, publicDeviceCatalog, setDeviceProperties, setDeviceProperty, validateDeviceOperationValue, type DeviceOperation } from "./device-operation-catalog.ts";
 import type { ScenePropertyValue } from "../../xiaomi-scene-properties.ts";
 
 type Environment = Record<string, string | undefined>;
@@ -23,6 +23,7 @@ type Dependencies = {
   actionLedgerStore?: SceneActionLedgerStore;
   discovery?: typeof listDevices;
   setProperty?: typeof setDeviceProperty;
+  setProperties?: typeof setDeviceProperties;
   deviceCatalog?: typeof loadDeviceOperationCatalog;
 };
 
@@ -171,28 +172,35 @@ async function executeApprovedDeviceProperty(input: {
   const discovery = await (input.dependencies.discovery ?? listDevices)(input.session);
   const catalog = await (input.dependencies.deviceCatalog ?? loadDeviceOperationCatalog)(discovery, input.homeId, exposure.deviceDids);
   const device = catalog.find(item => item.deviceId === input.grant.deviceId);
-  const operation = device?.operations.find(item => item.operationId === input.grant.operationId);
-  if (!device || !operation) throw new RemoteToolError("AI_DEVICE_NOT_EXPOSED", 403);
+  const granted = input.grant.operations ?? (input.grant.operationId && input.grant.revision && input.grant.value !== undefined
+    ? [{ operationId: input.grant.operationId, revision: input.grant.revision, value: input.grant.value }]
+    : []);
+  if (!device || !granted.length || granted.length > 4) throw new RemoteToolError("AI_DEVICE_NOT_EXPOSED", 403);
+  const changes = granted.map(item => ({ item, operation: device.operations.find(operation => operation.operationId === item.operationId) }));
+  if (changes.some(change => !change.operation)) throw new RemoteToolError("AI_DEVICE_NOT_EXPOSED", 403);
   if (!device.online) throw new RemoteToolError("AI_DEVICE_OFFLINE", 409);
-  if (operation.revision !== input.grant.revision) throw new RemoteToolError("AI_DEVICE_REVISION_CHANGED", 409);
-  if (!validateDeviceOperationValue(operation, input.grant.value)) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
+  if (changes.some(change => change.operation!.revision !== change.item.revision)) throw new RemoteToolError("AI_DEVICE_REVISION_CHANGED", 409);
+  if (changes.some(change => !validateDeviceOperationValue(change.operation!, change.item.value))) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
+  const canonical = changes.map(change => ({ operationId: change.operation!.operationId, revision: change.operation!.revision, value: change.item.value }));
   const requestHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({
     kind: "device_property", messageHash: input.grant.messageHash, deviceId: device.deviceId,
-    operationId: operation.operationId, revision: operation.revision, value: input.grant.value,
+    operations: canonical,
   }))).then(bytes => Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join(""));
   const claim = await claimAction({ principalId: input.principalId, homeId: input.homeId,
-    idempotencyKey: input.grant.idempotencyKey, requestHash, actionRevision: operation.revision }, input.dependencies.actionLedgerStore);
+    idempotencyKey: input.grant.idempotencyKey, requestHash, actionRevision: canonical.map(item => item.revision).join(":"), }, input.dependencies.actionLedgerStore);
   if (claim.kind === "conflict") throw new RemoteToolError("AI_IDEMPOTENCY_CONFLICT", 409);
   if (claim.kind === "unknown") throw new RemoteToolError("AI_EXECUTION_STATUS_UNKNOWN", 409);
   if (claim.kind === "replay") {
     if (claim.outcome.status === "outcome_unknown") throw new RemoteToolError("AI_EXECUTION_STATUS_UNKNOWN", 409);
     if (claim.outcome.status === "failed") throw new RemoteToolError("AI_DEVICE_OPERATION_FAILED", 502);
-    return { status: "success", message: submittedDeviceMessage(device.name, operation, input.grant.value) };
+    return { status: "success", message: submittedDeviceBatchMessage(device.name, changes.map(change => ({ operation: change.operation!, value: change.item.value }))) };
   }
   try {
-    await (input.dependencies.setProperty ?? setDeviceProperty)(input.session, device, operation, input.grant.value);
+    if (input.dependencies.setProperties) await input.dependencies.setProperties(input.session, device, changes.map(change => ({ operation: change.operation!, value: change.item.value })));
+    else if (changes.length === 1 && input.dependencies.setProperty) await input.dependencies.setProperty(input.session, device, changes[0].operation!, changes[0].item.value);
+    else await setDeviceProperties(input.session, device, changes.map(change => ({ operation: change.operation!, value: change.item.value })));
     await recordActionOutcome(claim, "success", input.dependencies.actionLedgerStore);
-    return { status: "success", message: submittedDeviceMessage(device.name, operation, input.grant.value) };
+    return { status: "success", message: submittedDeviceBatchMessage(device.name, changes.map(change => ({ operation: change.operation!, value: change.item.value }))) };
   } catch {
     // Once the property request has been dispatched, even a Xiaomi item code is
     // not reliable evidence of physical failure: some devices apply the change
@@ -201,6 +209,11 @@ async function executeApprovedDeviceProperty(input: {
     try { await recordActionOutcome(claim, "outcome_unknown", input.dependencies.actionLedgerStore); } catch { /* unknown remains unknown */ }
     throw new RemoteToolError("AI_EXECUTION_STATUS_UNKNOWN", 409);
   }
+}
+
+function submittedDeviceBatchMessage(name: string, changes: readonly { operation: DeviceOperation; value: ScenePropertyValue }[]) {
+  if (changes.length === 1) return submittedDeviceMessage(name, changes[0].operation, changes[0].value);
+  return `已为你设置${name}。`;
 }
 
 function submittedDeviceMessage(name: string, operation: DeviceOperation, value: ScenePropertyValue) {
@@ -429,18 +442,23 @@ async function runUserTokenTool(
     && typeof grant.expiresAt === "number" && grant.expiresAt > Date.now()
     && grant.expiresAt <= payload.expiresAt
     && typeof grant.messageHash === "string" && /^[a-f0-9]{64}$/.test(grant.messageHash)
-    && typeof grant.revision === "string" && /^rev_[a-f0-9]{24}$/.test(grant.revision)
     && typeof grant.idempotencyKey === "string"
     && grant.idempotencyKey.length >= 16 && grant.idempotencyKey.length <= 128
     && payload.homeId === homeId;
   const validSceneGrant = validGrant && (grant?.kind === undefined || grant.kind === "scene")
     && env.AI_SCENE_EXECUTION_ENABLED === "true"
-    && typeof grant?.sceneAlias === "string" && /^scene_[a-f0-9]{16}$/.test(grant.sceneAlias);
+    && typeof grant?.sceneAlias === "string" && /^scene_[a-f0-9]{16}$/.test(grant.sceneAlias)
+    && typeof grant.revision === "string" && /^rev_[a-f0-9]{24}$/.test(grant.revision);
+  const grantOperations = grant?.operations ?? (grant?.operationId && grant.revision && grant.value !== undefined
+    ? [{ operationId: grant.operationId, revision: grant.revision, value: grant.value }]
+    : []);
   const validDeviceGrant = validGrant && grant?.kind === "device_property"
     && env.AI_DEVICE_EXECUTION_ENABLED === "true"
     && typeof grant.deviceId === "string" && /^entity_[a-f0-9]{32}$/.test(grant.deviceId)
-    && typeof grant.operationId === "string" && /^op_[a-f0-9]{24}$/.test(grant.operationId)
-    && ["boolean", "number", "string"].includes(typeof grant.value);
+    && grantOperations.length >= 1 && grantOperations.length <= 4
+    && grantOperations.every(item => /^op_[a-f0-9]{24}$/.test(item.operationId)
+      && /^rev_[a-f0-9]{24}$/.test(item.revision)
+      && ["boolean", "number", "string"].includes(typeof item.value));
   if (input.tool === "authorize" || input.tool === "list_scenes") {
     if (Object.keys(args).length) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
     // The Makers adapter compares this server-derived context with its inbound
@@ -467,7 +485,8 @@ async function runUserTokenTool(
     catalog.sort((left, right) => Number(right.deviceId === grant?.deviceId) - Number(left.deviceId === grant?.deviceId));
     if (grant?.kind === "device_property") {
       const grantedDevice = catalog.find(device => device.deviceId === grant.deviceId);
-      grantedDevice?.operations.sort((left, right) => Number(right.operationId === grant.operationId) - Number(left.operationId === grant.operationId));
+      const order = new Map(grantOperations.map((item, index) => [item.operationId, index]));
+      grantedDevice?.operations.sort((left, right) => (order.get(left.operationId) ?? 99) - (order.get(right.operationId) ?? 99));
     }
     return { devices: publicDeviceCatalog(catalog) };
   }
@@ -504,10 +523,14 @@ async function runUserTokenTool(
       idempotencyKey: grant.idempotencyKey, requestHash, actionAuthorization, env, dependencies });
   }
   if (input.tool === "set_device_property") {
+    const requestedOperations = Array.isArray(toolArgs.operations) ? toolArgs.operations : null;
+    const legacyMatch = Object.keys(toolArgs).length === 4
+      && toolArgs.deviceId === grant?.deviceId && toolArgs.operationId === grant?.operationId
+      && toolArgs.revision === grant?.revision && toolArgs.value === grant?.value;
+    const batchMatch = Object.keys(toolArgs).length === 2 && toolArgs.deviceId === grant?.deviceId
+      && requestedOperations !== null && JSON.stringify(requestedOperations) === JSON.stringify(grantOperations);
     if (!validDeviceGrant || !grant || input.idempotencyKey !== grant.idempotencyKey
-      || Object.keys(toolArgs).length !== 4
-      || toolArgs.deviceId !== grant.deviceId || toolArgs.operationId !== grant.operationId
-      || toolArgs.revision !== grant.revision || toolArgs.value !== grant.value) {
+      || (!legacyMatch && !batchMatch)) {
       throw new RemoteToolError("AI_SCOPE_FORBIDDEN", 403);
     }
     return executeApprovedDeviceProperty({ principalId, homeId, session: payload.xiaomiSession, grant, env, dependencies });

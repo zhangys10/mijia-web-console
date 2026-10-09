@@ -112,15 +112,22 @@ export function publicDeviceCatalog(devices: readonly ControllableDevice[]) {
 }
 
 export function validateDeviceOperationValue(operation: DeviceOperation, value: unknown): value is ScenePropertyValue {
+  const enumFormat = operation.choices?.length
+    ? typeof operation.choices[0].value === "boolean" ? "bool" : typeof operation.choices[0].value === "number" ? "float" : "string"
+    : "string";
   return (typeof value === "boolean" || typeof value === "number" || typeof value === "string")
     && isScenePropertyValueSupported({
-      name: operation.name, format: operation.valueType === "boolean" ? "bool" : operation.valueType === "number" ? "float" : "string",
+      name: operation.name, format: operation.valueType === "boolean" ? "bool" : operation.valueType === "number" ? "float" : enumFormat,
       readable: true, writable: true, unit: operation.unit, choices: operation.choices, range: operation.range,
     }, value);
 }
 
 export async function setDeviceProperty(session: XiaomiSession, device: ControllableDevice, operation: DeviceOperation, value: ScenePropertyValue) {
-  const response = await xiaomiRequest(session, "/app/miotspec/prop/set", { params: [{ did: device.did, siid: operation.siid, piid: operation.piid, value }] });
+  return setDeviceProperties(session, device, [{ operation, value }]);
+}
+
+export async function setDeviceProperties(session: XiaomiSession, device: ControllableDevice, changes: readonly { operation: DeviceOperation; value: ScenePropertyValue }[]) {
+  const response = await xiaomiRequest(session, "/app/miotspec/prop/set", { params: changes.map(({ operation, value }) => ({ did: device.did, siid: operation.siid, piid: operation.piid, value })) });
   const outcome = interpretPropertyWriteResponse(response);
   if (outcome.status === "outcome_unknown") throw new Error(`XIAOMI_PROPERTY_CODE_${outcome.result.code}`);
 }
