@@ -442,9 +442,7 @@ async function runUserTokenTool(
     && typeof proposal?.expiresAt === "number" && proposal.expiresAt > Date.now() && proposal.expiresAt <= payload.expiresAt
     && typeof proposal?.messageHash === "string" && /^[a-f0-9]{64}$/.test(proposal.messageHash)
     && typeof proposal?.message === "string" && proposal.message.length <= 500
-    && payload.homeId === homeId
-    && !/(?:不要|别|不许|如果|假如|明天|稍后|以后|请勿|下周|后天|don't|do not|if\b|tomorrow|later|next\s+week|[?？“”"「」])/iu.test(proposal.message)
-    && /(?:打开|开启|关闭|关掉|执行|运行|启动|设置|调到|设为|切换|turn\s|switch\s|set\s|activate\s|run\s)/iu.test(proposal.message);
+    && payload.homeId === homeId;
   const validProposal = validProposalBinding && proposal?.idempotencyKey === input.idempotencyKey;
   if (input.tool === "propose_scene_action" || input.tool === "propose_device_action") {
     if (!validProposal || !proposal) throw new RemoteToolError("AI_SCOPE_FORBIDDEN", 403);
