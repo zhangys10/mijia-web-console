@@ -192,12 +192,11 @@ async function executeApprovedDeviceProperty(input: {
     await (input.dependencies.setProperty ?? setDeviceProperty)(input.session, device, operation, input.grant.value);
     await recordActionOutcome(claim, "success", input.dependencies.actionLedgerStore);
     return { status: "success", message: `${device.name} 的操作请求已提交，设备状态尚未回读。` };
-  } catch (error) {
-    if (error instanceof Error && /^XIAOMI_PROPERTY_CODE_/.test(error.message)) {
-      try { await recordActionOutcome(claim, "failed", input.dependencies.actionLedgerStore); }
-      catch { throw new RemoteToolError("AI_EXECUTION_STATUS_UNKNOWN", 409); }
-      throw new RemoteToolError("AI_DEVICE_OPERATION_FAILED", 502);
-    }
+  } catch {
+    // Once the property request has been dispatched, even a Xiaomi item code is
+    // not reliable evidence of physical failure: some devices apply the change
+    // while returning a non-zero code. Without a readback, preserve the only safe
+    // conclusion and prevent automatic replay.
     try { await recordActionOutcome(claim, "outcome_unknown", input.dependencies.actionLedgerStore); } catch { /* unknown remains unknown */ }
     throw new RemoteToolError("AI_EXECUTION_STATUS_UNKNOWN", 409);
   }
@@ -458,6 +457,10 @@ async function runUserTokenTool(
     const discovery = await (dependencies.discovery ?? listDevices)(payload.xiaomiSession);
     const catalog = await (dependencies.deviceCatalog ?? loadDeviceOperationCatalog)(discovery, homeId, exposure.deviceDids);
     catalog.sort((left, right) => Number(right.deviceId === grant?.deviceId) - Number(left.deviceId === grant?.deviceId));
+    if (grant?.kind === "device_property") {
+      const grantedDevice = catalog.find(device => device.deviceId === grant.deviceId);
+      grantedDevice?.operations.sort((left, right) => Number(right.operationId === grant.operationId) - Number(left.operationId === grant.operationId));
+    }
     return { devices: publicDeviceCatalog(catalog) };
   }
   if (input.tool === "get_home_status") {

@@ -291,6 +291,7 @@ export default function Home({ initialTab = "首页" }: { initialTab?: string } 
       const response=await fetch("/api/xiaomi/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       const result=await response.json();
       if(!response.ok||!result.ok)throw new Error(result.error);
+      if(result.status==="outcome_unknown"){message(`${device.name}：操作请求已发送，执行结果待确认，请刷新状态核实`);return}
       setSettingValues(values=>({...values,[setting.key]:value}));
       if(setting.key==="power"||setting.isPower){setDevices(list=>list.map(item=>item.id===device.id?{...item,on:Boolean(value),status:value?"已开启":"已关闭"}:item));setSelectedDevice(current=>current?.id===device.id?{...current,on:Boolean(value),status:value?"已开启":"已关闭"}:current)}
       message(`${device.name}：${setting.label}${setting.type==="action"?"已执行":"设置成功"}`);
@@ -312,6 +313,7 @@ export default function Home({ initialTab = "首页" }: { initialTab?: string } 
       const response=await fetch("/api/xiaomi/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...item.powerControl,value:false})});
       const result=await response.json();
       if(!response.ok||!result.ok)throw new Error(result.error);
+      if(result.status==="outcome_unknown"){message(`${item.name}：关闭请求已发送，执行结果待确认，请刷新状态核实`);return}
       setDevices(list=>list.map(device=>item.stateDeviceIds.includes(device.id)?{...device,on:false,status:"已关闭"}:device));
       message(`${item.name} 已关闭`);
     }catch(error){message(`关闭失败：${friendlyError(error instanceof Error?error.message:"UNKNOWN_ERROR")}`)}

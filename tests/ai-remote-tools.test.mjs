@@ -585,7 +585,8 @@ test("device-property grants revalidate exposure and dispatch exactly once", asy
     async setJSON(key, stored) { if (objects.has(key)) throw new Error("EEXIST"); objects.set(key, stored); },
   };
   const device = { deviceId, name: "空调", room: "客厅", kind: "air-conditioner", online: true,
-    did: "private-did", model: "fake.air-conditioner.v1", operations: [{ operationId, revision,
+    did: "private-did", model: "fake.air-conditioner.v1", operations: [{ operationId: `op_${"a".repeat(24)}`, revision: `rev_${"b".repeat(24)}`,
+      name: "mode", label: "模式", valueType: "number", range: { min: 0, max: 3, step: 1 }, siid: 2, piid: 4 }, { operationId, revision,
       name: "target-temperature", label: "目标温度", valueType: "number", range: { min: 16, max: 30, step: 1 }, siid: 2, piid: 3 }] };
   let writes = 0;
   const deps = { ...tokenDeps(), actionLedgerStore,
@@ -593,6 +594,8 @@ test("device-property grants revalidate exposure and dispatch exactly once", asy
     discovery: async () => ({ homes: tokenHomes, devices: [], controlObjectResults: [], completeness: "complete", warnings: [], successfulHomeCount: 1, failedHomeCount: 0, requestAttemptCount: 1 }),
     deviceCatalog: async () => [device],
     setProperty: async () => { writes++; } };
+  const listed = await runRemoteTool(tokenInput("list_device_controls"), actionEnv, deps, token);
+  assert.equal(listed.devices[0].operations[0].operationId, operationId);
   const invoke = tokenInput("set_device_property", { idempotencyKey,
     arguments: { deviceId, operationId, revision, value } });
   assert.equal((await runRemoteTool(invoke, actionEnv, deps, token)).status, "success");
@@ -600,6 +603,37 @@ test("device-property grants revalidate exposure and dispatch exactly once", asy
   assert.equal(writes, 1);
   await assert.rejects(runRemoteTool({ ...invoke, arguments: { deviceId, operationId, revision, value: 25 } },
     actionEnv, deps, token), /AI_SCOPE_FORBIDDEN/);
+});
+
+test("a Xiaomi property error after dispatch is unknown and never redispatched", async () => {
+  const actionEnv = { ...tokenEnv, AI_DEVICE_EXECUTION_ENABLED: "true",
+    AI_ACTION_AUTHORIZATION_SECRET: "test-console-action-ticket-secret-32chars" };
+  const idempotencyKey = "device-uncertain-idempotency-0001";
+  const deviceId = `entity_${"d".repeat(32)}`;
+  const operationId = `op_${"e".repeat(24)}`;
+  const revision = `rev_${"f".repeat(24)}`;
+  const grant = { kind: "device_property", requestId: "req_test_token_tool", idempotencyKey,
+    deviceId, operationId, revision, value: true, messageHash: "a".repeat(64), expiresAt: Date.now() + 30_000 };
+  const token = await automationToken({ homeId: "home-a", actionGrant: grant });
+  const objects = new Map();
+  const actionLedgerStore = {
+    async get(key) { return objects.get(key) ?? null; },
+    async setJSON(key, stored) { if (objects.has(key)) throw new Error("EEXIST"); objects.set(key, stored); },
+  };
+  const device = { deviceId, name: "客厅灯带", room: "客厅", kind: "light", online: true,
+    did: "physical-did", model: "fake.light", operations: [{ operationId, revision,
+      name: "on", label: "开关", valueType: "boolean", siid: 15, piid: 1 }] };
+  let writes = 0;
+  const deps = { ...tokenDeps(), actionLedgerStore,
+    exposureStore: { get: async () => ({ ...exposure, deviceActionsEnabled: true, deviceDids: ["physical-did.s15"] }) },
+    discovery: async () => ({ homes: tokenHomes, devices: [], controlObjectResults: [], completeness: "complete", warnings: [], successfulHomeCount: 1, failedHomeCount: 0, requestAttemptCount: 1 }),
+    deviceCatalog: async () => [device],
+    setProperty: async () => { writes++; throw new Error("XIAOMI_PROPERTY_CODE_-704220025"); } };
+  const invoke = tokenInput("set_device_property", { idempotencyKey,
+    arguments: { deviceId, operationId, revision, value: true } });
+  await assert.rejects(runRemoteTool(invoke, actionEnv, deps, token), /AI_EXECUTION_STATUS_UNKNOWN/);
+  await assert.rejects(runRemoteTool(invoke, actionEnv, deps, token), /AI_EXECUTION_STATUS_UNKNOWN/);
+  assert.equal(writes, 1);
 });
 
 test("web chat grants device scope only for one exact selected safe operation", async () => {

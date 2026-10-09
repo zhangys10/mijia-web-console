@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { miotActionPayload, readXiaomiSession, xiaomiRequest } from "../../../../lib/xiaomi-cloud";
+import { interpretPropertyWriteResponse } from "../../../../lib/xiaomi-control-result";
 
 function propertyResult(response: Record<string, unknown>) {
   const items = response.result;
@@ -64,8 +65,9 @@ export async function POST(request: NextRequest) {
     const piid = Number(body.piid ?? 1);
     if (!Number.isInteger(piid) || piid < 1) return NextResponse.json({ error: "INVALID_PROPERTY_MAPPING" }, { status: 400 });
     const response = await xiaomiRequest(await readXiaomiSession(value, process.env.XIAOMI_SESSION_SECRET), "/app/miotspec/prop/set", { params: [{ did: body.did, siid, piid, value: body.value }] });
-    const result = propertyResult(response);
-    return NextResponse.json({ ok: true, did: body.did, value: body.value, result });
+    const outcome = interpretPropertyWriteResponse(response);
+    return NextResponse.json({ ok: true, status: outcome.status, did: body.did, value: body.value,
+      result: outcome.result }, { status: outcome.status === "outcome_unknown" ? 202 : 200 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
     console.error("[xiaomi-control-write]", JSON.stringify({ error: message }));

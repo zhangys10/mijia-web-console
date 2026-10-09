@@ -22,13 +22,16 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { listHomes, unsealWithSecret, type XiaomiSession } from "../lib/xiaomi-cloud.ts";
+import { listDevices, listHomes, unsealWithSecret, type XiaomiSession } from "../lib/xiaomi-cloud.ts";
 import { AUTOMATION_TOKEN_REALM, computePrincipalId, sealAutomationToken } from "../lib/ai/security/automation-token.ts";
 import { loadAgentScenes } from "../lib/ai/tools/agent-scene-catalog.ts";
 import {
+  createLocalProdDeviceGrant,
   createLocalProdSceneGrant,
+  type LocalProdDeviceGrant,
   type LocalProdSceneGrant,
 } from "../lib/ai/tools/local-prod-scene-grant.ts";
+import { loadDeviceOperationCatalog } from "../lib/ai/tools/device-operation-catalog.ts";
 
 function args(argv: string[]) {
   const parsed: Record<string, string | undefined> = {};
@@ -73,7 +76,7 @@ if (parsed.session && parsed.sessionFile) {
 }
 const actionArgs = [parsed.actionMessage, parsed.actionRequestId, parsed.actionIdempotencyKey];
 if (actionArgs.some(Boolean) && actionArgs.some(value => !value)) {
-  console.error("Scene action grants require --action-message, --action-request-id, and --action-idempotency-key together.");
+  console.error("Action grants require --action-message, --action-request-id, and --action-idempotency-key together.");
   process.exit(2);
 }
 
@@ -159,27 +162,26 @@ try {
   process.exit(1);
 }
 
-const now = Date.now();
 const principalId = await computePrincipalId(session.region || "cn", session.userId);
-let actionGrant: LocalProdSceneGrant | undefined;
+let actionGrant: LocalProdSceneGrant | LocalProdDeviceGrant | undefined;
 let homeId = parsed.home?.trim();
 if (parsed.actionMessage) {
   if (parsed.out) {
-    console.error("A scene-grant token cannot be written to a reusable token file.");
+    console.error("An action-grant token cannot be written to a reusable token file.");
     process.exit(2);
   }
   if (parsed.actionMessage.trim().length > 500) {
-    console.error("Scene action messages must be at most 500 characters.");
-    process.exit(2);
-  }
-  if (!homeId) {
-    console.error("--home is required when issuing a scene action grant.");
+    console.error("Action messages must be at most 500 characters.");
     process.exit(2);
   }
   const homes = await listHomes(session);
-  const selectedHomes = homes.filter(home => home.id === homeId || home.name.trim().toLocaleLowerCase() === homeId?.toLocaleLowerCase());
+  const selectedHomes = homeId
+    ? homes.filter(home => home.id === homeId || home.name.trim().toLocaleLowerCase() === homeId?.toLocaleLowerCase())
+    : homes.length === 1 ? homes : [];
   if (selectedHomes.length !== 1) {
-    console.error("--home must identify exactly one accessible home.");
+    console.error(homeId
+      ? "--home must identify exactly one accessible home."
+      : "ACTION_HOME_REQUIRED: --home must identify one accessible home when the account has multiple homes.");
     process.exit(2);
   }
   homeId = selectedHomes[0].id;
@@ -190,13 +192,28 @@ if (parsed.actionMessage) {
       requestId: parsed.actionRequestId!,
       idempotencyKey: parsed.actionIdempotencyKey!,
       scenes,
-      now,
     });
   } catch {
-    console.error("The action message must be an exact, present-tense command for one unique manual scene.");
-    process.exit(2);
+    const discovery = await listDevices(session);
+    const selectedDids = discovery.devices
+      .filter(device => String(device.homeId ?? "") === homeId)
+      .map(device => String(device.did ?? ""))
+      .filter(Boolean);
+    const devices = await loadDeviceOperationCatalog(discovery, homeId, selectedDids);
+    try {
+      actionGrant = await createLocalProdDeviceGrant({
+        message: parsed.actionMessage,
+        requestId: parsed.actionRequestId!,
+        idempotencyKey: parsed.actionIdempotencyKey!,
+        devices,
+      });
+    } catch {
+      console.error("The action message must exactly identify one approved manual scene or one safe device operation.");
+      process.exit(2);
+    }
   }
 }
+const issuedAt = Date.now();
 const payload = {
   version: 1 as const,
   purpose: "ai-home-automation" as const,
@@ -206,8 +223,8 @@ const payload = {
   region: session.region || "cn",
   ...(homeId ? { homeId } : {}),
   ...(actionGrant ? { actionGrant } : {}),
-  issuedAt: now,
-  expiresAt: actionGrant ? now + 5 * 60_000 : now + days * 86_400_000,
+  issuedAt,
+  expiresAt: actionGrant ? issuedAt + 5 * 60_000 : issuedAt + days * 86_400_000,
 };
 
 const token = await sealAutomationToken(payload, {

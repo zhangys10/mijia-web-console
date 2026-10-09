@@ -1,6 +1,8 @@
 import { getMiotCapabilities } from "../../miot-spec.ts";
 import { classifyDeviceKind } from "../../device-views.ts";
+import { parseDerivedDeviceId } from "../../device-topology.ts";
 import { isScenePropertyValueSupported, isSceneWritableProperty, type ScenePropertyValue } from "../../xiaomi-scene-properties.ts";
+import { interpretPropertyWriteResponse } from "../../xiaomi-control-result.ts";
 import { xiaomiRequest, type XiaomiDeviceList, type XiaomiSession } from "../../xiaomi-cloud.ts";
 
 export type DeviceOperation = {
@@ -53,7 +55,13 @@ export async function loadDeviceOperationCatalog(
     return did && selected.has(did) && String(record.homeId ?? record.home_id ?? "") === homeId;
   });
   const result = await Promise.all(devices.map(async record => {
-    const did = String(record.did ?? "");
+    const exposedDid = String(record.did ?? "");
+    const derived = parseDerivedDeviceId(exposedDid);
+    // The devices API represents a switch channel as `<physicalDid>.s<siid>`, but
+    // Xiaomi property writes must use the physical DID and the channel service.
+    // Keep the exposed DID for aliases/exposure checks while dispatching through
+    // the same physical mapping used by the dashboard's `powerControl` object.
+    const did = derived?.physicalDid ?? exposedDid;
     const model = typeof record.model === "string" ? record.model : "";
     if (!model) return null;
     let specification;
@@ -61,10 +69,11 @@ export async function loadDeviceOperationCatalog(
     catch { return null; }
     const operations: DeviceOperation[] = [];
     for (const group of specification.groups) {
+      if (derived && group.siid !== derived.siid) continue;
       for (const property of group.properties) {
         if (!isSceneWritableProperty(group.name, property)) continue;
         const canonical = JSON.stringify({ model, service: group.name, siid: property.siid, property: property.name, piid: property.piid, format: property.format, choices: property.choices ?? [], range: property.range ?? null });
-        const digest = await hexDigest(`${homeId}:${did}:${canonical}`);
+        const digest = await hexDigest(`${homeId}:${exposedDid}:${canonical}`);
         operations.push({
           operationId: `op_${digest.slice(0, 24)}`,
           revision: `rev_${digest.slice(24, 48)}`,
@@ -83,7 +92,7 @@ export async function loadDeviceOperationCatalog(
     const room = typeof record.roomName === "string" && record.roomName.trim() ? record.roomName.trim() : "未分配";
     const online = record.isOnline === true || record.online === true;
     return {
-      deviceId: await deviceReference(homeId, did), name, room,
+      deviceId: await deviceReference(homeId, exposedDid), name, room,
       kind: classifyDeviceKind(model, name, typeof record.logicalType === "string" ? record.logicalType : ""),
       online, did, model, ...(typeof record.urn === "string" ? { urn: record.urn } : {}),
       operations: operations.slice(0, 20),
@@ -112,7 +121,6 @@ export function validateDeviceOperationValue(operation: DeviceOperation, value: 
 
 export async function setDeviceProperty(session: XiaomiSession, device: ControllableDevice, operation: DeviceOperation, value: ScenePropertyValue) {
   const response = await xiaomiRequest(session, "/app/miotspec/prop/set", { params: [{ did: device.did, siid: operation.siid, piid: operation.piid, value }] });
-  const item = Array.isArray(response.result) ? response.result[0] as Record<string, unknown> | undefined : undefined;
-  if (!item || typeof item.code !== "number") throw new Error("XIAOMI_DEVICE_RESPONSE_INVALID");
-  if (item.code !== 0) throw new Error(`XIAOMI_PROPERTY_CODE_${item.code}`);
+  const outcome = interpretPropertyWriteResponse(response);
+  if (outcome.status === "outcome_unknown") throw new Error(`XIAOMI_PROPERTY_CODE_${outcome.result.code}`);
 }
