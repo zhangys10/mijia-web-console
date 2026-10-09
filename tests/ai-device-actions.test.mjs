@@ -79,6 +79,15 @@ test("device intent accepts Chinese set-to syntax and a mode suffix", () => {
   assert.equal(matchDeviceActionIntent("把客厅灯带设置成Dusk模式", [light])?.value, "dusk");
 });
 
+test("device intent accepts a bounded same-device power and mode batch", () => {
+  const selected = matchDeviceActionBatchIntent("打开并设置客厅空调会客模式", [device()]);
+  assert.equal(selected?.device.deviceId, device().deviceId);
+  assert.deepEqual(selected?.operations.map(item => [item.operation.operationId, item.value]), [
+    [power.operationId, true],
+    [mode.operationId, 2],
+  ]);
+});
+
 test("device intent rejects ambiguity, conditions, questions, and out-of-range values", () => {
   assert.equal(matchDeviceActionIntent("如果热就打开空调", [device()]), null);
   assert.equal(matchDeviceActionIntent("能否打开空调？", [device()]), null);
