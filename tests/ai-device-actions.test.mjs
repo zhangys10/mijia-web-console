@@ -58,6 +58,7 @@ test("device intent accepts one exact current safe-property command", () => {
   assert.equal(selected?.operation.operationId, operation.operationId);
   assert.equal(selected?.value, 24);
   assert.equal(matchDeviceActionIntent("打开空调", [device()])?.value, true);
+  assert.equal(matchDeviceActionIntent("把客厅空调设置成24度", [device()])?.value, 24);
 });
 
 test("device intent accepts a bounded same-device power and mode batch", () => {
@@ -67,6 +68,15 @@ test("device intent accepts a bounded same-device power and mode batch", () => {
     [power.operationId, true],
     [mode.operationId, 2],
   ]);
+});
+
+test("device intent accepts Chinese set-to syntax and a mode suffix", () => {
+  const light = device({
+    name: "灯带",
+    operations: [{ ...power }, { ...mode, choices: [{ value: "dusk", label: "Dusk" }] }],
+  });
+  assert.equal(matchDeviceActionIntent("把客厅灯带设置成Dusk", [light])?.value, "dusk");
+  assert.equal(matchDeviceActionIntent("把客厅灯带设置成Dusk模式", [light])?.value, "dusk");
 });
 
 test("device intent rejects ambiguity, conditions, questions, and out-of-range values", () => {

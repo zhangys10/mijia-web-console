@@ -8,6 +8,13 @@ export type AutomationTokenPayload = {
   xiaomiSession: XiaomiSession;
   region: string;
   homeId?: string;
+  proposalBinding?: {
+    requestId: string;
+    idempotencyKey: string;
+    messageHash: string;
+    message: string;
+    expiresAt: number;
+  };
   actionGrant?: {
     kind?: "scene" | "device_property";
     requestId: string;

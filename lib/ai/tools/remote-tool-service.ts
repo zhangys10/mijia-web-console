@@ -2,7 +2,7 @@ import { listDevices, listHomes, type XiaomiSession } from "../../xiaomi-cloud.t
 import { isPreviewEnvironment } from "../config.ts";
 import { verifyAgentBinding, type AgentScope } from "../security/agent-binding.ts";
 import { derivePrincipalId } from "../security/principal.ts";
-import { AUTOMATION_TOKEN_REALM, AutomationTokenError, openAutomationToken } from "../security/automation-token.ts";
+import { AUTOMATION_TOKEN_REALM, AutomationTokenError, openAutomationToken, sealAutomationToken } from "../security/automation-token.ts";
 import { collectHomeEnvironment } from "../../home-environment.ts";
 import { collectDeviceStatus } from "../../device-status.ts";
 import { loadAgentScenes, sceneSummaries, type AgentSceneRecord } from "./agent-scene-catalog.ts";
@@ -434,6 +434,64 @@ async function runUserTokenTool(
   const args = input.arguments;
   if (!args || typeof args !== "object" || Array.isArray(args)) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
   const toolArgs = args as Record<string, unknown>;
+  const proposal = payload.proposalBinding;
+  const validProposalBinding = !isPreviewEnvironment(env)
+    && ((env.AI_ACTION_AUTHORIZATION_SECRET ?? env.AI_SCENE_ACTION_AUTHORIZATION_SECRET)?.length ?? 0) >= 32
+    && proposal?.requestId === input.requestId
+    && typeof proposal?.idempotencyKey === "string" && proposal.idempotencyKey.length >= 16 && proposal.idempotencyKey.length <= 128
+    && typeof proposal?.expiresAt === "number" && proposal.expiresAt > Date.now() && proposal.expiresAt <= payload.expiresAt
+    && typeof proposal?.messageHash === "string" && /^[a-f0-9]{64}$/.test(proposal.messageHash)
+    && typeof proposal?.message === "string" && proposal.message.length <= 500
+    && payload.homeId === homeId
+    && !/(?:不要|别|不许|如果|假如|明天|稍后|以后|请勿|下周|后天|don't|do not|if\b|tomorrow|later|next\s+week|[?？“”"「」])/iu.test(proposal.message)
+    && /(?:打开|开启|关闭|关掉|执行|运行|启动|设置|调到|设为|切换|turn\s|switch\s|set\s|activate\s|run\s)/iu.test(proposal.message);
+  const validProposal = validProposalBinding && proposal?.idempotencyKey === input.idempotencyKey;
+  if (input.tool === "propose_scene_action" || input.tool === "propose_device_action") {
+    if (!validProposal || !proposal) throw new RemoteToolError("AI_SCOPE_FORBIDDEN", 403);
+    const expiresAt = Math.min(Date.now() + 60_000, proposal.expiresAt, payload.expiresAt);
+    let actionGrant: NonNullable<typeof payload.actionGrant>;
+    if (input.tool === "propose_scene_action") {
+      if (env.AI_SCENE_EXECUTION_ENABLED !== "true"
+        || Object.keys(toolArgs).length !== 2
+        || typeof toolArgs.sceneId !== "string" || typeof toolArgs.revision !== "string") throw new RemoteToolError("AI_SCOPE_FORBIDDEN", 403);
+      const scenes = await (dependencies.scenes ?? loadAgentScenes)({ principalId, homeId, session: payload.xiaomiSession });
+      const scene = scenes.find(item => item.alias === toolArgs.sceneId && item.revision === toolArgs.revision);
+      const exposure = await currentExposure(homeId, dependencies.exposureStore, env);
+      if (!scene || !isSceneExposed(exposure, scene)) throw new RemoteToolError("AI_SCENE_NOT_EXPOSED", 403);
+      actionGrant = { kind: "scene", requestId: proposal.requestId, idempotencyKey: proposal.idempotencyKey,
+        sceneAlias: scene.alias, revision: scene.revision, messageHash: proposal.messageHash, expiresAt };
+    } else {
+      if (env.AI_DEVICE_EXECUTION_ENABLED !== "true"
+        || Object.keys(toolArgs).length !== 2 || typeof toolArgs.deviceId !== "string"
+        || !Array.isArray(toolArgs.operations) || toolArgs.operations.length < 1 || toolArgs.operations.length > 4)
+        throw new RemoteToolError("AI_SCOPE_FORBIDDEN", 403);
+      const exposure = await currentExposure(homeId, dependencies.exposureStore, env);
+      if (!exposure.enabled || !exposure.deviceActionsEnabled) throw new RemoteToolError("AI_DEVICE_NOT_EXPOSED", 403);
+      const discovery = await (dependencies.discovery ?? listDevices)(payload.xiaomiSession);
+      const catalog = await (dependencies.deviceCatalog ?? loadDeviceOperationCatalog)(discovery, homeId, exposure.deviceDids);
+      const device = catalog.find(item => item.deviceId === toolArgs.deviceId);
+      if (!device) throw new RemoteToolError("AI_DEVICE_NOT_EXPOSED", 403);
+      if (!device.online) throw new RemoteToolError("AI_DEVICE_OFFLINE", 409);
+      const seen = new Set<string>();
+      const operations = toolArgs.operations.map(item => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
+        const record = item as Record<string, unknown>;
+        if (Object.keys(record).length !== 3 || typeof record.operationId !== "string"
+          || typeof record.revision !== "string" || seen.has(record.operationId)) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
+        seen.add(record.operationId);
+        const operation = device.operations.find(candidate => candidate.operationId === record.operationId);
+        if (!operation || operation.revision !== record.revision) throw new RemoteToolError("AI_DEVICE_REVISION_CHANGED", 409);
+        if (!validateDeviceOperationValue(operation, record.value)) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
+        return { operationId: operation.operationId, revision: operation.revision, value: record.value as boolean | number | string };
+      });
+      actionGrant = { kind: "device_property", requestId: proposal.requestId, idempotencyKey: proposal.idempotencyKey,
+        deviceId: device.deviceId, operations, messageHash: proposal.messageHash, expiresAt };
+    }
+    const actionToken = await sealAutomationToken({ ...payload, proposalBinding: undefined, actionGrant,
+      issuedAt: Date.now(), expiresAt }, { secret: env.AI_AUTOMATION_TOKEN_SECRET,
+      keyId: env.AI_AUTOMATION_TOKEN_KEY_ID, env: AUTOMATION_TOKEN_REALM });
+    return { actionToken };
+  }
   const grant = payload.actionGrant;
   const validGrant = !isPreviewEnvironment(env)
     && ((env.AI_ACTION_AUTHORIZATION_SECRET ?? env.AI_SCENE_ACTION_AUTHORIZATION_SECRET)?.length ?? 0) >= 32
@@ -469,7 +527,9 @@ async function runUserTokenTool(
       : validDeviceGrant
         ? { ok: true, principalId, homeId, scopes: ["ai:chat", "device:operate"],
           actionMessageHash: grant.messageHash, actionIdempotencyKey: grant.idempotencyKey }
-      : { ok: true, principalId, homeId, scopes: ["ai:chat"] };
+      : { ok: true, principalId, homeId, scopes: ["ai:chat"],
+        ...(validProposalBinding && proposal ? { proposalMessageHash: proposal.messageHash,
+          proposalIdempotencyKey: proposal.idempotencyKey } : {}) };
     const scenes = await (dependencies.scenes ?? loadAgentScenes)({ principalId, homeId, session: payload.xiaomiSession });
     const exposure = await currentExposure(homeId, dependencies.exposureStore, env);
     const exposedScenes = scenes.filter(scene => isSceneExposed(exposure, scene))
@@ -477,18 +537,23 @@ async function runUserTokenTool(
     return { scenes: sceneSummaries(exposedScenes) };
   }
   if (input.tool === "list_device_controls") {
-    if (Object.keys(args).length) throw new RemoteToolError("AI_INVALID_REQUEST", 400);
+    if (Object.keys(args).some(key => key !== "query")
+      || (toolArgs.query !== undefined && (typeof toolArgs.query !== "string" || toolArgs.query.length > 100)))
+      throw new RemoteToolError("AI_INVALID_REQUEST", 400);
     const exposure = await currentExposure(homeId, dependencies.exposureStore, env);
     if (!exposure.enabled || !exposure.deviceActionsEnabled) throw new RemoteToolError("AI_CAPABILITY_UNAVAILABLE", 403);
     const discovery = await (dependencies.discovery ?? listDevices)(payload.xiaomiSession);
     const catalog = await (dependencies.deviceCatalog ?? loadDeviceOperationCatalog)(discovery, homeId, exposure.deviceDids);
-    catalog.sort((left, right) => Number(right.deviceId === grant?.deviceId) - Number(left.deviceId === grant?.deviceId));
+    const query = typeof toolArgs.query === "string" ? toolArgs.query.trim().toLocaleLowerCase() : "";
+    const filtered = query ? catalog.filter(device => `${device.room}${device.name}`.toLocaleLowerCase().includes(query)
+      || device.name.toLocaleLowerCase().includes(query)) : catalog;
+    filtered.sort((left, right) => Number(right.deviceId === grant?.deviceId) - Number(left.deviceId === grant?.deviceId));
     if (grant?.kind === "device_property") {
-      const grantedDevice = catalog.find(device => device.deviceId === grant.deviceId);
+      const grantedDevice = filtered.find(device => device.deviceId === grant.deviceId);
       const order = new Map(grantOperations.map((item, index) => [item.operationId, index]));
       grantedDevice?.operations.sort((left, right) => (order.get(left.operationId) ?? 99) - (order.get(right.operationId) ?? 99));
     }
-    return { devices: publicDeviceCatalog(catalog) };
+    return { devices: publicDeviceCatalog(filtered) };
   }
   if (input.tool === "get_home_status") {
     if (Object.keys(args).length) throw new RemoteToolError("AI_INVALID_REQUEST", 400);

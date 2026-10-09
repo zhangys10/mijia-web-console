@@ -6,11 +6,9 @@ import { disabledQuotaSummary, type QuotaSummary } from "../quota/quota-service.
 import type { AgentScope } from "../security/agent-binding.ts";
 import { AUTOMATION_TOKEN_REALM, sealAutomationToken } from "../security/automation-token.ts";
 import { derivePrincipalId } from "../security/principal.ts";
-import { loadAgentScenes, type AgentSceneRecord } from "../tools/agent-scene-catalog.ts";
-import { isSceneExposed, readAssistantExposure } from "../tools/assistant-exposure.ts";
-import { matchSceneActionIntent } from "../tools/scene-action-intent.ts";
+import { loadAgentScenes } from "../tools/agent-scene-catalog.ts";
+import { readAssistantExposure } from "../tools/assistant-exposure.ts";
 import { loadDeviceOperationCatalog } from "../tools/device-operation-catalog.ts";
-import { matchDeviceActionBatchIntent } from "../tools/device-action-intent.ts";
 import type { WebAgentClient } from "./agent-client.ts";
 import {
   createConversationHandle,
@@ -185,6 +183,7 @@ export class AiWebService {
     session: XiaomiSession,
     now: number,
     actionGrant?: NonNullable<import("../security/automation-token.ts").AutomationTokenPayload["actionGrant"]>,
+    proposalBinding?: NonNullable<import("../security/automation-token.ts").AutomationTokenPayload["proposalBinding"]>,
   ) {
     try {
       return await sealAutomationToken({
@@ -196,6 +195,7 @@ export class AiWebService {
         region: session.region || "cn",
         homeId,
         actionGrant,
+        proposalBinding,
         issuedAt: now,
         expiresAt: now + 5 * 60_000,
       }, {
@@ -267,42 +267,17 @@ export class AiWebService {
     }
 
     const id = requestId(this.randomUuid);
-    // The server grants scene scope only for a current, approved exact-name request.
-    // A caller-provided idempotency key never grants write access by itself.
+    // No write scope is granted before the model proposes an opaque catalog operation.
     const scopes: AgentScope[] = ["ai:chat"];
     const now = this.now();
     const idempotencyKey = input.idempotencyKey ?? `readonly_${id}`;
-    let actionGrant: NonNullable<import("../security/automation-token.ts").AutomationTokenPayload["actionGrant"]> | undefined;
     const actionSecret = this.env.AI_ACTION_AUTHORIZATION_SECRET ?? this.env.AI_SCENE_ACTION_AUTHORIZATION_SECRET;
-    if ((actionSecret?.length ?? 0) >= 32
-      && /^(?:执行|运行|启动|打开|开启|关闭|设置|run\s|activate\s|execute\s|turn\s|set\s)/iu.test(input.message)) {
-      const exposure = await this.readExposure(input.homeId, undefined, this.env);
-      const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.message));
-      const messageHash = Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
-      if (this.env.AI_SCENE_EXECUTION_ENABLED === "true") {
-        const scenes: AgentSceneRecord[] = await this.loadScenes({ principalId, homeId: input.homeId, session });
-        const selected = matchSceneActionIntent(input.message, scenes);
-        if (selected && isSceneExposed(exposure, selected)) {
-          actionGrant = { kind: "scene", requestId: id, idempotencyKey, sceneAlias: selected.alias,
-            revision: selected.revision, messageHash, expiresAt: now + 60_000 };
-          scopes.push("scene:activate");
-        }
-      }
-      if (!actionGrant && this.env.AI_DEVICE_EXECUTION_ENABLED === "true"
-        && exposure.enabled && exposure.deviceActionsEnabled) {
-        const discovery = await this.loadDevices(session);
-        const catalog = await this.loadDeviceOperations(discovery, input.homeId, exposure.deviceDids);
-        const selected = matchDeviceActionBatchIntent(input.message, catalog);
-        if (selected) {
-          actionGrant = { kind: "device_property", requestId: id, idempotencyKey,
-            deviceId: selected.device.deviceId,
-            operations: selected.operations.map(({ operation, value }) => ({ operationId: operation.operationId, revision: operation.revision, value })), messageHash,
-            expiresAt: now + 60_000 };
-          scopes.push("device:operate");
-        }
-      }
-    }
-    const automationToken = await this.issueAutomationToken(principalId, input.homeId, session, now, actionGrant);
+    const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.message));
+    const messageHash = Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
+    const proposalBinding = (actionSecret?.length ?? 0) >= 32
+      ? { requestId: id, idempotencyKey, messageHash, message: input.message, expiresAt: now + 60_000 }
+      : undefined;
+    const automationToken = await this.issueAutomationToken(principalId, input.homeId, session, now, undefined, proposalBinding);
     const remoteQuotaDisabled = !isQuotaEnabled(this.env);
     const agentResult = await this.requireAgent().run({
       conversationId,

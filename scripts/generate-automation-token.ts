@@ -6,8 +6,8 @@
  * AI_AUTOMATION_TOKEN_SECRET, payload v1 / "ai-home-automation", with the
  * sealed Xiaomi session embedded. The token carries no model fields —
  * model access stays on the Makers Gateway in the agent.
- * Optional scene-test mode reads the selected home's scene catalog to bind
- * one short-lived action grant; the console rechecks approval before dispatch.
+ * Optional per-turn mode binds the exact user message and idempotency key for
+ * a model proposal; only the console can validate it and issue a write token.
  *
  * Usage:
  *   node --experimental-strip-types scripts/generate-automation-token.ts \
@@ -22,16 +22,8 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { listDevices, listHomes, unsealWithSecret, type XiaomiSession } from "../lib/xiaomi-cloud.ts";
+import { listHomes, unsealWithSecret, type XiaomiSession } from "../lib/xiaomi-cloud.ts";
 import { AUTOMATION_TOKEN_REALM, computePrincipalId, sealAutomationToken } from "../lib/ai/security/automation-token.ts";
-import { loadAgentScenes } from "../lib/ai/tools/agent-scene-catalog.ts";
-import {
-  createLocalProdDeviceGrant,
-  createLocalProdSceneGrant,
-  type LocalProdDeviceGrant,
-  type LocalProdSceneGrant,
-} from "../lib/ai/tools/local-prod-scene-grant.ts";
-import { loadDeviceOperationCatalog } from "../lib/ai/tools/device-operation-catalog.ts";
 
 function args(argv: string[]) {
   const parsed: Record<string, string | undefined> = {};
@@ -163,7 +155,7 @@ try {
 }
 
 const principalId = await computePrincipalId(session.region || "cn", session.userId);
-let actionGrant: LocalProdSceneGrant | LocalProdDeviceGrant | undefined;
+let proposalBinding: { requestId: string; idempotencyKey: string; messageHash: string; message: string; expiresAt: number } | undefined;
 let homeId = parsed.home?.trim();
 if (parsed.actionMessage) {
   if (parsed.out) {
@@ -185,33 +177,10 @@ if (parsed.actionMessage) {
     process.exit(2);
   }
   homeId = selectedHomes[0].id;
-  const scenes = await loadAgentScenes({ principalId, homeId, session });
-  try {
-    actionGrant = await createLocalProdSceneGrant({
-      message: parsed.actionMessage,
-      requestId: parsed.actionRequestId!,
-      idempotencyKey: parsed.actionIdempotencyKey!,
-      scenes,
-    });
-  } catch {
-    const discovery = await listDevices(session);
-    const selectedDids = discovery.devices
-      .filter(device => String(device.homeId ?? "") === homeId)
-      .map(device => String(device.did ?? ""))
-      .filter(Boolean);
-    const devices = await loadDeviceOperationCatalog(discovery, homeId, selectedDids);
-    try {
-      actionGrant = await createLocalProdDeviceGrant({
-        message: parsed.actionMessage,
-        requestId: parsed.actionRequestId!,
-        idempotencyKey: parsed.actionIdempotencyKey!,
-        devices,
-      });
-    } catch {
-      console.error("The action message must exactly identify one approved manual scene or one safe device operation.");
-      process.exit(2);
-    }
-  }
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(parsed.actionMessage));
+  const messageHash = Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
+  proposalBinding = { requestId: parsed.actionRequestId!, idempotencyKey: parsed.actionIdempotencyKey!,
+    messageHash, message: parsed.actionMessage, expiresAt: Date.now() + 60_000 };
 }
 const issuedAt = Date.now();
 const payload = {
@@ -222,9 +191,9 @@ const payload = {
   xiaomiSession: session,
   region: session.region || "cn",
   ...(homeId ? { homeId } : {}),
-  ...(actionGrant ? { actionGrant } : {}),
+  ...(proposalBinding ? { proposalBinding } : {}),
   issuedAt,
-  expiresAt: actionGrant ? issuedAt + 5 * 60_000 : issuedAt + days * 86_400_000,
+  expiresAt: proposalBinding ? issuedAt + 5 * 60_000 : issuedAt + days * 86_400_000,
 };
 
 const token = await sealAutomationToken(payload, {

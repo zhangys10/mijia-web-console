@@ -18,7 +18,11 @@ function normalizedValue(raw: string, operation: DeviceOperation): boolean | num
     return undefined;
   }
   if (operation.valueType === "enum") {
-    const matches = operation.choices?.filter(choice => choice.label.trim().toLocaleLowerCase() === text.toLocaleLowerCase()) ?? [];
+    const normalized = text.toLocaleLowerCase();
+    const matches = operation.choices?.filter(choice => {
+      const label = choice.label.trim().toLocaleLowerCase();
+      return label === normalized || `${label}模式` === normalized;
+    }) ?? [];
     return matches.length === 1 ? matches[0].value : undefined;
   }
   const stripped = text.replace(/(?:℃|°C|度|%|%RH)$/iu, "").trim();
@@ -41,7 +45,8 @@ export function matchDeviceActionIntent(message: string, devices: readonly Contr
     for (const operation of device.operations) {
       const label = operation.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const setting = new RegExp(`^设置\\s*${escaped}\\s*(?:的)?${label}\\s*(?:为)?\\s*(.+)$`, "iu").exec(text)
-        ?? new RegExp(`^set\\s+${escaped}\\s+${label}\\s+to\\s+(.+)$`, "iu").exec(text);
+        ?? new RegExp(`^set\\s+${escaped}\\s+${label}\\s+to\\s+(.+)$`, "iu").exec(text)
+        ?? new RegExp(`^把\\s*${escaped}\\s*设置成\\s*(.+)$`, "iu").exec(text);
       if (!setting) continue;
       const value = normalizedValue(setting[1], operation);
       if (value !== undefined && validateDeviceOperationValue(operation, value)) matches.push({ device, operation, value });
