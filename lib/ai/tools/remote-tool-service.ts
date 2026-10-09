@@ -116,6 +116,7 @@ async function executeApprovedScene(input: {
   env: Environment;
   dependencies: Dependencies;
 }) {
+  const successMessage = `已为你执行${input.scene.name}。`;
   if (isPreviewEnvironment(input.env)) throw new RemoteToolError("AI_PREVIEW_READ_ONLY", 403);
   if (input.env.AI_SCENE_EXECUTION_ENABLED !== "true") throw new RemoteToolError("AI_SCENE_EXECUTION_DISABLED", 403);
   const exposure = await currentExposure(input.homeId, input.dependencies.exposureStore, input.env);
@@ -144,12 +145,12 @@ async function executeApprovedScene(input: {
   if (claim.kind === "unknown") throw new RemoteToolError("AI_EXECUTION_STATUS_UNKNOWN", 409);
   if (claim.kind === "replay") {
     if (claim.outcome.status === "outcome_unknown") throw new RemoteToolError("AI_EXECUTION_STATUS_UNKNOWN", 409);
-    return { status: "success", succeeded: 1, failed: 0, message: "场景执行请求已提交，设备状态尚未回读。" };
+    return { status: "success", succeeded: 1, failed: 0, message: successMessage };
   }
   try {
     await (input.dependencies.runScene ?? runManualScene)(input.session, input.scene.sceneId);
     await recordSceneActionOutcome(claim, "success", input.dependencies.actionLedgerStore);
-    return { status: "success", succeeded: 1, failed: 0, message: "场景执行请求已提交，设备状态尚未回读。" };
+    return { status: "success", succeeded: 1, failed: 0, message: successMessage };
   } catch {
     try { await recordSceneActionOutcome(claim, "outcome_unknown", input.dependencies.actionLedgerStore); }
     catch { /* Keep the user-facing outcome uncertain even if the receipt store failed. */ }
