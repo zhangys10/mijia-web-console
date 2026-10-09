@@ -598,8 +598,10 @@ test("device-property grants revalidate exposure and dispatch exactly once", asy
   assert.equal(listed.devices[0].operations[0].operationId, operationId);
   const invoke = tokenInput("set_device_property", { idempotencyKey,
     arguments: { deviceId, operationId, revision, value } });
-  assert.equal((await runRemoteTool(invoke, actionEnv, deps, token)).status, "success");
-  assert.equal((await runRemoteTool(invoke, actionEnv, deps, token)).status, "success");
+  const submitted = await runRemoteTool(invoke, actionEnv, deps, token);
+  assert.equal(submitted.status, "success");
+  assert.equal(submitted.message, "已为你设置空调的目标温度。");
+  assert.equal((await runRemoteTool(invoke, actionEnv, deps, token)).message, submitted.message);
   assert.equal(writes, 1);
   await assert.rejects(runRemoteTool({ ...invoke, arguments: { deviceId, operationId, revision, value: 25 } },
     actionEnv, deps, token), /AI_SCOPE_FORBIDDEN/);
