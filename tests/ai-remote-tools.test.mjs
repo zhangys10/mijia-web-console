@@ -509,7 +509,7 @@ test("scene intent accepts only one exact present-tense scene name", () => {
   assert.equal(matchSceneActionIntent("执行回家模式", [approvedScene, approvedScene]), null);
 });
 
-test("web-issued action grant executes once through the token path and replays from Blob", async () => {
+test("web-issued proposal is validated before a terminal scene write and replays from Blob", async () => {
   const actionEnv = { ...tokenEnv, AI_QUOTA_ENABLED: "false", AI_SCENE_EXECUTION_ENABLED: "true",
     AI_SCENE_ACTION_AUTHORIZATION_SECRET: "test-console-action-ticket-secret-32chars" };
   const objects = new Map();
@@ -530,19 +530,24 @@ test("web-issued action grant executes once through the token path and replays f
     readExposure: async () => exposure });
   await service.chat(session, { homeId: "home-a", message: "执行回家模式",
     idempotencyKey: "scene-test-idempotency-0001" });
-  assert.deepEqual(captured.scopes, ["ai:chat", "scene:activate"]);
+  assert.deepEqual(captured.scopes, ["ai:chat"]);
   const request = { requestId: captured.requestId, tool: "authorize", arguments: {} };
   const authorized = await runRemoteTool(request, actionEnv, tokenDeps(), captured.automationToken);
-  assert.equal(authorized.actionIdempotencyKey, captured.idempotencyKey);
-  assert.deepEqual(authorized.scopes, ["ai:chat", "scene:activate"]);
+  assert.deepEqual(authorized.scopes, ["ai:chat"]);
+  assert.equal(authorized.proposalIdempotencyKey, captured.idempotencyKey);
   const invoke = { requestId: captured.requestId, tool: "activate_scene", idempotencyKey: captured.idempotencyKey,
     arguments: { sceneId: approvedScene.alias, revision: sceneRevision } };
   const deps = { ...tokenDeps(), actionLedgerStore: ledger, runScene: async () => { runs++; } };
-  assert.equal((await runRemoteTool(invoke, actionEnv, deps, captured.automationToken)).status, "success");
-  assert.equal((await runRemoteTool(invoke, actionEnv, deps, captured.automationToken)).status, "success");
+  const proposed = await runRemoteTool({ ...invoke, tool: "propose_scene_action" }, actionEnv, deps, captured.automationToken);
+  assert.equal(typeof proposed.actionToken, "string");
+  await assert.rejects(runRemoteTool(invoke, actionEnv, deps, captured.automationToken), /AI_SCOPE_FORBIDDEN/);
+  await assert.rejects(runRemoteTool({ ...invoke, tool: "propose_scene_action", idempotencyKey: "different-key-123456789" },
+    actionEnv, deps, captured.automationToken), /AI_SCOPE_FORBIDDEN/);
+  assert.equal((await runRemoteTool(invoke, actionEnv, deps, proposed.actionToken)).status, "success");
+  assert.equal((await runRemoteTool(invoke, actionEnv, deps, proposed.actionToken)).status, "success");
   assert.equal(runs, 1);
   await assert.rejects(runRemoteTool({ ...invoke, arguments: { sceneId: "scene_ffffffffffffffff", revision: sceneRevision } },
-    actionEnv, deps, captured.automationToken), /AI_SCOPE_FORBIDDEN/);
+    actionEnv, deps, proposed.actionToken), /AI_SCOPE_FORBIDDEN/);
 });
 
 test("a timed-out scene request remains unknown and its action key never redispatches", async () => {
@@ -679,7 +684,7 @@ test("a Xiaomi property error after dispatch is unknown and never redispatched",
   assert.equal(writes, 1);
 });
 
-test("web chat grants device scope only for one exact selected safe operation", async () => {
+test("web chat keeps write scope closed until a selected safe operation is proposed", async () => {
   const actionEnv = { ...tokenEnv, AI_QUOTA_ENABLED: "false", AI_DEVICE_EXECUTION_ENABLED: "true",
     AI_ACTION_AUTHORIZATION_SECRET: "test-console-action-ticket-secret-32chars" };
   const device = { deviceId: `entity_${"1".repeat(32)}`, name: "空调", room: "客厅",
@@ -697,9 +702,26 @@ test("web chat grants device scope only for one exact selected safe operation", 
     loadDeviceOperations: async () => [device] });
   await service.chat(session, { homeId: "home-a", message: "设置客厅空调目标温度为24度",
     idempotencyKey: "device-web-idempotency-0001" });
-  assert.deepEqual(captured.scopes, ["ai:chat", "device:operate"]);
+  assert.deepEqual(captured.scopes, ["ai:chat"]);
   const authorization = await runRemoteTool(tokenInput("authorize", { requestId: captured.requestId }),
     actionEnv, tokenDeps(), captured.automationToken);
-  assert.deepEqual(authorization.scopes, ["ai:chat", "device:operate"]);
-  assert.equal(authorization.actionIdempotencyKey, "device-web-idempotency-0001");
+  assert.deepEqual(authorization.scopes, ["ai:chat"]);
+  assert.equal(authorization.proposalIdempotencyKey, "device-web-idempotency-0001");
+  const proposalDeps = { ...tokenDeps(), exposureStore: { get: async () => ({ ...exposure, deviceActionsEnabled: true, deviceDids: ["private-did"] }) },
+    discovery: async () => ({ devices: [] }), deviceCatalog: async () => [device] };
+  await assert.rejects(runRemoteTool({ requestId: captured.requestId, tool: "propose_device_action",
+    idempotencyKey: captured.idempotencyKey,
+    arguments: { deviceId: device.deviceId, operations: [{ operationId: device.operations[0].operationId,
+      revision: device.operations[0].revision, value: 35 }] } }, actionEnv,
+  proposalDeps, captured.automationToken), /AI_INVALID_REQUEST/);
+  const proposed = await runRemoteTool({ requestId: captured.requestId, tool: "propose_device_action",
+    idempotencyKey: captured.idempotencyKey,
+    arguments: { deviceId: device.deviceId, operations: [{ operationId: device.operations[0].operationId,
+      revision: device.operations[0].revision, value: 24 }] } }, actionEnv,
+  proposalDeps, captured.automationToken);
+  assert.equal(typeof proposed.actionToken, "string");
+  await assert.rejects(runRemoteTool({ requestId: captured.requestId, tool: "set_device_property",
+    idempotencyKey: captured.idempotencyKey, arguments: { deviceId: device.deviceId,
+      operations: [{ operationId: device.operations[0].operationId, revision: device.operations[0].revision, value: 24 }] } },
+  actionEnv, tokenDeps(), captured.automationToken), /AI_SCOPE_FORBIDDEN/);
 });
