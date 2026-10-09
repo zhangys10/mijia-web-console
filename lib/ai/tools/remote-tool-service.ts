@@ -9,7 +9,8 @@ import { loadAgentScenes, sceneSummaries, type AgentSceneRecord } from "./agent-
 import { runManualScene } from "../../xiaomi-scenes.ts";
 import { AssistantExposureError, isSceneExposed, readAssistantExposure, type AssistantExposureStore } from "./assistant-exposure.ts";
 import { claimAction, claimSceneAction, recordActionOutcome, recordSceneActionOutcome, type SceneActionLedgerStore } from "./scene-action-ledger.ts";
-import { loadDeviceOperationCatalog, publicDeviceCatalog, setDeviceProperty, validateDeviceOperationValue } from "./device-operation-catalog.ts";
+import { loadDeviceOperationCatalog, publicDeviceCatalog, setDeviceProperty, validateDeviceOperationValue, type DeviceOperation } from "./device-operation-catalog.ts";
+import type { ScenePropertyValue } from "../../xiaomi-scene-properties.ts";
 
 type Environment = Record<string, string | undefined>;
 type Dependencies = {
@@ -186,12 +187,12 @@ async function executeApprovedDeviceProperty(input: {
   if (claim.kind === "replay") {
     if (claim.outcome.status === "outcome_unknown") throw new RemoteToolError("AI_EXECUTION_STATUS_UNKNOWN", 409);
     if (claim.outcome.status === "failed") throw new RemoteToolError("AI_DEVICE_OPERATION_FAILED", 502);
-    return { status: "success", message: `${device.name} 的操作请求已提交，设备状态尚未回读。` };
+    return { status: "success", message: submittedDeviceMessage(device.name, operation, input.grant.value) };
   }
   try {
     await (input.dependencies.setProperty ?? setDeviceProperty)(input.session, device, operation, input.grant.value);
     await recordActionOutcome(claim, "success", input.dependencies.actionLedgerStore);
-    return { status: "success", message: `${device.name} 的操作请求已提交，设备状态尚未回读。` };
+    return { status: "success", message: submittedDeviceMessage(device.name, operation, input.grant.value) };
   } catch {
     // Once the property request has been dispatched, even a Xiaomi item code is
     // not reliable evidence of physical failure: some devices apply the change
@@ -200,6 +201,13 @@ async function executeApprovedDeviceProperty(input: {
     try { await recordActionOutcome(claim, "outcome_unknown", input.dependencies.actionLedgerStore); } catch { /* unknown remains unknown */ }
     throw new RemoteToolError("AI_EXECUTION_STATUS_UNKNOWN", 409);
   }
+}
+
+function submittedDeviceMessage(name: string, operation: DeviceOperation, value: ScenePropertyValue) {
+  if (operation.name === "on" && typeof value === "boolean") {
+    return `已为你${value ? "打开" : "关闭"}${name}。`;
+  }
+  return `已为你设置${name}的${operation.label}。`;
 }
 
 async function authorizeSceneAction(input: {

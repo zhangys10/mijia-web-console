@@ -66,14 +66,31 @@ export function buildDeviceStatusSnapshot(input: {
   timedOut: boolean;
 }): DeviceStatus {
   const model = buildDeviceManagementModel(input.devices);
-  // Only the 首页-relevant, controllable/readable hardware: lights, light groups and
-  // other powered devices. Switch panels and controllers are control surfaces whose
-  // channel state is already reflected on the light they drive.
-  const reported = model.records.filter(record =>
-    ["smart-light", "group", "other"].includes(record.category),
-  );
+  // Lighting is projected from the same topology used by the web UI. In particular,
+  // an ordinary lamp wired behind a wall-switch channel is a topology load rather
+  // than a standalone smart-light record. Reporting records alone silently dropped
+  // those named loads from AI exposure settings.
+  const lightingItems = model.topologies
+    .filter(topology => topology.kind !== "unknown" && topology.stateSource !== "unknown")
+    .map(topology => {
+      const stateDevice = topology.stateSource === "smart-device"
+        ? topology.lights[0]
+        : topology.loads[0] ?? topology.controls[0]?.endpoint ?? topology.controls[0]?.device;
+      return {
+        room: topology.room || "未分配",
+        item: {
+          name: topology.name,
+          kind: stateDevice?.kind ?? (topology.kind === "smart-light-group" ? "light-group" : "light"),
+          state: topology.on === true ? "on" as const : topology.on === false ? "off" as const : "unknown" as const,
+          online: topology.online === true,
+        } satisfies DeviceRoomItem,
+      };
+    });
 
-  const itemsByDevice = reported.map(record => ({
+  // Non-light powered devices remain record-based. Switch panels and controllers
+  // are control surfaces and are never exposed as the appliance they drive.
+  const otherRecords = model.records.filter(record => record.category === "other");
+  const otherItems = otherRecords.map(record => ({
     room: record.device.room || "未分配",
     item: {
       name: record.device.name,
@@ -82,6 +99,7 @@ export function buildDeviceStatusSnapshot(input: {
       online: record.device.online === true,
     } satisfies DeviceRoomItem,
   }));
+  const itemsByDevice = [...lightingItems, ...otherItems];
 
   const rooms = [...new Set(itemsByDevice.map(entry => entry.room))]
     .sort(compareRooms)
@@ -99,7 +117,7 @@ export function buildDeviceStatusSnapshot(input: {
   const warnings: string[] = [];
   if (input.specificationFailureCount > 0) warnings.push("部分设备规格解析失败，其状态可能不准确。");
   if (input.failedBatchCount > 0 || input.timedOut) warnings.push("部分设备状态暂时不可用。");
-  if (reported.some(record => record.device.online !== true)) warnings.push("部分设备当前离线。");
+  if (itemsByDevice.some(entry => !entry.item.online)) warnings.push("部分设备当前离线。");
 
   const itemCount = rooms.reduce((count, group) => count + group.items.length, 0);
   const poweredOn = rooms.reduce(
@@ -110,7 +128,7 @@ export function buildDeviceStatusSnapshot(input: {
     capturedAt: input.capturedAt,
     completeness: itemCount === 0
       ? "empty"
-      : reported.some(record => deviceState(record.device) === "unknown") || warnings.length > 0
+      : itemsByDevice.some(entry => entry.item.state === "unknown") || warnings.length > 0
         ? "partial"
         : "complete",
     poweredOn,

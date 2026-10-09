@@ -76,6 +76,74 @@ test("groups device on/off state by room like the home dashboard", async () => {
   assert.equal(snapshot.poweredOn, 2);
 });
 
+test("reports a named ordinary light wired behind a switch channel", async () => {
+  const physicalDid = "switch-1";
+  const endpointDid = `${physicalDid}.s2`;
+  const channel = {
+    channelIndex: 1,
+    channelSiid: 2,
+    label: "按键 1",
+    connectionType: "wired",
+    reportedOn: false,
+    relayEnabled: true,
+    modeCapability: "wired-capable",
+    classification: "wired-load",
+    controlObjectStatus: "complete",
+    controlObjectComplete: true,
+    controlObjects: [],
+    targets: [],
+    edges: [],
+    powerControl: { did: physicalDid, siid: 2, piid: 1 },
+  };
+  const ownerTopology = {
+    identity: `home-1:${physicalDid}`,
+    homeId: "home-1",
+    did: physicalDid,
+    role: "primary",
+    relation: "unmapped",
+    parentId: null,
+    controlledBy: [],
+    controls: [],
+    channels: [channel],
+  };
+  const endpointTopology = {
+    identity: `home-1:${endpointDid}`,
+    homeId: "home-1",
+    did: endpointDid,
+    role: "endpoint",
+    relation: "mapped",
+    parentId: physicalDid,
+    channelIndex: 1,
+    channelSiid: 2,
+    connectionType: "wired",
+    controlledBy: [],
+    controls: [],
+    channels: [],
+  };
+  const snapshot = await collectDeviceStatus(session, "home-1", {
+    listDevices: fakeDiscovery(),
+    sync: fakeSync([
+      viewDevice({ did: physicalDid, name: "主卧双开", model: "xiaomi.switch.demo2", room: "主卧", on: null, topology: ownerTopology }),
+      viewDevice({
+        did: endpointDid,
+        name: "主卧灯带",
+        model: "xiaomi.switch.demo2",
+        room: "主卧",
+        parentId: physicalDid,
+        on: false,
+        powerControl: { did: physicalDid, siid: 2, piid: 1 },
+        topology: endpointTopology,
+      }),
+    ]),
+  });
+
+  assert.deepEqual(snapshot.rooms, [{
+    room: "主卧",
+    items: [{ name: "主卧灯带", kind: "switch", state: "off", online: true }],
+  }]);
+  assert.ok(!JSON.stringify(snapshot).includes("主卧双开"));
+});
+
 test("offline devices and missing power readings stay unknown instead of guessed", async () => {
   const snapshot = await collectDeviceStatus(session, "home-1", {
     listDevices: fakeDiscovery(),
