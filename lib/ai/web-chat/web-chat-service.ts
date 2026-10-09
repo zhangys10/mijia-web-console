@@ -10,7 +10,7 @@ import { loadAgentScenes, type AgentSceneRecord } from "../tools/agent-scene-cat
 import { isSceneExposed, readAssistantExposure } from "../tools/assistant-exposure.ts";
 import { matchSceneActionIntent } from "../tools/scene-action-intent.ts";
 import { loadDeviceOperationCatalog } from "../tools/device-operation-catalog.ts";
-import { matchDeviceActionIntent } from "../tools/device-action-intent.ts";
+import { matchDeviceActionBatchIntent } from "../tools/device-action-intent.ts";
 import type { WebAgentClient } from "./agent-client.ts";
 import {
   createConversationHandle,
@@ -292,11 +292,11 @@ export class AiWebService {
         && exposure.enabled && exposure.deviceActionsEnabled) {
         const discovery = await this.loadDevices(session);
         const catalog = await this.loadDeviceOperations(discovery, input.homeId, exposure.deviceDids);
-        const selected = matchDeviceActionIntent(input.message, catalog);
+        const selected = matchDeviceActionBatchIntent(input.message, catalog);
         if (selected) {
           actionGrant = { kind: "device_property", requestId: id, idempotencyKey,
-            deviceId: selected.device.deviceId, operationId: selected.operation.operationId,
-            revision: selected.operation.revision, value: selected.value, messageHash,
+            deviceId: selected.device.deviceId,
+            operations: selected.operations.map(({ operation, value }) => ({ operationId: operation.operationId, revision: operation.revision, value })), messageHash,
             expiresAt: now + 60_000 };
           scopes.push("device:operate");
         }
