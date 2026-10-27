@@ -10,20 +10,20 @@ test("strip segments share endpoints and preserve independent directions and len
   assert.ok(Math.abs(points[2].x - 2) < 1e-10);
   assert.ok(Math.abs(points[3].x) < 1e-10);
   assert.equal(points[3].y, 3.0000000000000004);
-  const effect = createDeviceEffect({ kind: "light", on: true }, { type: "strip", length: 1, width: 1, segments: [{ length: 2, angle: 0 }, { length: 3, angle: 90 }] }, 2.4);
-  assert.equal(effect.children.length, 4);
+  const effect = createDeviceEffect({ kind: "light", on: true }, { type: "strip", fixture: "strip", length: 1, width: 1, segments: [{ length: 2, angle: 0 }, { length: 3, angle: 90 }] }, 2.4);
+  assert.equal(effect.children.length, 3);
   assert.equal(effect.children[0].position.y, 2.4);
-  assert.equal(effect.children[2].geometry.parameters.width, 3);
+  assert.equal(effect.children[1].geometry.parameters.width, 3);
 });
 
 test("area and curtain visuals respect configured dimensions", () => {
-  const appearance = { type: "area", length: 4, width: 2, segments: [{ length: 1, angle: 0 }] };
+  const appearance = { type: "area", fixture: "panel", length: 4, width: 2, segments: [{ length: 1, angle: 0 }] };
   const area = createDeviceEffect({ kind: "light", on: true }, appearance);
-  assert.equal(area.children[0].geometry.parameters.width, 4);
-  assert.equal(area.children[0].geometry.parameters.depth, 2);
+  assert.equal(area.children[1].geometry.parameters.width, 4);
+  assert.equal(area.children[1].geometry.parameters.depth, 2);
   const curtain = createDeviceEffect({ kind: "curtain", on: null, position: 0 }, appearance);
   assert.equal(curtain.children[0].scale.x, 2);
-  assert.equal(createDeviceEffect({ kind: "light", on: null }, appearance).children.length, 0);
+  assert.ok(createDeviceEffect({ kind: "light", on: null }, appearance).children.length > 0);
   assert.equal(createDeviceEffect({ kind: "light", on: true, online: false }, appearance).children.length, 0);
 });
 
