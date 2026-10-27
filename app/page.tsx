@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import DeviceManagement from "./device-management";
+import SpatialRoomView, { type SpatialControlInput } from "./spatial-room-view";
 import { isDeviceGroupId } from "../lib/device-groups";
 import { buildActiveDeviceGroups, type ActiveDeviceGroup, type ActiveDeviceItem, type ManagedDevice, type ManagedPowerControl } from "../lib/device-management";
 import type { DeviceControlSource, DeviceTopology } from "../lib/device-topology";
@@ -299,6 +300,28 @@ export default function Home({ initialTab = "首页" }: { initialTab?: string } 
     finally{setOperating("")}
   }
 
+  async function applySpatialControl(device:Device,input:SpatialControlInput):Promise<"confirmed"|"pending">{
+    if(!device.online)throw new Error("设备当前离线，无法控制");
+    if(!connection.connected||selectedHome==="demo")throw new Error("演示模式不会控制物理设备");
+    const operation=`spatial:${input.did}:${input.siid}.${input.piid}`;
+    setOperating(operation);
+    try{
+      const response=await fetch("/api/xiaomi/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({did:input.did,siid:input.siid,piid:input.piid,value:input.value})});
+      const result=await response.json();
+      if(!response.ok||!result.ok)throw new Error(result.error||"XIAOMI_CONTROL_FAILED");
+      if(result.status==="outcome_unknown")return "pending";
+      const verify=await fetch(`/api/xiaomi/control?did=${encodeURIComponent(input.did)}&properties=${input.siid}.${input.piid}`);
+      const state=await verify.json();
+      const confirmed=verify.ok&&Object.is(state.values?.[`${input.siid}.${input.piid}`],input.value);
+      if(!confirmed)return "pending";
+      if(input.isPower){
+        setDevices(list=>list.map(item=>item.did===input.did||item.powerControl?.did===input.did&&item.powerControl.siid===input.siid&&item.powerControl.piid===input.piid?{...item,on:Boolean(input.value),status:input.value?"已开启":"已关闭"}:item));
+        setSelectedDevice(current=>current&&(current.did===input.did||current.powerControl?.did===input.did&&current.powerControl.siid===input.siid&&current.powerControl.piid===input.piid)?{...current,on:Boolean(input.value),status:input.value?"已开启":"已关闭"}:current);
+      }
+      return "confirmed";
+    }finally{setOperating("")}
+  }
+
   async function closeActiveDevice(item:ActiveDeviceItem<Device>){
     if(operating)return;
     const operation=`active:${item.key}`;
@@ -395,12 +418,23 @@ export default function Home({ initialTab = "首页" }: { initialTab?: string } 
 
   return <main className="shell">
     {mobileMenuOpen&&<button type="button" className="mobile-menu-backdrop" aria-label="关闭菜单" onClick={()=>setMobileMenuOpen(false)}/>}
-    <aside className={`sidebar ${mobileMenuOpen?"mobile-menu-open":""}`} aria-label="主菜单"><button type="button" className="mobile-menu-close" aria-label="关闭菜单" onClick={()=>setMobileMenuOpen(false)}>×</button><div className="brand"><b>mi</b><div><strong>米家控制台</strong><small>{connection.connected?regionLabels[connection.region||"cn"]:"米家云直连"}</small></div></div><nav>{[["首页","⌂"],["设备","▦"],["环境","≋"],["场景","✦"],["自动化","⌁"],["能耗","ϟ"],["设置","⚙"]].map(([name,icon])=><button key={name} className={tab===name?"active":""} aria-current={tab===name?"page":undefined} onClick={()=>{setTab(name);setMobileMenuOpen(false);if(typeof window!=="undefined"){if(name==="设置")window.history.pushState(null,"","/ai/settings");else if(window.location.pathname==="/ai/settings")window.history.pushState(null,"","/")}}}><i>{icon}</i>{name}</button>)}</nav><div className="sidefoot"><button type="button" className={`mode ${connection.connected?"connected":""}`} aria-label="账号与连接" title="账号与连接" onClick={()=>{setMobileMenuOpen(false);openLogin()}}><span/><div><strong>{connection.loading?"检查连接中":connection.connected?"米家云已连接":"演示模式"}</strong><small>{connection.connected?`账号 ${connection.userId}`:"扫码登录以同步真实设备"}</small></div></button><div className="profile"><b>{connection.connected?"米":"访"}</b><div><strong>{dashboardAccountLabel(connection.connected,connection.userId)}</strong><small>{connection.connected?"已安全连接":"尚未连接米家"}</small></div><i>⋯</i></div></div></aside>
+    <aside className={`sidebar ${mobileMenuOpen?"mobile-menu-open":""}`} aria-label="主菜单"><button type="button" className="mobile-menu-close" aria-label="关闭菜单" onClick={()=>setMobileMenuOpen(false)}>×</button><div className="brand"><b>mi</b><div><strong>米家控制台</strong><small>{connection.connected?regionLabels[connection.region||"cn"]:"米家云直连"}</small></div></div><nav>{[["首页","⌂"],["3D 家庭","◇"],["设备","▦"],["环境","≋"],["场景","✦"],["自动化","⌁"],["能耗","ϟ"],["设置","⚙"]].map(([name,icon])=><button key={name} className={tab===name?"active":""} aria-current={tab===name?"page":undefined} onClick={()=>{setTab(name);setMobileMenuOpen(false);if(typeof window!=="undefined"){if(name==="设置")window.history.pushState(null,"","/ai/settings");else if(window.location.pathname==="/ai/settings")window.history.pushState(null,"","/")}}}><i>{icon}</i>{name}</button>)}</nav><div className="sidefoot"><button type="button" className={`mode ${connection.connected?"connected":""}`} aria-label="账号与连接" title="账号与连接" onClick={()=>{setMobileMenuOpen(false);openLogin()}}><span/><div><strong>{connection.loading?"检查连接中":connection.connected?"米家云已连接":"演示模式"}</strong><small>{connection.connected?`账号 ${connection.userId}`:"扫码登录以同步真实设备"}</small></div></button><div className="profile"><b>{connection.connected?"米":"访"}</b><div><strong>{dashboardAccountLabel(connection.connected,connection.userId)}</strong><small>{connection.connected?"已安全连接":"尚未连接米家"}</small></div><i>⋯</i></div></div></aside>
 
-    <section className="workspace"><header className="workspace-header"><button type="button" className="mobile-menu-toggle" aria-label="打开菜单" aria-expanded={mobileMenuOpen} onClick={()=>setMobileMenuOpen(open=>!open)}>☰</button><div className="header-copy"><p>{dashboardNow?formatDashboardDate(dashboardNow):"今天"}</p><h1>{tab==="首页"?(dashboardNow?dashboardGreeting(dashboardNow):"你好"):tab}</h1></div><div className="header-controls">{!connection.loading&&<HomeSelector homes={homes} selectedHome={selectedHome} devices={devices} onSelect={selectHome}/>}<div className="actions"><button className="primary" disabled={connection.loading||syncing||syncCooling} onClick={connection.connected?()=>void syncDevices():openLogin}>{connection.loading?"检查连接中…":syncing?"↻ 同步中…":syncCooling?"请稍后重试":connection.connected?"↻ 同步设备":"＋ 连接米家"}</button></div></div></header>
+    <section className={`workspace ${tab==="3D 家庭"?"spatial-workspace":""}`}><header className={`workspace-header ${tab==="3D 家庭"?"spatial-page-header":""}`}><button type="button" className="mobile-menu-toggle" aria-label="打开菜单" aria-expanded={mobileMenuOpen} onClick={()=>setMobileMenuOpen(open=>!open)}>☰</button><div className="header-copy"><p>{tab==="3D 家庭"?"SPATIAL HOME":dashboardNow?formatDashboardDate(dashboardNow):"今天"}</p><h1>{tab==="首页"?(dashboardNow?dashboardGreeting(dashboardNow):"你好"):tab}</h1>{tab==="3D 家庭"&&<small>以空间为中心查看状态、聚焦房间并控制已验证能力</small>}</div><div className="header-controls">{!connection.loading&&<HomeSelector homes={homes} selectedHome={selectedHome} devices={devices} onSelect={selectHome}/>}<div className="actions"><button className="primary" disabled={connection.loading||syncing||syncCooling} onClick={connection.connected?()=>void syncDevices():openLogin}>{connection.loading?"检查连接中…":syncing?"↻ 同步中…":syncCooling?"请稍后重试":connection.connected?"↻ 同步设备":"＋ 连接米家"}</button></div></div></header>
 
+    {!connection.loading&&tab==="3D 家庭"&&(
+      <SpatialRoomView
+        key={selectedHome}
+        devices={homeDevices}
+        homeId={selectedHome}
+        connected={connection.connected}
+        onOpenDevice={device=>void openDevice(device)}
+        onQuickControl={applySpatialControl}
+      />
+    )}
     {connection.loading?<div className="initial-loading" role="status">正在检查米家连接与家庭数据…</div>:tab==="首页"?<>
       <section className="overview-status" aria-label="家庭摘要"><div><span>环境</span><strong>{connection.connected ? environment?.groups.find(group=>group.latest)?.latest ? `${environment.groups.find(group=>group.latest)!.latest!.value}${environment.groups.find(group=>group.latest)!.unit}` : "暂无数据" : "演示模式"}</strong><small>{connection.connected ? environment?.groups.find(group=>group.latest)?.latest?.sourceLabel ?? "前往环境页查看读数" : "环境读数仅展示真实设备"}</small></div><div><span>当前运行</span><strong>{activeDeviceCount} 台</strong><small>基于已确认设备状态</small></div><div><span>常用场景</span><strong>{quickScenes.length} 个</strong><small>{connection.connected ? "当前家庭手动场景" : "演示场景"}</small></div><div><span>需关注</span><strong>{!connection.connected ? "未连接" : syncWarnings.length ? `${syncWarnings.length} 项` : connection.error ? "同步失败" : "暂无"}</strong><small>{!connection.connected ? "连接后显示同步告警" : syncWarnings.length ? "部分数据未获取" : connection.error ? friendlyError(connection.error) : "以最近同步结果为准"}</small></div></section>
+      <section className="spatial-home-entry"><div><span>◇ SPATIAL HOME</span><h2>从空间进入你的家</h2><p>在同一张 3D 户型里查看灯光与设备状态，聚焦房间，并使用已验证的快捷控制。</p></div><button type="button" onClick={()=>setTab("3D 家庭")}>打开 3D 家庭 <b>→</b></button></section>
       <Title title="当前运行" sub={`${currentHome?.name??"当前家庭"} · ${activeDeviceCount} 台设备正在运行`} action="管理设备 →" onAction={()=>setTab("设备")}/>
       <ActiveDeviceList groups={activeDeviceGroups} connected={connection.connected} operating={operating} onOpen={(device,mappedDevice)=>void openDevice(device,mappedDevice)} onClose={item=>void closeActiveDevice(item)} onManage={()=>setTab("设备")}/>
       <Title title="快捷场景" sub={connection.connected?"当前家庭的真实手动场景":"演示场景 · 连接米家后显示真实数据"} action="管理场景 →" onAction={()=>setTab("场景")}/><SceneStateMessage loading={connection.connected&&sceneState.loading} error={connection.connected?sceneState.error:undefined}/><section className="scenes">{quickScenes.map((scene,index)=><SceneCard key={scene.id} scene={scene} tone={["orange","blue","violet","indigo"][index%4]} connected={connection.connected} running={sceneOperating===scene.id} blocked={Boolean(sceneOperating)} compact onOpen={()=>openScene(scene)} onRun={item=>void runScene(item)}/>)}</section>{!sceneState.loading&&!sceneState.error&&quickScenes.length===0&&<SceneStateMessage empty/>}

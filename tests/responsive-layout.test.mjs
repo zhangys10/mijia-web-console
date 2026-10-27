@@ -34,7 +34,7 @@ test("keeps typography readable across desktop, tablet and mobile layouts", asyn
 test("mobile navigation opens the complete account drawer and closes safely", async () => {
   const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 
-  assert.match(source, /<header className="workspace-header"><button type="button" className="mobile-menu-toggle" aria-label="打开菜单"/);
+  assert.match(source, /<header className=\{`workspace-header \$\{tab==="3D 家庭"\?"spatial-page-header":""\}`\}><button type="button" className="mobile-menu-toggle" aria-label="打开菜单"/);
   assert.match(source, /aria-expanded=\{mobileMenuOpen\}/);
   assert.match(source, /className="mobile-menu-backdrop" aria-label="关闭菜单"/);
   assert.match(source, /className="mobile-menu-close" aria-label="关闭菜单"/);

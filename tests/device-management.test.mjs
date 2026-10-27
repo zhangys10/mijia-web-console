@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { targetsFor } from "../lib/spatial-targets.ts";
 import {
   buildDeviceTopology,
   deviceChannelStateKey,
@@ -23,6 +24,20 @@ function runtime(homeId, did, siid, connectionType, reportedOn = false, buttonIn
     evidence: connectionType === "unknown" ? "unknown" : "miot-property",
   };
 }
+
+test("spatial targets retain switch-controlled lamps with endpoint power addresses", () => {
+  const devices = records([
+    { did: "main", homeId: "fake-home", name: "主控", model: "xiaomi.controller.oh4w", roomName: "客厅" },
+    { did: "main.s14", homeId: "fake-home", name: "顶灯", model: "xiaomi.controller.oh4w", roomName: "客厅" },
+  ], [runtime("fake-home", "main", 14, "wired", true)]);
+  const targets = targetsFor(devices);
+  assert.equal(targets.length, 1);
+  assert.equal(targets[0].name, "顶灯");
+  assert.equal(targets[0].kind, "lighting");
+  assert.equal(targets[0].on, true);
+  assert.deepEqual(targets[0].power, { did: "main", siid: 14, piid: 1 });
+  assert.equal(targets[0].device.did, "main");
+});
 
 function records(raw, states = [], controlObjects = []) {
   const runtimeStates = new Map(states.map(state => [deviceChannelStateKey(state.homeId, state.did, state.siid), state]));
@@ -367,6 +382,12 @@ test("nests published fixtures under their light-group topology without duplicat
   assert.deepEqual(group.groupMembers.map(device => device.did), ["light-1", "light-2"]);
   assert.deepEqual(model.topologies.map(item => item.name), ["客厅射灯", "落地灯"]);
   assert.deepEqual(model.records.map(record => record.device.did), ["group.900", "standalone"]);
+  const spatial = targetsFor(records(raw));
+  assert.deepEqual(spatial.find(item => item.id === "group.900").groupMemberIds, ["light-1", "light-2"]);
+  assert.deepEqual(spatial.find(item => item.id === "light-1").memberOf, ["group.900"]);
+  assert.equal(spatial.find(item => item.id === "light-2").device.did, "light-2");
+  const isolated = targetsFor(records([raw[0], { ...raw[1], homeId: "other-home" }]));
+  assert.deepEqual(isolated.find(item => item.id === "group.900").groupMemberIds, []);
 });
 
 test("keeps unknown channel mode unknown and never defaults it to wired", () => {
