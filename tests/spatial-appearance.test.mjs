@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import * as THREE from "three";
 import { stripPoints, visualParameters, visualProperties } from "../lib/spatial-appearance.ts";
 import { createDeviceEffect } from "../lib/spatial-device-effects.ts";
 import { createFurniture } from "../lib/spatial-furniture.ts";
@@ -11,9 +12,13 @@ test("strip segments share endpoints and preserve independent directions and len
   assert.ok(Math.abs(points[3].x) < 1e-10);
   assert.equal(points[3].y, 3.0000000000000004);
   const effect = createDeviceEffect({ kind: "light", on: true }, { type: "strip", fixture: "strip", length: 1, width: 1, segments: [{ length: 2, angle: 0 }, { length: 3, angle: 90 }] }, 2.4);
-  assert.equal(effect.children.length, 3);
-  assert.equal(effect.children[0].position.y, 2.4);
-  assert.equal(effect.children[1].geometry.parameters.width, 3);
+  const meshes = effect.children.filter(child => child instanceof THREE.Mesh);
+  assert.equal(meshes[0].position.y, 2.4);
+  assert.equal(meshes[1].geometry.parameters.width, 3);
+  const lights = effect.children.filter(child => child instanceof THREE.RectAreaLight);
+  assert.equal(lights.length, 2);
+  assert.deepEqual(lights.map(light => light.width), [2, 3]);
+  assert.ok(lights.some(light => light.position.x === 2 && light.position.z > 1));
 });
 
 test("area and curtain visuals respect configured dimensions", () => {

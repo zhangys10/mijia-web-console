@@ -61,6 +61,17 @@ test("five fixture models resolve compatibly and never add floor geometry", () =
   }
 });
 
+test("strip illumination follows each configured segment as a continuous area light", () => {
+  const group = createLightFixture({ type: "strip", fixture: "strip", length: 1, width: 1, segments: [{ length: 3, angle: 0 }, { length: 3, angle: 90 }] }, 2.3, .8);
+  const lights = group.children.filter(child => child instanceof THREE.RectAreaLight);
+  assert.equal(lights.length, 2);
+  assert.ok(lights.every(light => light.name === "strip-illumination" && light.width === 3 && light.height === .08));
+  assert.ok(lights.some(light => light.position.x === 1.5 && light.position.z === 0));
+  assert.ok(lights.some(light => light.position.x === 3 && light.position.z === 1.5));
+  const downward = new THREE.Vector3(0, 0, -1).applyQuaternion(lights[0].quaternion);
+  assert.ok(downward.y < -.999);
+});
+
 test("spotlight has a visible articulated head with its lens attached", () => {
   const group = createLightFixture({ type: "point", fixture: "spotlight", length: 1.2, width: 1, segments: [{ length: 1, angle: 0 }] }, 2.3, 1);
   const head = group.getObjectByName("spotlight-head");

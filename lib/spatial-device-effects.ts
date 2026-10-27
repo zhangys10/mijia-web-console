@@ -36,6 +36,13 @@ export function createLightFixture(appearance: SpatialPlacement["appearance"] | 
       const start = points[index - 1], end = points[index], segmentLength = Math.hypot(end.x - start.x, end.y - start.y);
       const strip = new THREE.Mesh(new THREE.BoxGeometry(segmentLength, .04, .07), luminous.clone());
       strip.material.userData.luminous = true; strip.position.set((start.x + end.x) / 2, elevation, (start.y + end.y) / 2); strip.rotation.y = -Math.atan2(end.y - start.y, end.x - start.x); group.add(strip);
+      if (strength > 0) {
+        const dx = (end.x - start.x) / segmentLength, dz = (end.y - start.y) / segmentLength;
+        const light = new THREE.RectAreaLight(0xffd28a, 7 * strength, segmentLength, .08); light.name = "strip-illumination";
+        light.position.set((start.x + end.x) / 2, elevation - .045, (start.y + end.y) / 2);
+        light.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(dx, 0, dz), new THREE.Vector3(dz, 0, -dx), new THREE.Vector3(0, 1, 0)));
+        group.add(light);
+      }
     }
   } else if (fixture === "panel") {
     const frame = new THREE.Mesh(new THREE.BoxGeometry(length + .06, .07, width + .06), shell); frame.position.y = elevation; group.add(frame);
@@ -55,7 +62,7 @@ export function createLightFixture(appearance: SpatialPlacement["appearance"] | 
     const body = new THREE.Mesh(new THREE.CylinderGeometry(Math.max(.16, length / 2), Math.max(.16, length / 2), .08, 32), shell); body.position.y = elevation; group.add(body);
     const diffuser = new THREE.Mesh(new THREE.CylinderGeometry(Math.max(.13, length / 2 - .035), Math.max(.13, length / 2 - .035), .025, 32), luminous); diffuser.position.y = elevation - .052; group.add(diffuser);
   }
-  if (strength > 0) { const light = new THREE.PointLight(0xffd28a, 12 * strength, 6); light.position.y = elevation - .08; group.add(light); }
+  if (strength > 0 && fixture !== "strip") { const light = new THREE.PointLight(0xffd28a, 12 * strength, 6); light.position.y = elevation - .08; group.add(light); }
   group.userData.fixture = fixture;
   return group;
 }

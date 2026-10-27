@@ -7,6 +7,8 @@ import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRe
 import { createTransitioningDeviceEffect, disposeSpatialObject, interpolateVisualState, type SpatialVisualState } from "../lib/spatial-device-effects";
 import { spatialIconKind, spatialIconSvg } from "../lib/spatial-device-icons";
 import { shouldExpandSpatialMarker } from "../lib/spatial-marker";
+import { applySpatialEnvironment, type SpatialEnvironmentMode } from "../lib/spatial-environment";
+import { spatialMotorActions, type SpatialMotorAction } from "../lib/spatial-motor-control";
 import { useSpatialFullscreen } from "./use-spatial-fullscreen";
 import { DevicePlacementPanel } from "./spatial-device-placement-panel";
 import { stripPoints, visualProperties, visualParameters, type VisualProperty } from "../lib/spatial-appearance";
@@ -208,7 +210,9 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
   const effectsRef = useRef<THREE.Group | null>(null);
   const renderedStates = useRef<Record<string, SpatialVisualState>>({});
   const visualTransitions = useRef<Record<string, { from: SpatialVisualState; to: SpatialVisualState; started: number; duration: number }>>({});
-  const host = useRef<HTMLDivElement | null>(null), [selected, setSelected] = useState(""), [focus, setFocus] = useState(""), [webgl, setWebgl] = useState(true);
+  const host = useRef<HTMLDivElement | null>(null), [selected, setSelected] = useState(""), [focus, setFocus] = useState(""), [webgl, setWebgl] = useState(true), [environmentMode, setEnvironmentMode] = useState<SpatialEnvironmentMode>("day");
+  const environmentModeRef = useRef(environmentMode);
+  useEffect(() => { environmentModeRef.current = environmentMode; }, [environmentMode]);
   const [readings, setReadings] = useState<Record<string, boolean | null>>({});
   const confirmedReadings = useRef<Record<string, boolean | null>>({});
   const readGeneration = useRef(0);
@@ -254,9 +258,9 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
     const element = host.current;
     if (!element) return;
     const scene = new THREE.Scene(); sceneRef.current = scene;
-    scene.background = new THREE.Color(0xf4f0e9);
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x8b92a0, 1.5));
-    const sun = new THREE.DirectionalLight(0xffffff, 2); sun.position.set(8, 14, 9); scene.add(sun);
+    const hemisphere = new THREE.HemisphereLight(); hemisphere.name = "spatial-environment-hemisphere"; scene.add(hemisphere);
+    const sun = new THREE.DirectionalLight(); sun.name = "spatial-environment-directional"; sun.position.set(8, 14, 9); scene.add(sun);
+    applySpatialEnvironment(scene, environmentModeRef.current);
     let renderer: THREE.WebGLRenderer;
     try { renderer = new THREE.WebGLRenderer({ antialias: true }); } catch { queueMicrotask(() => setWebgl(false)); return; }
     const labels = new CSS2DRenderer();
@@ -264,7 +268,9 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
     renderer.domElement.className = "spatial-webgl"; renderer.domElement.tabIndex = 0;
     renderer.domElement.setAttribute("aria-label", "3D 空间：拖动旋转，双指滑动平移，捏合或加减键缩放");
     labels.domElement.className = "spatial-label-layer";
-    element.replaceChildren(renderer.domElement, labels.domElement);
+    const modeControl = document.createElement("div"); modeControl.className = "spatial-environment-mode"; modeControl.setAttribute("role", "group"); modeControl.setAttribute("aria-label", "3D 光照模式");
+    for (const [mode, label] of [["day", "日间"], ["night", "夜间"]] as const) { const button = document.createElement("button"); button.type = "button"; button.dataset.mode = mode; button.textContent = label; const active = mode === environmentModeRef.current; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active)); button.onclick = () => setEnvironmentMode(mode); modeControl.append(button); }
+    element.replaceChildren(renderer.domElement, labels.domElement, modeControl);
     const camera = new THREE.OrthographicCamera(-8, 8, 6, -6, .1, 200);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.touches.ONE = THREE.TOUCH.ROTATE;
@@ -329,6 +335,12 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
       disposeSpatialObject(scene); sceneRef.current = null; effectsRef.current = null; element.replaceChildren();
     };
   }, [homeId, layout, focus, resetVersion]);
+  useEffect(() => {
+    if (sceneRef.current) applySpatialEnvironment(sceneRef.current, environmentMode);
+    for (const button of host.current?.querySelectorAll<HTMLButtonElement>(".spatial-environment-mode button") ?? []) {
+      const active = button.dataset.mode === environmentMode; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active));
+    }
+  }, [environmentMode]);
   useEffect(() => {
     const scene = sceneRef.current; if (!scene) return;
     const animationFrames: number[] = [];
@@ -399,18 +411,20 @@ function QuickPanel({ connected, placement, target, visualState, onClose, onOpen
   onOpen: () => void;
   onControl: Props["onQuickControl"];
 }) {
-  type SpecProperty = VisualProperty & { key: string; label: string; writable: boolean; range?: { min: number; max: number; step: number }; unit?: string };
+  type SpecProperty = VisualProperty & { key: string; label: string; writable: boolean; range?: { min: number; max: number; step: number }; unit?: string; choices?: Array<{ value: boolean | number | string; label: string; sourceLabel?: string }> };
   const device = target.device, canLoad = Boolean(connected && device?.did && device.detail);
   const visualCallback = useRef(onVisualState);
   useEffect(() => { visualCallback.current = onVisualState; }, [onVisualState]);
-  const [property, setProperty] = useState<QuickProperty | null>(null), [value, setValue] = useState(0), [loading, setLoading] = useState(canLoad), [notice, setNotice] = useState("");
+  const [property, setProperty] = useState<QuickProperty | null>(null), [motorActions, setMotorActions] = useState<SpatialMotorAction[]>([]), [value, setValue] = useState(0), [loading, setLoading] = useState(canLoad), [notice, setNotice] = useState("");
   useEffect(() => {
     let current = true;
     if (!connected || !device?.did || !device.detail) return;
     fetch(`/api/xiaomi/spec?model=${encodeURIComponent(device.detail)}`).then(async specResponse => {
       const data = await specResponse.json();
       if (!specResponse.ok) throw new Error(responseError(data, "SPEC_FAILED"));
+      if (!current) return;
       const properties = (data.groups as Array<{ properties: SpecProperty[] }>).flatMap(group => group.properties);
+      setMotorActions(spatialMotorActions(properties));
       const candidate = properties.find(item => item.readable && item.writable && item.range && ["brightness", "target-position", "target-temperature"].includes(item.name));
       const visuals = visualProperties(properties);
       const requested = [...new Map([...visuals, ...(candidate ? [candidate] : [])].map(item => [`${item.siid}.${item.piid}`, item])).values()];
@@ -467,6 +481,7 @@ function QuickPanel({ connected, placement, target, visualState, onClose, onOpen
     {curtain && <dl className="spatial-position-readout"><div><dt>当前位置</dt><dd>{visualState.currentPosition === undefined ? "待读取" : `${Math.round(visualState.currentPosition * 100)}%`}</dd></div><div><dt>目标位置</dt><dd>{visualState.targetPosition === undefined ? "未报告" : `${Math.round(visualState.targetPosition * 100)}%`}</dd></div></dl>}
     {visualState.pending && <p role="status" className="spatial-pending-state">3D 预览正在等待设备同步</p>}
     {target.power && device && <button type="button" className="spatial-power" disabled={!connected || target.online === false || loading} onClick={() => void apply({ ...target.power!, value: target.on !== true, label: "电源", propertyKey: "power", isPower: true })}>{target.on === true ? "关闭" : "开启"}</button>}
+    {motorActions.length > 0 && device && <fieldset className="spatial-motor-controls"><legend>电机控制</legend><div>{motorActions.map(action => <button type="button" key={action.action} className={action.action} disabled={!connected || target.online === false || loading} onClick={() => void apply({ did: device.did!, siid: action.siid, piid: action.piid, value: action.value, label: action.label, propertyKey: action.propertyKey })}>{action.label}</button>)}</div></fieldset>}
     {loading && <small role="status">正在读取或确认能力…</small>}
     {property && <fieldset><label htmlFor="spatial-range">{property.label}：{value}{property.unit ?? ""}</label><input id="spatial-range" type="range" min={property.min} max={property.max} step={property.step} value={value} disabled={!connected || loading} onChange={event => setValue(Number(event.target.value))} /><button type="button" disabled={!connected || loading || !device} onClick={() => void apply({ did: device!.did!, siid: property.siid, piid: property.piid, value, label: property.label, propertyKey: property.key })}>应用</button></fieldset>}
     {notice && <p role="status" className="spatial-control-note">{notice}</p>}<button type="button" className="spatial-details" disabled={!device} onClick={onOpen}>打开设备详情</button>{!connected && <small>演示或未连接状态仅可查看，不能控制物理设备。</small>}</div>;

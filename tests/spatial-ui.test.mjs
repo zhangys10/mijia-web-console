@@ -29,6 +29,7 @@ test("editor and responsive UI include wall-free areas, side panel and mobile bo
   assert.match(styles, /spatial-marker\.compact \.spatial-marker-icon\{width:28px;height:28px/);
   assert.match(source, /marker\.matches\(":hover"\)/);
   assert.match(source, /hoverEnded = marker\.dataset\.hovered === "true" && !hovered/);
+  assert.match(source, /aria-label", "3D 光照模式"/); assert.match(source, /applySpatialEnvironment/);
   assert.match(styles, /@media\(max-width:900px\)/); assert.match(styles, /@media\(max-width:560px\)/);
   assert.match(styles, /spatial-editor-grid>main\{align-self:start;position:sticky/); assert.match(styles, /spatial-editor-grid>main\{position:static;max-height:none\}/);
 });
@@ -39,6 +40,7 @@ test("quick controls are verified and unknown outcomes are explicitly pending wi
   assert.match(page, /Object\.is\(state\.values/);
   assert.doesNotMatch(page.match(/async function applySpatialControl[\s\S]+?\n  }/)?.[0] ?? "", /while\s*\(|retry/i);
   assert.match(source, /brightness/); assert.match(source, /target-position/); assert.match(source, /target-temperature/);
+  assert.match(source, /spatialMotorActions\(properties\)/); assert.match(source, /spatial-motor-controls/); assert.match(source, /电机控制/);
   assert.match(source, /当前位置/); assert.match(source, /目标位置/); assert.match(source, /pending: true/); assert.match(source, /3D 为待同步预览/);
   const quickApply = source.match(/async function apply\(input: SpatialControlInput\)[\s\S]+?finally \{ setLoading\(false\); \}/)?.[0] ?? "";
   assert.ok(quickApply.indexOf("pending: true") < quickApply.indexOf("await onControl"));
