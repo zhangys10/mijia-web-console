@@ -7,6 +7,7 @@ import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRe
 import { createTransitioningDeviceEffect, disposeSpatialObject, interpolateVisualState, type SpatialVisualState } from "../lib/spatial-device-effects";
 import { spatialIconKind, spatialIconSvg } from "../lib/spatial-device-icons";
 import { shouldExpandSpatialMarker } from "../lib/spatial-marker";
+import { applySpatialEnvironment, type SpatialEnvironmentMode } from "../lib/spatial-environment";
 import { useSpatialFullscreen } from "./use-spatial-fullscreen";
 import { DevicePlacementPanel } from "./spatial-device-placement-panel";
 import { stripPoints, visualProperties, visualParameters, type VisualProperty } from "../lib/spatial-appearance";
@@ -208,7 +209,9 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
   const effectsRef = useRef<THREE.Group | null>(null);
   const renderedStates = useRef<Record<string, SpatialVisualState>>({});
   const visualTransitions = useRef<Record<string, { from: SpatialVisualState; to: SpatialVisualState; started: number; duration: number }>>({});
-  const host = useRef<HTMLDivElement | null>(null), [selected, setSelected] = useState(""), [focus, setFocus] = useState(""), [webgl, setWebgl] = useState(true);
+  const host = useRef<HTMLDivElement | null>(null), [selected, setSelected] = useState(""), [focus, setFocus] = useState(""), [webgl, setWebgl] = useState(true), [environmentMode, setEnvironmentMode] = useState<SpatialEnvironmentMode>("day");
+  const environmentModeRef = useRef(environmentMode);
+  useEffect(() => { environmentModeRef.current = environmentMode; }, [environmentMode]);
   const [readings, setReadings] = useState<Record<string, boolean | null>>({});
   const confirmedReadings = useRef<Record<string, boolean | null>>({});
   const readGeneration = useRef(0);
@@ -254,9 +257,9 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
     const element = host.current;
     if (!element) return;
     const scene = new THREE.Scene(); sceneRef.current = scene;
-    scene.background = new THREE.Color(0xf4f0e9);
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x8b92a0, 1.5));
-    const sun = new THREE.DirectionalLight(0xffffff, 2); sun.position.set(8, 14, 9); scene.add(sun);
+    const hemisphere = new THREE.HemisphereLight(); hemisphere.name = "spatial-environment-hemisphere"; scene.add(hemisphere);
+    const sun = new THREE.DirectionalLight(); sun.name = "spatial-environment-directional"; sun.position.set(8, 14, 9); scene.add(sun);
+    applySpatialEnvironment(scene, environmentModeRef.current);
     let renderer: THREE.WebGLRenderer;
     try { renderer = new THREE.WebGLRenderer({ antialias: true }); } catch { queueMicrotask(() => setWebgl(false)); return; }
     const labels = new CSS2DRenderer();
@@ -264,7 +267,9 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
     renderer.domElement.className = "spatial-webgl"; renderer.domElement.tabIndex = 0;
     renderer.domElement.setAttribute("aria-label", "3D 空间：拖动旋转，双指滑动平移，捏合或加减键缩放");
     labels.domElement.className = "spatial-label-layer";
-    element.replaceChildren(renderer.domElement, labels.domElement);
+    const modeControl = document.createElement("div"); modeControl.className = "spatial-environment-mode"; modeControl.setAttribute("role", "group"); modeControl.setAttribute("aria-label", "3D 光照模式");
+    for (const [mode, label] of [["day", "日间"], ["night", "夜间"]] as const) { const button = document.createElement("button"); button.type = "button"; button.dataset.mode = mode; button.textContent = label; const active = mode === environmentModeRef.current; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active)); button.onclick = () => setEnvironmentMode(mode); modeControl.append(button); }
+    element.replaceChildren(renderer.domElement, labels.domElement, modeControl);
     const camera = new THREE.OrthographicCamera(-8, 8, 6, -6, .1, 200);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.touches.ONE = THREE.TOUCH.ROTATE;
@@ -329,6 +334,12 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
       disposeSpatialObject(scene); sceneRef.current = null; effectsRef.current = null; element.replaceChildren();
     };
   }, [homeId, layout, focus, resetVersion]);
+  useEffect(() => {
+    if (sceneRef.current) applySpatialEnvironment(sceneRef.current, environmentMode);
+    for (const button of host.current?.querySelectorAll<HTMLButtonElement>(".spatial-environment-mode button") ?? []) {
+      const active = button.dataset.mode === environmentMode; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active));
+    }
+  }, [environmentMode]);
   useEffect(() => {
     const scene = sceneRef.current; if (!scene) return;
     const animationFrames: number[] = [];

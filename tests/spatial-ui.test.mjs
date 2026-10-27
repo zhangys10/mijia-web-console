@@ -29,6 +29,7 @@ test("editor and responsive UI include wall-free areas, side panel and mobile bo
   assert.match(styles, /spatial-marker\.compact \.spatial-marker-icon\{width:28px;height:28px/);
   assert.match(source, /marker\.matches\(":hover"\)/);
   assert.match(source, /hoverEnded = marker\.dataset\.hovered === "true" && !hovered/);
+  assert.match(source, /aria-label", "3D 光照模式"/); assert.match(source, /applySpatialEnvironment/);
   assert.match(styles, /@media\(max-width:900px\)/); assert.match(styles, /@media\(max-width:560px\)/);
   assert.match(styles, /spatial-editor-grid>main\{align-self:start;position:sticky/); assert.match(styles, /spatial-editor-grid>main\{position:static;max-height:none\}/);
 });
