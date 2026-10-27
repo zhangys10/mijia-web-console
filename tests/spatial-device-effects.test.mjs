@@ -1,16 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createDeviceEffect, createDeviceIndicator, createTransitioningDeviceEffect, interpolateVisualState } from "../lib/spatial-device-effects.ts";
+import * as THREE from "three";
+import { createDeviceEffect, createLightFixture, createTransitioningDeviceEffect, interpolateVisualState, resolveLightFixture } from "../lib/spatial-device-effects.ts";
 
-test("all device types have distinct known, unknown and active indicators", () => {
-  const active = createDeviceIndicator({ kind: "other", on: true });
-  const off = createDeviceIndicator({ kind: "other", on: false });
-  assert.notEqual(active.children[0].material.color.getHex(), off.children[0].material.color.getHex());
+test("floor status and activity rings are not rendered", () => {
   for (const state of [{ on: null }, { on: true, online: false }]) {
-    assert.equal(createDeviceIndicator({ kind: "other", ...state }).children.length, 2);
     assert.equal(createDeviceEffect({ kind: "other", ...state }).children.length, 0);
   }
-  assert.equal(createDeviceEffect({ kind: "other", on: true }).children.length, 1);
+  assert.equal(createDeviceEffect({ kind: "other", on: true }).children.length, 0);
 });
 
 test("curtain geometry follows position, including zero, independently of power", () => {
@@ -28,24 +25,49 @@ test("curtains interpolate position and lights glow or dim gradually", () => {
   curtain.apply(1); const openedWidth = curtain.group.children[0].scale.x;
   assert.ok(closedWidth > halfWidth && halfWidth > openedWidth);
   const light = createTransitioningDeviceEffect({ kind: "light", on: false }, { kind: "light", on: true, brightness: .8 });
-  light.apply(0); const dark = light.group.children[1].intensity;
-  light.apply(.5); const glowing = light.group.children[1].intensity;
-  light.apply(1); const bright = light.group.children[1].intensity;
+  const point = light.group.children.find(child => child instanceof THREE.PointLight);
+  light.apply(0); const dark = point.intensity;
+  light.apply(.5); const glowing = point.intensity;
+  light.apply(1); const bright = point.intensity;
   assert.ok(dark < glowing && glowing < bright);
   assert.equal(interpolateVisualState({ kind: "curtain", on: null, position: .2 }, { kind: "curtain", on: null, position: .8 }, .5).position, .5);
   assert.equal(interpolateVisualState({ kind: "light", on: false }, { kind: "light", on: true }, .4).brightness, .4);
 });
 
-test("offline, off and unknown lights never illuminate", () => {
-  for (const state of [{ on: false }, { on: null }, { on: true, online: false }]) {
-    assert.equal(createDeviceEffect({ kind: "light", ...state }).children.length, 0);
+test("off and unknown lights retain fixture bodies without illumination", () => {
+  for (const state of [{ on: false }, { on: null }]) {
+    const fixture = createDeviceEffect({ kind: "light", ...state });
+    assert.ok(fixture.children.length > 0);
+    assert.equal(fixture.children.some(child => child instanceof THREE.Light), false);
   }
+  assert.equal(createDeviceEffect({ kind: "light", on: true, online: false }).children.length, 0);
 });
 test("light brightness changes illumination and climate setpoint changes airflow footprint", () => {
   const dim = createDeviceEffect({ kind: "light", on: true, brightness: .2 });
   const bright = createDeviceEffect({ kind: "light", on: true, brightness: .8 });
-  assert.ok(dim.children[1].intensity < bright.children[1].intensity);
+  assert.ok(dim.children.find(child => child instanceof THREE.PointLight).intensity < bright.children.find(child => child instanceof THREE.PointLight).intensity);
   const cool = createDeviceEffect({ kind: "climate", on: true, temperature: 18 });
   const mild = createDeviceEffect({ kind: "climate", on: true, temperature: 26 });
   assert.ok(cool.children[1].scale.x > mild.children[1].scale.x);
+});
+
+test("five fixture models resolve compatibly and never add floor geometry", () => {
+  assert.equal(resolveLightFixture(undefined), "ceiling");
+  assert.equal(resolveLightFixture({ type: "strip", length: 1, width: 1, segments: [{ length: 1, angle: 0 }] }), "strip");
+  for (const fixture of ["ceiling", "pendant", "spotlight", "strip", "panel"]) {
+    const group = createLightFixture({ type: fixture === "strip" ? "strip" : fixture === "panel" ? "area" : "point", fixture, length: 1.2, width: .8, segments: [{ length: 1.2, angle: 0 }] }, 2.3, 1);
+    assert.equal(group.userData.fixture, fixture);
+    assert.equal(group.children.some(child => child.geometry instanceof THREE.CircleGeometry && child.rotation.x === -Math.PI / 2 && child.position.y < .1), false);
+  }
+});
+
+test("spotlight has a visible articulated head with its lens attached", () => {
+  const group = createLightFixture({ type: "point", fixture: "spotlight", length: 1.2, width: 1, segments: [{ length: 1, angle: 0 }] }, 2.3, 1);
+  const head = group.getObjectByName("spotlight-head");
+  assert.ok(head);
+  assert.equal(head.children.length, 2);
+  assert.ok(head.rotation.z < 0);
+  const bounds = new THREE.Box3().setFromObject(group).getSize(new THREE.Vector3());
+  assert.ok(bounds.x >= .18 && bounds.x <= .4);
+  assert.ok(bounds.y >= .25 && bounds.y <= .55);
 });

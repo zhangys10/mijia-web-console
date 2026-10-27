@@ -26,6 +26,9 @@ test("editor and responsive UI include wall-free areas, side panel and mobile bo
   assert.match(styles, /stroke-linejoin:miter/); assert.match(styles, /spatial-canvas-toolbar/); assert.match(styles, /spatial-wall\.selected/); assert.match(styles, /spatial-zone-edge-option\.active/);
   assert.match(styles, /spatial-zone-actions/); assert.match(styles, /spatial-placement-editor/); assert.match(styles, /spatial-placement-properties/); assert.match(styles, /spatial-device-picker/); assert.match(styles, /spatial-height-picker/); assert.match(styles, /spatial-scale-summary/); assert.match(styles, /spatial-placement circle\{pointer-events:auto;cursor:pointer\}/);
   assert.match(styles, /spatial-side-panel\.open/); assert.match(styles, /bottom:64px/); assert.match(styles, /prefers-reduced-motion/);
+  assert.match(styles, /spatial-marker\.compact \.spatial-marker-icon\{width:28px;height:28px/);
+  assert.match(source, /marker\.matches\(":hover"\)/);
+  assert.match(source, /hoverEnded = marker\.dataset\.hovered === "true" && !hovered/);
   assert.match(styles, /@media\(max-width:900px\)/); assert.match(styles, /@media\(max-width:560px\)/);
   assert.match(styles, /spatial-editor-grid>main\{align-self:start;position:sticky/); assert.match(styles, /spatial-editor-grid>main\{position:static;max-height:none\}/);
 });

@@ -9,13 +9,15 @@ export function DimensionInput({ label, value, min, max, step = .01, onChange }:
   return <label>{label}<input type="number" min={min} max={max} step={step} value={draft ?? value} onChange={event => setDraft(event.target.value)} onBlur={commit} onKeyDown={event => { if (event.key === "Enter") { commit(); event.currentTarget.blur(); } if (event.key === "Escape") setDraft(null); }} /></label>;
 }
 
-export const defaultAppearance = { type: "point" as const, length: 1.2, width: 1, segments: [{ length: 1.2, angle: 0 }] };
+export const defaultAppearance = { type: "point" as const, fixture: "ceiling" as const, length: 1.2, width: 1, segments: [{ length: 1.2, angle: 0 }] };
 export function AppearancePanel({ placement, lighting, onChange }: { placement: SpatialPlacement; lighting: boolean; onChange: (placement: SpatialPlacement) => void }) {
   const appearance = placement.appearance ?? defaultAppearance;
   const update = (value: Partial<typeof appearance>) => onChange({ ...placement, appearance: { ...appearance, ...value } });
   return <fieldset className="spatial-furniture-panel"><legend>{placement.name} · 外观</legend>
     <DimensionInput label="方向（°）" value={Math.round(placement.rotationY * 180 / Math.PI)} min={-360} max={360} step={1} onChange={value => onChange({ ...placement, rotationY: value * Math.PI / 180 })} />
-    {lighting && <label>灯光类型<select value={appearance.type} onChange={event => update({ type: event.target.value as typeof appearance.type })}><option value="point">点光源</option><option value="strip">灯带（多段）</option><option value="area">面光源</option></select></label>}
+    {lighting && <fieldset className="spatial-fixture-picker"><legend>灯具模型</legend>{([
+      ["ceiling", "吸顶灯", "⌒"], ["pendant", "吊灯", "▽"], ["spotlight", "射灯", "◉"], ["strip", "灯带", "━"], ["panel", "面板灯", "▭"],
+    ] as const).map(([fixture, label, preview]) => <button type="button" key={fixture} aria-pressed={(appearance.fixture ?? (appearance.type === "strip" ? "strip" : appearance.type === "area" ? "panel" : "ceiling")) === fixture} onClick={() => update({ fixture, type: fixture === "strip" ? "strip" : fixture === "panel" ? "area" : "point" })}><span aria-hidden="true">{preview}</span>{label}</button>)}</fieldset>}
     {(!lighting || appearance.type !== "strip") && <DimensionInput label={lighting ? "长度 / 直径（m）" : "长度（m）"} value={appearance.length} min={.05} max={30} onChange={length => update({ length })} />}
     {lighting && appearance.type === "area" && <DimensionInput label="宽度（m）" value={appearance.width} min={.02} max={20} onChange={width => update({ width })} />}
     {lighting && appearance.type === "strip" && <><p>每段从上一段终点开始；角度相对整体方向，0° 向右、90° 向图纸下方。</p>{appearance.segments.map((segment, index) => <fieldset key={index}><legend>第 {index + 1} 段</legend>

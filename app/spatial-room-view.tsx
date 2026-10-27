@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
-import { createDeviceIndicator, createTransitioningDeviceEffect, disposeSpatialObject, interpolateVisualState, type SpatialVisualState } from "../lib/spatial-device-effects";
+import { createTransitioningDeviceEffect, disposeSpatialObject, interpolateVisualState, type SpatialVisualState } from "../lib/spatial-device-effects";
+import { spatialIconKind, spatialIconSvg } from "../lib/spatial-device-icons";
+import { shouldExpandSpatialMarker } from "../lib/spatial-marker";
 import { useSpatialFullscreen } from "./use-spatial-fullscreen";
 import { DevicePlacementPanel } from "./spatial-device-placement-panel";
 import { stripPoints, visualProperties, visualParameters, type VisualProperty } from "../lib/spatial-appearance";
@@ -12,7 +14,7 @@ import { FurniturePanel } from "./spatial-furniture-panel";
 import { furnitureCatalog, type FurnitureKind, type SpatialFurniture } from "../lib/spatial-furniture";
 import type { ManagedDevice } from "../lib/device-management";
 import { targetsFor, type Target } from "../lib/spatial-targets";
-import { createSpatialScene, exportSpatialGlb, spatialPointToWorld } from "../lib/spatial-layout-three";
+import { createSpatialScene, exportSpatialGlb, fadeSpatialObject, spatialPointToWorld } from "../lib/spatial-layout-three";
 import { analyzeFloorPlanImage, type FloorPlanAnalysisOptions } from "../lib/floor-plan-analysis";
 import { pixelsPerMeter, pointInPolygon, type SpatialAsset, type SpatialLayoutV1, type SpatialOpening, type SpatialPlacement, type SpatialPoint, type SpatialWall, type SpatialZone } from "../lib/spatial-layout";
 import { alignWallGraphNode, buildWallGraphNodes, buildWallRenderPaths, findEnclosedWallFace, materializeWallJunctions, moveWallGraphNode, projectPointToWall, snapWallPoint } from "../lib/wall-editor-geometry";
@@ -269,7 +271,7 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
     controls.touches.TWO = THREE.TOUCH.DOLLY_PAN;
     controls.enableDamping = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     controls.minZoom = .3; controls.maxZoom = 8; controls.minPolarAngle = .1; controls.maxPolarAngle = Math.PI / 2 - .05;
-    const model = createSpatialScene(layout); scene.add(model);
+    const model = createSpatialScene(layout, focus); scene.add(model);
     const focused = focus ? model.getObjectByName(`zone:${focus}:floor`) : undefined;
     const box = new THREE.Box3().setFromObject(focused ?? model);
     const center = box.getCenter(new THREE.Vector3()), extent = box.getSize(new THREE.Vector3());
@@ -311,7 +313,13 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
       controls.target.x = THREE.MathUtils.clamp(controls.target.x, center.x - 20, center.x + 20);
       controls.target.z = THREE.MathUtils.clamp(controls.target.z, center.z - 20, center.z + 20);
       camera.position.add(controls.target.clone().sub(before));
-      controls.update(); renderer.render(scene, camera); labels.render(scene, camera); frame = requestAnimationFrame(animate);
+      controls.update();
+      for (const marker of element.querySelectorAll<HTMLButtonElement>(".spatial-marker")) {
+        const hovered = marker.matches(":hover"), hoverEnded = marker.dataset.hovered === "true" && !hovered;
+        const expanded = shouldExpandSpatialMarker(camera.zoom, marker.dataset.expanded === "true" && !hoverEnded, marker.classList.contains("selected") || hovered || marker.matches(":focus-visible"));
+        marker.dataset.hovered = String(hovered); marker.dataset.expanded = String(expanded); marker.classList.toggle("compact", !expanded);
+      }
+      renderer.render(scene, camera); labels.render(scene, camera); frame = requestAnimationFrame(animate);
     };
     animate();
     return () => {
@@ -330,12 +338,16 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
       const target = targetMap.get(`${placement.targetKind}:${placement.targetId}`);
       // Historical switch placements remain editable but are not physical objects in the room.
       if (!target) continue;
+      const focusedZone = focus ? layout.zones.find(zone => zone.id === focus) : undefined;
+      const inFocus = !focusedZone || placement.zoneId === focusedZone.id || placement.zoneId === null && pointInPolygon(placement.point, focusedZone.polygon);
       const state: SpatialVisualState = { kind: target.kind === "lighting" || ["light", "lamp"].includes(target.device?.kind ?? "") || target.groupMemberIds !== undefined ? "light" : target.device?.kind === "aircondition" ? "climate" : target.device?.kind === "curtain" ? "curtain" : "other", online: target.online, ...visualValues[placement.id], on: target.on };
       const now = performance.now(), running = visualTransitions.current[placement.id];
       const previous = running ? interpolateVisualState(running.from, running.to, running.duration ? (now - running.started) / running.duration : 1) : renderedStates.current[placement.id] ?? state;
-      const transition = createTransitioningDeviceEffect(previous, state, placement.appearance, placement.elevation);
+      const renderedState = inFocus ? state : { ...state, on: state.kind === "light" ? false : state.on };
+      const transition = createTransitioningDeviceEffect(previous, renderedState, placement.appearance, placement.elevation);
       const effect = transition.group;
-      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (!inFocus) { if (state.kind === "light") fadeSpatialObject(effect); else effect.visible = false; }
+      const reducedMotion = !inFocus || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       const duration = reducedMotion ? 0 : state.kind === "curtain" ? 1800 : state.kind === "light" ? 1400 : 0;
       visualTransitions.current[placement.id] = { from: previous, to: state, started: now, duration };
       transition.apply(reducedMotion ? 1 : 0);
@@ -351,17 +363,18 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
       renderedStates.current[placement.id] = state;
       const world = spatialPointToWorld(layout, placement.point);
       effect.position.copy(world); effect.rotation.y = -placement.rotationY; effects.add(effect);
-      const indicator = createDeviceIndicator(state); indicator.position.copy(world); effects.add(indicator);
+      if (!inFocus) continue;
       const button = document.createElement("button"); button.type = "button";
-      button.className = `spatial-marker ${state.on === true && state.online !== false ? "on" : ""} ${state.online === false ? "offline" : ""} ${state.pending ? "pending" : ""}`;
+      button.className = `spatial-marker compact ${selected === placement.id ? "selected" : ""} ${state.on === true && state.online !== false ? "on" : ""} ${state.online === false ? "offline" : ""} ${state.pending ? "pending" : ""}`;
       const detail = state.kind === "climate" && state.temperature !== undefined ? ` · ${state.temperature}°C` : state.kind === "light" && state.brightness !== undefined ? ` · ${Math.round(state.brightness * 100)}%` : state.kind === "curtain" && state.position !== undefined ? ` · ${state.positionIsTarget ? "目标 " : ""}${Math.round(state.position * 100)}%` : "";
-      button.textContent = `${target.icon} ${placement.name}${detail}${state.pending ? " · 同步中" : ""}`;
+      const icon = document.createElement("span"); icon.className = "spatial-marker-icon"; icon.innerHTML = spatialIconSvg(spatialIconKind(target.device?.kind, target.kind === "lighting", target.groupMemberIds !== undefined));
+      const copy = document.createElement("span"); copy.className = "spatial-marker-copy"; copy.textContent = `${placement.name}${detail}${state.pending ? " · 同步中" : ""}`; button.append(icon, copy);
       button.setAttribute("aria-label", `${placement.name}，${placementLevelLabel(placement.elevation)}，${statusLabel(target)}${detail}`);
       button.onclick = () => setSelected(placement.id);
       const label = new CSS2DObject(button); label.position.set(world.x, placement.elevation, world.z); effects.add(label);
     }
     return () => { for (const frame of animationFrames) cancelAnimationFrame(frame); };
-  }, [layout, targetMap, visualValues, focus, resetVersion]);
+  }, [layout, targetMap, visualValues, focus, resetVersion, selected]);
 
   const selection = layout.placements.find(item => item.id === selected), rawSelectedTarget = selection ? targetMap.get(`${selection.targetKind}:${selection.targetId}`) : undefined;
   const selectedTarget = rawSelectedTarget;
@@ -372,7 +385,7 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
         setReadings(current => ({ ...current, [`${selection.targetKind}:${selection.targetId}`]: state.on! }));
       }
       setVisualValues(current => ({ ...current, [selection.id]: { ...current[selection.id], ...state } }));
-    }} /> : <><h3>空间设备</h3><p>选择模型中的标记查看状态与安全快捷控制。绿色圆环表示已确认开启，灰色圆环表示关闭，带横线表示未知或离线；设备状态以文字为准。窗帘优先显示实测位置；仅有目标值时会标注“目标”。</p></>}</aside><section id="spatial-fullscreen-devices" className={`spatial-accessible-list ${deviceListOpen || !webgl ? "spatial-list-open" : ""}`} aria-label="空间设备列表"><h3>全部空间标记</h3>{layout.zones.map(zone => <div key={zone.id}><h4>{zone.name}</h4>{layout.placements.filter(item => item.zoneId === zone.id && targetMap.has(`${item.targetKind}:${item.targetId}`)).map(item => { const target = targetMap.get(`${item.targetKind}:${item.targetId}`); return <button key={item.id} type="button" onClick={() => { setSelected(item.id); setDeviceListOpen(false); }}><span>{target?.icon ?? "◇"}</span><span><strong>{item.name}</strong><small>{statusLabel(target)}</small></span><b>›</b></button>; })}</div>)}{layout.placements.some(item => !item.zoneId) && <div><h4>未分配区域</h4>{layout.placements.filter(item => !item.zoneId && targetMap.has(`${item.targetKind}:${item.targetId}`)).map(item => { const target = targetMap.get(`${item.targetKind}:${item.targetId}`); return <button key={item.id} type="button" onClick={() => { setSelected(item.id); setDeviceListOpen(false); }}><span>{target?.icon ?? "◇"}</span><span><strong>{item.name}</strong><small>{target ? "位置未归属空间" : "设备缺失"}</small></span><b>›</b></button>; })}</div>}</section></div>;
+    }} /> : <><h3>空间设备</h3><p>缩小时显示按设备类型区分的小图标，放大或选中后显示名称与读数。设备状态以文字为准；窗帘优先显示实测位置，仅有目标值时会标注“目标”。</p></>}</aside><section id="spatial-fullscreen-devices" className={`spatial-accessible-list ${deviceListOpen || !webgl ? "spatial-list-open" : ""}`} aria-label="空间设备列表"><h3>全部空间标记</h3>{layout.zones.map(zone => <div key={zone.id}><h4>{zone.name}</h4>{layout.placements.filter(item => item.zoneId === zone.id && targetMap.has(`${item.targetKind}:${item.targetId}`)).map(item => { const target = targetMap.get(`${item.targetKind}:${item.targetId}`); return <button key={item.id} type="button" onClick={() => { setSelected(item.id); setDeviceListOpen(false); }}><span>{target?.icon ?? "◇"}</span><span><strong>{item.name}</strong><small>{statusLabel(target)}</small></span><b>›</b></button>; })}</div>)}{layout.placements.some(item => !item.zoneId) && <div><h4>未分配区域</h4>{layout.placements.filter(item => !item.zoneId && targetMap.has(`${item.targetKind}:${item.targetId}`)).map(item => { const target = targetMap.get(`${item.targetKind}:${item.targetId}`); return <button key={item.id} type="button" onClick={() => { setSelected(item.id); setDeviceListOpen(false); }}><span>{target?.icon ?? "◇"}</span><span><strong>{item.name}</strong><small>{target ? "位置未归属空间" : "设备缺失"}</small></span><b>›</b></button>; })}</div>}</section></div>;
 }
 
 function statusLabel(target?: Target) { return !target ? "设备缺失" : target.online === false ? "离线" : target.on === true ? "已开启" : target.on === false ? "已关闭" : "状态待确认"; }

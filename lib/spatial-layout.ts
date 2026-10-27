@@ -28,7 +28,7 @@ export type SpatialPlacement = {
   point: SpatialPoint;
   elevation: number;
   rotationY: number;
-  appearance?: { type: "point" | "strip" | "area"; length: number; width: number; segments: Array<{ length: number; angle: number }> };
+  appearance?: { type: "point" | "strip" | "area"; fixture?: "ceiling" | "pendant" | "spotlight" | "strip" | "panel"; length: number; width: number; segments: Array<{ length: number; angle: number }> };
 };
 
 export type SpatialOpening = {
@@ -225,7 +225,7 @@ export function parseSpatialLayout(input: unknown, expectedHomePrefix?: string):
     const placement = raw as SpatialPlacement;
     if (!idPattern.test(placement.id) || placementIds.has(placement.id) || !["device", "lighting"].includes(placement.targetKind) || typeof placement.targetId !== "string" || !placement.targetId || placement.targetId.length > 220 || typeof placement.name !== "string" || placement.name.length > 200 || typeof placement.room !== "string" || placement.room.length > 100 || placement.zoneId !== null && !zoneIds.has(placement.zoneId) || !point(placement.point) || !finite(placement.elevation) || placement.elevation < 0 || placement.elevation > 20 || !finite(placement.rotationY)) throw new SpatialLayoutError("SPATIAL_PLACEMENT_INVALID", 400);
     const appearance = placement.appearance;
-    if (appearance !== undefined && (!appearance || typeof appearance !== "object" || Object.keys(appearance).some(key => !["type", "length", "width", "segments"].includes(key)) || !["point", "strip", "area"].includes(appearance.type) || !finite(appearance.length) || appearance.length < .05 || appearance.length > 30 || !finite(appearance.width) || appearance.width < .02 || appearance.width > 20 || !Array.isArray(appearance.segments) || appearance.segments.length < 1 || appearance.segments.length > 32 || appearance.segments.some(segment => !segment || Object.keys(segment).some(key => !["length", "angle"].includes(key)) || !finite(segment.length) || segment.length < .05 || segment.length > 30 || !finite(segment.angle) || Math.abs(segment.angle) > 360))) throw new SpatialLayoutError("SPATIAL_APPEARANCE_INVALID", 400);
+    if (appearance !== undefined && (!appearance || typeof appearance !== "object" || Object.keys(appearance).some(key => !["type", "fixture", "length", "width", "segments"].includes(key)) || !["point", "strip", "area"].includes(appearance.type) || appearance.fixture !== undefined && !["ceiling", "pendant", "spotlight", "strip", "panel"].includes(appearance.fixture) || !finite(appearance.length) || appearance.length < .05 || appearance.length > 30 || !finite(appearance.width) || appearance.width < .02 || appearance.width > 20 || !Array.isArray(appearance.segments) || appearance.segments.length < 1 || appearance.segments.length > 32 || appearance.segments.some(segment => !segment || Object.keys(segment).some(key => !["length", "angle"].includes(key)) || !finite(segment.length) || segment.length < .05 || segment.length > 30 || !finite(segment.angle) || Math.abs(segment.angle) > 360))) throw new SpatialLayoutError("SPATIAL_APPEARANCE_INVALID", 400);
     placementIds.add(placement.id);
     return { ...placement, point: { ...placement.point } };
   });
