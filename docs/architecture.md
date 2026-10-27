@@ -1,5 +1,7 @@
 # 米家 Web 控制台架构
 
+设备页的 3D 空间布局由控制台 Route Handler 独立管理，不进入模型消息或 Python Assistant。源户型图、生成的 GLB 与版本化元数据存入专用 Blob namespace；对象按哈希 home ID 隔离，每次操作重新验证 Xiaomi 家庭成员关系。详细契约见 [`spatial-layout.md`](spatial-layout.md)。
+
 ## 运行时与职责
 
 - `app/` 提供页面与 Next.js Route Handlers；浏览器只调用同源 API。

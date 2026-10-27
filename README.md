@@ -199,6 +199,8 @@ npm test           # 构建并运行全部 Node 测试
 
 ## 部署
 
+独立 `3D 家庭` 视图的本地户型候选识别、Blob namespace、隐私模型、接口和故障语义见 [`docs/spatial-layout.md`](docs/spatial-layout.md)。生产默认使用 `mijia-spatial-layout-v1`，可用 `SPATIAL_LAYOUT_STORE` 覆盖；`SPATIAL_LAYOUT_DIR` 只用于 `AI_ENVIRONMENT=development` 的本地文件存储。
+
 本地使用 `npm run dev`；可用 `npm run build && npm run start` 检查 Vinext
 构建。部署使用以下平台配置和原生 Next.js 构建。
 
