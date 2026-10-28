@@ -8,7 +8,9 @@ import { createTransitioningDeviceEffect, disposeSpatialObject, interpolateVisua
 import { spatialIconKind, spatialIconSvg } from "../lib/spatial-device-icons";
 import { shouldExpandSpatialMarker } from "../lib/spatial-marker";
 import { applySpatialEnvironment, type SpatialEnvironmentMode } from "../lib/spatial-environment";
+import { spatialEnvironmentAt } from "../lib/spatial-sun";
 import { spatialMotorActions, type SpatialMotorAction } from "../lib/spatial-motor-control";
+import { createSpatialFrameScheduler, resolveSpatialRenderQuality, spatialPixelRatio, spatialRenderQualityStorageKey, type SpatialRenderQuality } from "../lib/spatial-render-performance";
 import { useSpatialFullscreen } from "./use-spatial-fullscreen";
 import { DevicePlacementPanel } from "./spatial-device-placement-panel";
 import { stripPoints, visualProperties, visualParameters, type VisualProperty } from "../lib/spatial-appearance";
@@ -25,6 +27,7 @@ export type SpatialControlInput = { did: string; siid: number; piid: number; val
 type Props = { devices: ManagedDevice[]; homeId: string; connected: boolean; onOpenDevice: (device: ManagedDevice) => void; onQuickControl: (device: ManagedDevice, input: SpatialControlInput) => Promise<"confirmed" | "pending"> };
 type QuickProperty = { key: string; name: string; label: string; siid: number; piid: number; min: number; max: number; step: number; unit?: string; value: number };
 type PlacementLevel = "ground" | "middle" | "top";
+type PlacementRenderEntry = { effect: THREE.Group; label: CSS2DObject; button: HTMLButtonElement; icon: HTMLSpanElement; copy: HTMLSpanElement; stateKey: string; geometryKey: string; presentationKey: string };
 
 const placementLevels: Array<{ value: PlacementLevel; label: string; elevation: number }> = [{ value: "ground", label: "地面", elevation: .2 }, { value: "middle", label: "中部", elevation: 1.2 }, { value: "top", label: "顶部", elevation: 2.35 }];
 function placementLevelFor(elevation: number): PlacementLevel { return placementLevels.reduce((best, level) => Math.abs(level.elevation - elevation) < Math.abs(placementLevels.find(item => item.value === best)!.elevation - elevation) ? level.value : best, "middle" as PlacementLevel); }
@@ -37,6 +40,16 @@ function assetUrl(homeId: string, kind: "image" | "model", download = false) { r
 function wallSegment(start: SpatialPoint, end: SpatialPoint, thicknessPixels: number, confidence = 1): SpatialWall { return { id: id("wall"), start, end, thicknessPixels, confidence }; }
 function visibleWallThickness(zone: SpatialZone) { return Math.min(12, Math.max(4, zone.wallThicknessPixels ?? 8)); }
 function visibleSegmentThickness(wall: SpatialWall) { return Math.min(12, Math.max(4, wall.thicknessPixels)); }
+function visualStateKey(state: SpatialVisualState) { return JSON.stringify([state.kind, state.online, state.on, state.brightness, state.temperature, state.position, state.currentPosition, state.targetPosition, state.positionIsTarget, state.pending]); }
+function placementGeometryKey(placement: SpatialPlacement) { return JSON.stringify([placement.point.x, placement.point.y, placement.elevation, placement.rotationY, placement.appearance]); }
+function sameVisualValues(current: Record<string, Partial<SpatialVisualState>>, next: Record<string, Partial<SpatialVisualState>>) {
+  const currentKeys = Object.keys(current), nextKeys = Object.keys(next);
+  return currentKeys.length === nextKeys.length && nextKeys.every(key => key in current && visualStateKey(current[key] as SpatialVisualState) === visualStateKey(next[key] as SpatialVisualState));
+}
+function sameReadings(current: Record<string, boolean | null>, next: Record<string, boolean | null>) {
+  const currentKeys = Object.keys(current), nextKeys = Object.keys(next);
+  return currentKeys.length === nextKeys.length && nextKeys.every(key => current[key] === next[key]);
+}
 
 function demoLayout(targets: Target[] = []): SpatialLayoutV1 {
   const image: SpatialAsset = { key: `homes/${"0".repeat(64)}/uploads/00000000-0000-0000-0000-000000000000.png`, contentType: "image/png", byteLength: 1 };
@@ -88,7 +101,7 @@ function SpatialEditor({ homeId, initial, targets, onCancel, onSaved }: Props & 
   const calibrated = Math.hypot(calibration.end.x - calibration.start.x, calibration.end.y - calibration.start.y) >= 5 && calibration.meters > 0;
   const renderPaths = useMemo(() => buildWallRenderPaths(walls), [walls]);
   const graphNodes = useMemo(() => buildWallGraphNodes(walls), [walls]);
-  const placementTargets = useMemo<Target[]>(() => Array.from(new Map<string, Target>([...placements.map(placement => ({ kind: placement.targetKind, id: placement.targetId, name: placement.name, room: placement.room, icon: "◇", on: null, status: "设备暂不可用" } satisfies Target)), ...targets].map(target => [`${target.kind}:${target.id}`, target])).values()), [placements, targets]);
+  const placementTargets = useMemo<Target[]>(() => Array.from(new Map<string, Target>([...placements.filter(placement => !targets.some(target => target.id === placement.targetId)).map(placement => ({ kind: placement.targetKind, id: placement.targetId, name: placement.name, room: placement.room, icon: "◇", on: null, status: "设备暂不可用" } satisfies Target)), ...targets].map(target => [target.id, target])).values()), [placements, targets]);
   const placementTargetMap = useMemo(() => new Map(placementTargets.map(target => [`${target.kind}:${target.id}`, target])), [placementTargets]);
   const [groupPlacementModes, setGroupPlacementModes] = useState<Record<string, "group" | "members">>({});
   const groupTargets = targets.filter(target => target.groupMemberIds !== undefined);
@@ -199,7 +212,7 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
           }
         } catch { /* Failed reads clear the corresponding visual parameters. */ }
       }
-      if (active && generation === parameterGeneration.current) setVisualValues(updates);
+      if (active && generation === parameterGeneration.current) setVisualValues(current => sameVisualValues(current, updates) ? current : updates);
       if (active) timer = setTimeout(refresh, 10000);
     };
     void refresh();
@@ -208,15 +221,34 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
   const [resetVersion, setResetVersion] = useState(0);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const effectsRef = useRef<THREE.Group | null>(null);
+  const placementObjects = useRef(new Map<string, PlacementRenderEntry>());
+  const transitionTicks = useRef(new Map<string, (time: number) => boolean>());
+  const invalidateRender = useRef<() => void>(() => {});
+  const refreshMarkerPresentation = useRef<() => void>(() => {});
+  const cameraMemory = useRef<{ key: string; position: THREE.Vector3; target: THREE.Vector3; zoom: number } | null>(null);
   const renderedStates = useRef<Record<string, SpatialVisualState>>({});
   const visualTransitions = useRef<Record<string, { from: SpatialVisualState; to: SpatialVisualState; started: number; duration: number }>>({});
-  const host = useRef<HTMLDivElement | null>(null), [selected, setSelected] = useState(""), [focus, setFocus] = useState(""), [webgl, setWebgl] = useState(true), [environmentMode, setEnvironmentMode] = useState<SpatialEnvironmentMode>("day");
+  const host = useRef<HTMLDivElement | null>(null), [selected, setSelected] = useState(""), [focus, setFocus] = useState(""), [webgl, setWebgl] = useState(true), [environmentPreference, setEnvironmentPreference] = useState<"auto" | SpatialEnvironmentMode>("auto"), [automaticEnvironmentMode, setAutomaticEnvironmentMode] = useState<SpatialEnvironmentMode>(() => spatialEnvironmentAt());
+  const environmentMode: SpatialEnvironmentMode = environmentPreference === "auto" ? automaticEnvironmentMode : environmentPreference;
+  const selectedRef = useRef(selected);
+  const [renderQuality, setRenderQuality] = useState<SpatialRenderQuality>(() => typeof window === "undefined" ? "standard" : resolveSpatialRenderQuality(window.localStorage.getItem(spatialRenderQualityStorageKey), window.matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0));
   const environmentModeRef = useRef(environmentMode);
+  const environmentPreferenceRef = useRef(environmentPreference);
   useEffect(() => { environmentModeRef.current = environmentMode; }, [environmentMode]);
+  useEffect(() => { environmentPreferenceRef.current = environmentPreference; }, [environmentPreference]);
+  useEffect(() => {
+    if (environmentPreference !== "auto") return;
+    const update = () => setAutomaticEnvironmentMode(spatialEnvironmentAt());
+    const timer = window.setInterval(update, 60_000);
+    const visibilityChange = () => { if (document.visibilityState === "visible") update(); };
+    document.addEventListener("visibilitychange", visibilityChange);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", visibilityChange); };
+  }, [environmentPreference]);
+  useEffect(() => { window.localStorage.setItem(spatialRenderQualityStorageKey, renderQuality); }, [renderQuality]);
   const [readings, setReadings] = useState<Record<string, boolean | null>>({});
   const confirmedReadings = useRef<Record<string, boolean | null>>({});
   const readGeneration = useRef(0);
-  const powerTargets = useMemo(() => targets.filter(target => target.power && layout.placements.some(item => item.targetKind === target.kind && item.targetId === target.id)), [targets, layout.placements]);
+  const powerTargets = useMemo(() => targets.filter(target => target.power && layout.placements.some(item => item.targetId === target.id)), [targets, layout.placements]);
   useEffect(() => {
     if (!connected || homeId === "demo") return;
     let active = true, timer: ReturnType<typeof setTimeout>;
@@ -241,19 +273,32 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
       }
       if (active && generation === readGeneration.current) {
         confirmedReadings.current = values;
-        setReadings(values);
-        const readPlacementIds = new Set(layout.placements.filter(item => `${item.targetKind}:${item.targetId}` in values).map(item => item.id));
-        setVisualValues(current => Object.fromEntries(Object.entries(current).map(([id, state]) => [id, readPlacementIds.has(id) ? { ...state, pending: false } : state])));
+        setReadings(current => sameReadings(current, values) ? current : values);
+        const readPlacementIds = new Set(layout.placements.filter(item => powerTargets.some(target => target.id === item.targetId && `${target.kind}:${target.id}` in values)).map(item => item.id));
+        setVisualValues(current => {
+          let changed = false;
+          const next = Object.fromEntries(Object.entries(current).map(([id, state]) => {
+            if (!readPlacementIds.has(id) || !state.pending) return [id, state];
+            changed = true; return [id, { ...state, pending: false }];
+          }));
+          return changed ? next : current;
+        });
       }
       if (active) timer = setTimeout(refresh, 10000);
     };
     void refresh();
     return () => { active = false; ++readGeneration.current; controller.abort(); clearTimeout(timer); };
   }, [connected, homeId, powerTargets]);
-  const targetMap = useMemo(() => new Map(targets.map(target => {
-    const key = `${target.kind}:${target.id}`;
-    return [key, key in readings ? { ...target, on: readings[key] } : target];
-  })), [targets, readings]);
+  const targetMap = useMemo(() => {
+    const result = new Map<string, Target>();
+    for (const target of targets) {
+      const key = `${target.kind}:${target.id}`, readingKey = key in readings ? key : `${target.kind === "device" ? "lighting" : "device"}:${target.id}`;
+      const resolved = readingKey in readings ? { ...target, on: readings[readingKey] } : target;
+      result.set(key, resolved);
+      if (target.power) result.set(`${target.kind === "device" ? "lighting" : "device"}:${target.id}`, resolved);
+    }
+    return result;
+  }, [targets, readings]);
   useEffect(() => {
     const element = host.current;
     if (!element) return;
@@ -262,15 +307,20 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
     const sun = new THREE.DirectionalLight(); sun.name = "spatial-environment-directional"; sun.position.set(8, 14, 9); scene.add(sun);
     applySpatialEnvironment(scene, environmentModeRef.current);
     let renderer: THREE.WebGLRenderer;
-    try { renderer = new THREE.WebGLRenderer({ antialias: true }); } catch { queueMicrotask(() => setWebgl(false)); return; }
+    try { renderer = new THREE.WebGLRenderer({ antialias: renderQuality === "standard", powerPreference: renderQuality === "power" ? "low-power" : "high-performance" }); } catch { queueMicrotask(() => setWebgl(false)); return; }
     const labels = new CSS2DRenderer();
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    let interacting = false, intersecting = true, pageVisible = document.visibilityState === "visible", pixelRatio = spatialPixelRatio(renderQuality, window.devicePixelRatio, false);
+    renderer.setPixelRatio(pixelRatio);
     renderer.domElement.className = "spatial-webgl"; renderer.domElement.tabIndex = 0;
     renderer.domElement.setAttribute("aria-label", "3D 空间：拖动旋转，双指滑动平移，捏合或加减键缩放");
     labels.domElement.className = "spatial-label-layer";
+    const settingsControl = document.createElement("div"); settingsControl.className = "spatial-viewer-settings";
     const modeControl = document.createElement("div"); modeControl.className = "spatial-environment-mode"; modeControl.setAttribute("role", "group"); modeControl.setAttribute("aria-label", "3D 光照模式");
-    for (const [mode, label] of [["day", "日间"], ["night", "夜间"]] as const) { const button = document.createElement("button"); button.type = "button"; button.dataset.mode = mode; button.textContent = label; const active = mode === environmentModeRef.current; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active)); button.onclick = () => setEnvironmentMode(mode); modeControl.append(button); }
-    element.replaceChildren(renderer.domElement, labels.domElement, modeControl);
+    for (const [mode, label] of [["auto", "自动"], ["day", "日间"], ["night", "夜间"]] as const) { const button = document.createElement("button"); button.type = "button"; button.dataset.mode = mode; button.textContent = label; const active = mode === environmentPreferenceRef.current; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active)); button.onclick = () => { if (mode === "auto") setAutomaticEnvironmentMode(spatialEnvironmentAt()); setEnvironmentPreference(mode); }; modeControl.append(button); }
+    const qualityControl = document.createElement("div"); qualityControl.className = "spatial-render-quality"; qualityControl.setAttribute("role", "group"); qualityControl.setAttribute("aria-label", "3D 渲染质量");
+    for (const [quality, label] of [["power", "省电"], ["smooth", "流畅"], ["standard", "标准"]] as const) { const button = document.createElement("button"); button.type = "button"; button.dataset.quality = quality; button.textContent = label; const active = quality === renderQuality; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active)); button.onclick = () => setRenderQuality(quality); qualityControl.append(button); }
+    settingsControl.append(modeControl, qualityControl);
+    element.replaceChildren(renderer.domElement, labels.domElement, settingsControl);
     const camera = new THREE.OrthographicCamera(-8, 8, 6, -6, .1, 200);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.touches.ONE = THREE.TOUCH.ROTATE;
@@ -278,17 +328,22 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
     controls.enableDamping = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     controls.minZoom = .3; controls.maxZoom = 8; controls.minPolarAngle = .1; controls.maxPolarAngle = Math.PI / 2 - .05;
     const model = createSpatialScene(layout, focus); scene.add(model);
+    const scenePlacementObjects = placementObjects.current;
+    const sceneTransitionTicks = transitionTicks.current;
     const focused = focus ? model.getObjectByName(`zone:${focus}:floor`) : undefined;
     const box = new THREE.Box3().setFromObject(focused ?? model);
     const center = box.getCenter(new THREE.Vector3()), extent = box.getSize(new THREE.Vector3());
-    controls.target.copy(center);
-    camera.position.set(center.x + Math.max(extent.x, 5), center.y + 12, center.z + Math.max(extent.z, 5));
-    camera.zoom = Math.min(2.6, 10 / Math.max(extent.x, extent.z, 3)); controls.update();
+    const cameraKey = `${homeId}:${layout.revision}:${focus}:${resetVersion}`;
+    if (cameraMemory.current?.key === cameraKey) { camera.position.copy(cameraMemory.current.position); controls.target.copy(cameraMemory.current.target); camera.zoom = cameraMemory.current.zoom; }
+    else { controls.target.copy(center); camera.position.set(center.x + Math.max(extent.x, 5), center.y + 12, center.z + Math.max(extent.z, 5)); camera.zoom = Math.min(2.6, 10 / Math.max(extent.x, extent.z, 3)); }
+    controls.update();
+    let width = 1, height = 1;
+    const setPixelRatio = (moving: boolean) => { const next = spatialPixelRatio(renderQuality, window.devicePixelRatio, moving); if (next === pixelRatio) return; pixelRatio = next; renderer.setPixelRatio(next); };
     const resize = () => {
-      const width = Math.max(1, element.clientWidth), height = Math.max(1, element.clientHeight);
+      width = Math.max(1, element.clientWidth); height = Math.max(1, element.clientHeight);
       renderer.setSize(width, height); labels.setSize(width, height);
       camera.left = -width / 100; camera.right = width / 100; camera.top = height / 100; camera.bottom = -height / 100;
-      camera.updateProjectionMatrix();
+      camera.updateProjectionMatrix(); invalidateRender.current();
     };
     const observer = new ResizeObserver(resize); observer.observe(element); resize();
     const keydown = (event: KeyboardEvent) => {
@@ -300,7 +355,7 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
         const delta = new THREE.Vector3(event.key === "ArrowLeft" ? -.4 : event.key === "ArrowRight" ? .4 : 0, 0, event.key === "ArrowUp" ? -.4 : event.key === "ArrowDown" ? .4 : 0);
         camera.position.add(delta); controls.target.add(delta);
       }
-      camera.updateProjectionMatrix(); controls.update();
+      camera.updateProjectionMatrix(); controls.update(); invalidateRender.current();
     };
     const wheelPan = (event: WheelEvent) => {
       if (event.ctrlKey || event.deltaMode !== 0) return;
@@ -309,88 +364,131 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
       const up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
       const delta = right.multiplyScalar(event.deltaX * (camera.right - camera.left) / camera.zoom / element.clientWidth)
         .add(up.multiplyScalar(-event.deltaY * (camera.top - camera.bottom) / camera.zoom / element.clientHeight));
-      camera.position.add(delta); controls.target.add(delta); controls.update();
+      camera.position.add(delta); controls.target.add(delta); controls.update(); invalidateRender.current();
     };
     renderer.domElement.addEventListener("wheel", wheelPan, { capture: true, passive: false });
     renderer.domElement.addEventListener("keydown", keydown);
-    let frame = 0;
-    const animate = () => {
-      const before = controls.target.clone();
-      controls.target.x = THREE.MathUtils.clamp(controls.target.x, center.x - 20, center.x + 20);
-      controls.target.z = THREE.MathUtils.clamp(controls.target.z, center.z - 20, center.z + 20);
-      camera.position.add(controls.target.clone().sub(before));
-      controls.update();
-      for (const marker of element.querySelectorAll<HTMLButtonElement>(".spatial-marker")) {
-        const hovered = marker.matches(":hover"), hoverEnded = marker.dataset.hovered === "true" && !hovered;
-        const expanded = shouldExpandSpatialMarker(camera.zoom, marker.dataset.expanded === "true" && !hoverEnded, marker.classList.contains("selected") || hovered || marker.matches(":focus-visible"));
-        marker.dataset.hovered = String(hovered); marker.dataset.expanded = String(expanded); marker.classList.toggle("compact", !expanded);
+    const updateMarkers = () => {
+      for (const [placementId, entry] of scenePlacementObjects) {
+        const hovered = entry.button.dataset.hovered === "true", focusedMarker = entry.button.matches(":focus-visible");
+        const expanded = shouldExpandSpatialMarker(camera.zoom, entry.button.dataset.expanded === "true", selectedRef.current === placementId || hovered || focusedMarker);
+        if (entry.button.dataset.expanded !== String(expanded)) { entry.button.dataset.expanded = String(expanded); entry.button.classList.toggle("compact", !expanded); }
       }
-      renderer.render(scene, camera); labels.render(scene, camera); frame = requestAnimationFrame(animate);
     };
-    animate();
+    refreshMarkerPresentation.current = () => { updateMarkers(); invalidateRender.current(); };
+    const scheduler = createSpatialFrameScheduler({
+      requestFrame: callback => requestAnimationFrame(callback), cancelFrame: frame => cancelAnimationFrame(frame), minFrameMs: renderQuality === "power" ? 1000 / 30 : 0,
+      onFrame: time => {
+        const before = controls.target.clone();
+        controls.target.x = THREE.MathUtils.clamp(controls.target.x, center.x - 20, center.x + 20);
+        controls.target.z = THREE.MathUtils.clamp(controls.target.z, center.z - 20, center.z + 20);
+        camera.position.add(controls.target.clone().sub(before));
+        const controlsChanged = controls.update();
+        let transitioning = false;
+        for (const [id, tick] of sceneTransitionTicks) { if (tick(time)) transitioning = true; else sceneTransitionTicks.delete(id); }
+        updateMarkers(); renderer.render(scene, camera); labels.render(scene, camera);
+        cameraMemory.current = { key: cameraKey, position: camera.position.clone(), target: controls.target.clone(), zoom: camera.zoom };
+        if (!interacting && !controlsChanged && !transitioning) setPixelRatio(false);
+        return interacting || controlsChanged || transitioning;
+      },
+    });
+    invalidateRender.current = () => scheduler.invalidate();
+    const controlsChange = () => scheduler.invalidate();
+    const controlsStart = () => { interacting = true; setPixelRatio(true); scheduler.invalidate(); };
+    const controlsEnd = () => { interacting = false; scheduler.invalidate(); };
+    controls.addEventListener("change", controlsChange); controls.addEventListener("start", controlsStart); controls.addEventListener("end", controlsEnd);
+    const updateActivity = () => scheduler.setActive(pageVisible && intersecting);
+    const visibilityChange = () => { pageVisible = document.visibilityState === "visible"; updateActivity(); };
+    document.addEventListener("visibilitychange", visibilityChange);
+    const intersectionObserver = new IntersectionObserver(entries => { intersecting = entries.some(entry => entry.isIntersecting); updateActivity(); }, { threshold: .01 });
+    intersectionObserver.observe(element); scheduler.invalidate();
     return () => {
-      cancelAnimationFrame(frame); observer.disconnect(); controls.dispose(); renderer.dispose();
+      scheduler.dispose(); observer.disconnect(); intersectionObserver.disconnect(); document.removeEventListener("visibilitychange", visibilityChange);
+      controls.removeEventListener("change", controlsChange); controls.removeEventListener("start", controlsStart); controls.removeEventListener("end", controlsEnd); controls.dispose(); renderer.dispose();
       renderer.domElement.removeEventListener("keydown", keydown);
       renderer.domElement.removeEventListener("wheel", wheelPan, true);
-      disposeSpatialObject(scene); sceneRef.current = null; effectsRef.current = null; element.replaceChildren();
+      disposeSpatialObject(scene); sceneRef.current = null; effectsRef.current = null; scenePlacementObjects.clear(); sceneTransitionTicks.clear(); invalidateRender.current = () => {}; refreshMarkerPresentation.current = () => {}; element.replaceChildren();
     };
-  }, [homeId, layout, focus, resetVersion]);
+  }, [homeId, layout, focus, resetVersion, renderQuality]);
   useEffect(() => {
     if (sceneRef.current) applySpatialEnvironment(sceneRef.current, environmentMode);
     for (const button of host.current?.querySelectorAll<HTMLButtonElement>(".spatial-environment-mode button") ?? []) {
-      const active = button.dataset.mode === environmentMode; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active));
+      const active = button.dataset.mode === environmentPreference; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active));
     }
-  }, [environmentMode]);
+    invalidateRender.current();
+  }, [environmentMode, environmentPreference]);
   useEffect(() => {
     const scene = sceneRef.current; if (!scene) return;
-    const animationFrames: number[] = [];
-    if (effectsRef.current) { scene.remove(effectsRef.current); disposeSpatialObject(effectsRef.current); effectsRef.current.traverse(child => { if (child instanceof CSS2DObject) child.element.remove(); }); }
-    const effects = new THREE.Group(); effectsRef.current = effects; scene.add(effects);
+    let effects = effectsRef.current;
+    if (!effects) { effects = new THREE.Group(); effectsRef.current = effects; scene.add(effects); }
+    const activeIds = new Set<string>(), focusedZone = focus ? layout.zones.find(zone => zone.id === focus) : undefined;
     for (const placement of layout.placements) {
       const target = targetMap.get(`${placement.targetKind}:${placement.targetId}`);
       // Historical switch placements remain editable but are not physical objects in the room.
       if (!target) continue;
-      const focusedZone = focus ? layout.zones.find(zone => zone.id === focus) : undefined;
+      activeIds.add(placement.id);
       const inFocus = !focusedZone || placement.zoneId === focusedZone.id || placement.zoneId === null && pointInPolygon(placement.point, focusedZone.polygon);
-      const state: SpatialVisualState = { kind: target.kind === "lighting" || ["light", "lamp"].includes(target.device?.kind ?? "") || target.groupMemberIds !== undefined ? "light" : target.device?.kind === "aircondition" ? "climate" : target.device?.kind === "curtain" ? "curtain" : "other", online: target.online, ...visualValues[placement.id], on: target.on };
-      const now = performance.now(), running = visualTransitions.current[placement.id];
-      const previous = running ? interpolateVisualState(running.from, running.to, running.duration ? (now - running.started) / running.duration : 1) : renderedStates.current[placement.id] ?? state;
-      const renderedState = inFocus ? state : { ...state, on: state.kind === "light" ? false : state.on };
-      const transition = createTransitioningDeviceEffect(previous, renderedState, placement.appearance, placement.elevation);
-      const effect = transition.group;
-      if (!inFocus) { if (state.kind === "light") fadeSpatialObject(effect); else effect.visible = false; }
-      const reducedMotion = !inFocus || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const duration = reducedMotion ? 0 : state.kind === "curtain" ? 1800 : state.kind === "light" ? 1400 : 0;
-      visualTransitions.current[placement.id] = { from: previous, to: state, started: now, duration };
-      transition.apply(reducedMotion ? 1 : 0);
-      if (!reducedMotion && renderedStates.current[placement.id]) {
-        const started = now;
-        const animate = (time: number) => {
-          const progress = duration ? Math.min(1, (time - started) / duration) : 1;
-          transition.apply(progress);
-          if (progress < 1) animationFrames.push(requestAnimationFrame(animate));
-        };
-        animationFrames.push(requestAnimationFrame(animate));
-      } else transition.apply(1);
-      renderedStates.current[placement.id] = state;
+      const state: SpatialVisualState = { kind: target.isLight || target.groupMemberIds !== undefined ? "light" : target.visualKind === "aircondition" ? "climate" : target.visualKind === "curtain" ? "curtain" : "other", online: target.online, ...visualValues[placement.id], on: target.on };
       const world = spatialPointToWorld(layout, placement.point);
-      effect.position.copy(world); effect.rotation.y = -placement.rotationY; effects.add(effect);
-      if (!inFocus) continue;
-      const button = document.createElement("button"); button.type = "button";
-      button.className = `spatial-marker compact ${selected === placement.id ? "selected" : ""} ${state.on === true && state.online !== false ? "on" : ""} ${state.online === false ? "offline" : ""} ${state.pending ? "pending" : ""}`;
+      const geometryKey = placementGeometryKey(placement), nextStateKey = visualStateKey(state);
+      let entry = placementObjects.current.get(placement.id);
+      if (!entry) {
+        const button = document.createElement("button"); button.type = "button"; button.className = "spatial-marker compact"; button.dataset.expanded = "false"; button.dataset.hovered = "false";
+        const icon = document.createElement("span"); icon.className = "spatial-marker-icon";
+        const copy = document.createElement("span"); copy.className = "spatial-marker-copy"; button.append(icon, copy);
+        button.onclick = () => setSelected(placement.id);
+        button.onpointerenter = () => { button.dataset.hovered = "true"; refreshMarkerPresentation.current(); };
+        button.onpointerleave = () => { button.dataset.hovered = "false"; refreshMarkerPresentation.current(); };
+        button.onfocus = () => refreshMarkerPresentation.current(); button.onblur = () => refreshMarkerPresentation.current();
+        const label = new CSS2DObject(button); effects.add(label);
+        entry = { effect: new THREE.Group(), label, button, icon, copy, stateKey: "", geometryKey: "", presentationKey: "" }; placementObjects.current.set(placement.id, entry);
+      }
+      const geometryChanged = entry.geometryKey !== geometryKey;
+      if (entry.stateKey !== nextStateKey || geometryChanged) {
+        const now = performance.now(), running = visualTransitions.current[placement.id];
+        const previous = running ? interpolateVisualState(running.from, running.to, running.duration ? (now - running.started) / running.duration : 1) : renderedStates.current[placement.id] ?? state;
+        const renderedState = inFocus ? state : { ...state, on: state.kind === "light" ? false : state.on };
+        const transition = createTransitioningDeviceEffect(previous, renderedState, placement.appearance, placement.elevation), effect = transition.group;
+        effect.position.copy(world); effect.rotation.y = -placement.rotationY;
+        if (!inFocus) { if (state.kind === "light") fadeSpatialObject(effect); else effect.visible = false; }
+        effects.remove(entry.effect); disposeSpatialObject(entry.effect); effects.add(effect); entry.effect = effect;
+        const reducedMotion = !inFocus || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const duration = reducedMotion ? 0 : state.kind === "curtain" ? 1800 : state.kind === "light" ? 1400 : 0;
+        visualTransitions.current[placement.id] = { from: previous, to: state, started: now, duration }; transitionTicks.current.delete(placement.id);
+        if (!reducedMotion && renderedStates.current[placement.id] && duration) {
+          transition.apply(0);
+          transitionTicks.current.set(placement.id, time => { const progress = Math.min(1, (time - now) / duration); transition.apply(progress); return progress < 1; });
+        } else transition.apply(1);
+        renderedStates.current[placement.id] = state; entry.stateKey = nextStateKey; entry.geometryKey = geometryKey;
+      }
+      if (geometryChanged) entry.label.position.set(world.x, placement.elevation, world.z);
       const detail = state.kind === "climate" && state.temperature !== undefined ? ` · ${state.temperature}°C` : state.kind === "light" && state.brightness !== undefined ? ` · ${Math.round(state.brightness * 100)}%` : state.kind === "curtain" && state.position !== undefined ? ` · ${state.positionIsTarget ? "目标 " : ""}${Math.round(state.position * 100)}%` : "";
-      const icon = document.createElement("span"); icon.className = "spatial-marker-icon"; icon.innerHTML = spatialIconSvg(spatialIconKind(target.device?.kind, target.kind === "lighting", target.groupMemberIds !== undefined));
-      const copy = document.createElement("span"); copy.className = "spatial-marker-copy"; copy.textContent = `${placement.name}${detail}${state.pending ? " · 同步中" : ""}`; button.append(icon, copy);
-      button.setAttribute("aria-label", `${placement.name}，${placementLevelLabel(placement.elevation)}，${statusLabel(target)}${detail}`);
-      button.onclick = () => setSelected(placement.id);
-      const label = new CSS2DObject(button); label.position.set(world.x, placement.elevation, world.z); effects.add(label);
+      const iconKind = spatialIconKind(target.visualKind ?? target.device?.kind, Boolean(target.isLight), target.groupMemberIds !== undefined);
+      const copy = `${placement.name}${detail}${state.pending ? " · 同步中" : ""}`, status = statusLabel(target);
+      const presentationKey = JSON.stringify([inFocus, iconKind, copy, selectedRef.current === placement.id, state.on === true && state.online !== false, state.online === false, Boolean(state.pending), status, placement.elevation]);
+      if (entry.presentationKey !== presentationKey) {
+        entry.label.visible = inFocus;
+        if (entry.icon.dataset.kind !== iconKind) { entry.icon.dataset.kind = iconKind; entry.icon.innerHTML = spatialIconSvg(iconKind); }
+        if (entry.copy.textContent !== copy) entry.copy.textContent = copy;
+        entry.button.classList.toggle("selected", selectedRef.current === placement.id); entry.button.classList.toggle("on", state.on === true && state.online !== false); entry.button.classList.toggle("offline", state.online === false); entry.button.classList.toggle("pending", Boolean(state.pending));
+        entry.button.setAttribute("aria-label", `${placement.name}，${placementLevelLabel(placement.elevation)}，${status}${detail}`);
+        entry.presentationKey = presentationKey;
+      }
     }
-    return () => { for (const frame of animationFrames) cancelAnimationFrame(frame); };
-  }, [layout, targetMap, visualValues, focus, resetVersion, selected]);
+    for (const [placementId, entry] of placementObjects.current) if (!activeIds.has(placementId)) {
+      effects.remove(entry.effect, entry.label); disposeSpatialObject(entry.effect); entry.button.remove(); placementObjects.current.delete(placementId); transitionTicks.current.delete(placementId); delete renderedStates.current[placementId]; delete visualTransitions.current[placementId];
+    }
+    refreshMarkerPresentation.current(); invalidateRender.current();
+  }, [layout, targetMap, visualValues, focus, resetVersion, renderQuality]);
+  useEffect(() => {
+    selectedRef.current = selected;
+    for (const [placementId, entry] of placementObjects.current) entry.button.classList.toggle("selected", placementId === selected);
+    refreshMarkerPresentation.current();
+  }, [selected]);
 
   const selection = layout.placements.find(item => item.id === selected), rawSelectedTarget = selection ? targetMap.get(`${selection.targetKind}:${selection.targetId}`) : undefined;
   const selectedTarget = rawSelectedTarget;
-  return <div ref={fullscreenRoot} className={`spatial-viewer-layout ${fullscreen ? "spatial-fullscreen" : ""}`} role={fullscreen ? "dialog" : undefined} aria-modal={fullscreen || undefined} aria-label={fullscreen ? "全屏空间控制" : undefined}><section className="spatial-stage"><p className="spatial-camera-help">拖动旋转 · 右键平移 · 双指滑动平移 · 捏合缩放 · 墙厚 {Math.round(layout.defaults.wallThickness * 100)} cm</p><div className="spatial-focus"><label>聚焦空间<select value={focus} onChange={event => { setFocus(event.target.value); setSelected(""); }}><option value="">全屋</option>{layout.zones.map(zone => <option key={zone.id} value={zone.id}>{zone.name}</option>)}</select></label><button type="button" onClick={() => { setFocus(""); setSelected(""); setResetVersion(value => value + 1); }}>重置视图</button>{fullscreen && <button type="button" aria-expanded={deviceListOpen} aria-controls="spatial-fullscreen-devices" onClick={() => { setDeviceListOpen(value => !value); setSelected(""); }}>设备列表</button>}<button type="button" ref={fullscreenToggle} onClick={() => { setDeviceListOpen(false); if (fullscreen) void exitFullscreen(); else enterFullscreen(); }}>{fullscreen ? "退出全屏" : "全屏控制"}</button></div>{fullscreen && homeId === "demo" && <span className="spatial-fullscreen-demo">演示数据 · 只读预览</span>}{webgl ? <div className="spatial-three" ref={host} data-focus={focus} /> : <div className="spatial-webgl-fallback"><strong>此浏览器无法显示 WebGL 空间</strong><p>仍可使用下方无障碍设备列表查看状态与打开详情。</p></div>}</section><aside className={`spatial-side-panel ${selection ? "open" : ""}`}>{selection && selectedTarget ? <QuickPanel key={selection.id} connected={connected && homeId !== "demo"} placement={selection} target={selectedTarget} visualState={visualValues[selection.id] ?? {}} onClose={() => setSelected("")} onOpen={() => { void exitFullscreen().then(() => { if (selectedTarget.device) onOpenDevice(selectedTarget.device); }); }} onControl={async (device, input) => { ++parameterGeneration.current; const result = await onQuickControl(device, input); if (!input.isPower) setParameterVersion(value => value + 1); return result; }} onVisualState={state => {
+  return <div ref={fullscreenRoot} className={`spatial-viewer-layout ${fullscreen ? "spatial-fullscreen" : ""}`} role={fullscreen ? "dialog" : undefined} aria-modal={fullscreen || undefined} aria-label={fullscreen ? "全屏空间控制" : undefined}><section className="spatial-stage"><p className="spatial-camera-help">拖动旋转 · 右键平移 · 双指滑动平移 · 捏合缩放 · 墙厚 {Math.round(layout.defaults.wallThickness * 100)} cm</p><div className="spatial-focus"><label>聚焦空间<select value={focus} onChange={event => { setFocus(event.target.value); setSelected(""); }}><option value="">全屋</option>{layout.zones.map(zone => <option key={zone.id} value={zone.id}>{zone.name}</option>)}</select></label><button type="button" onClick={() => { setFocus(""); setSelected(""); setResetVersion(value => value + 1); }}>重置视图</button>{fullscreen && <button type="button" aria-expanded={deviceListOpen} aria-controls="spatial-fullscreen-devices" onClick={() => { setDeviceListOpen(value => !value); setSelected(""); }}>设备列表</button>}<button type="button" ref={fullscreenToggle} onClick={() => { setDeviceListOpen(false); if (fullscreen) void exitFullscreen(); else enterFullscreen(); }}>{fullscreen ? "退出全屏" : "全屏控制"}</button></div>{fullscreen && homeId === "demo" && <span className="spatial-fullscreen-demo">演示数据 · 只读预览</span>}{webgl ? <div className="spatial-three" ref={host} data-focus={focus} /> : <div className="spatial-webgl-fallback"><strong>此浏览器无法显示 WebGL 空间</strong><p>仍可使用下方无障碍设备列表查看状态与打开详情。</p></div>}</section><aside className={`spatial-side-panel ${selection ? "open" : ""}`}>{selection && selectedTarget ? <QuickPanel key={selection.id} connected={connected && homeId !== "demo"} placement={selection} target={selectedTarget} visualState={visualValues[selection.id] ?? {}} onClose={() => setSelected("")} onOpen={() => { if (selectedTarget.device) onOpenDevice(selectedTarget.device); }} onControl={async (device, input) => { ++parameterGeneration.current; const result = await onQuickControl(device, input); if (!input.isPower) setParameterVersion(value => value + 1); return result; }} onVisualState={state => {
       ++parameterGeneration.current;
       if (state.on !== undefined) {
         ++readGeneration.current;
@@ -415,7 +513,7 @@ function QuickPanel({ connected, placement, target, visualState, onClose, onOpen
   const device = target.device, canLoad = Boolean(connected && device?.did && device.detail);
   const visualCallback = useRef(onVisualState);
   useEffect(() => { visualCallback.current = onVisualState; }, [onVisualState]);
-  const [property, setProperty] = useState<QuickProperty | null>(null), [motorActions, setMotorActions] = useState<SpatialMotorAction[]>([]), [value, setValue] = useState(0), [loading, setLoading] = useState(canLoad), [notice, setNotice] = useState("");
+  const [property, setProperty] = useState<QuickProperty | null>(null), [warmth, setWarmth] = useState<QuickProperty | null>(null), [motorActions, setMotorActions] = useState<SpatialMotorAction[]>([]), [value, setValue] = useState(0), [warmthValue, setWarmthValue] = useState(0), [loading, setLoading] = useState(canLoad), [notice, setNotice] = useState("");
   useEffect(() => {
     let current = true;
     if (!connected || !device?.did || !device.detail) return;
@@ -426,18 +524,26 @@ function QuickPanel({ connected, placement, target, visualState, onClose, onOpen
       const properties = (data.groups as Array<{ properties: SpecProperty[] }>).flatMap(group => group.properties);
       setMotorActions(spatialMotorActions(properties));
       const candidate = properties.find(item => item.readable && item.writable && item.range && ["brightness", "target-position", "target-temperature"].includes(item.name));
+      const warmthCandidate = properties.find(item => item.readable && item.writable && item.range && item.name === "color-temperature");
       const visuals = visualProperties(properties);
-      const requested = [...new Map([...visuals, ...(candidate ? [candidate] : [])].map(item => [`${item.siid}.${item.piid}`, item])).values()];
+      const requested = [...new Map([...visuals, ...(candidate ? [candidate] : []), ...(warmthCandidate ? [warmthCandidate] : [])].map(item => [`${item.siid}.${item.piid}`, item])).values()];
       if (!requested.length) return;
       const controlResponse = await fetch(`/api/xiaomi/control?did=${encodeURIComponent(device.did!)}&properties=${requested.map(item => `${item.siid}.${item.piid}`).join(",")}`, { cache: "no-store" });
       const body = await controlResponse.json();
       if (!controlResponse.ok || !current) return;
       visualCallback.current(visualParameters(visuals, body.values ?? {}));
-      if (!candidate?.range) return;
-      const raw = body.values?.[`${candidate.siid}.${candidate.piid}`];
-      if (typeof raw !== "number") return;
-      const next: QuickProperty = { key: candidate.key, name: candidate.name, label: candidate.label, siid: candidate.siid, piid: candidate.piid, unit: candidate.unit, min: candidate.range.min, max: candidate.range.max, step: candidate.range.step, value: raw };
-      setProperty(next); setValue(raw);
+      const raw = candidate ? body.values?.[`${candidate.siid}.${candidate.piid}`] : undefined;
+      if (candidate?.range && typeof raw === "number") {
+        const next: QuickProperty = { key: candidate.key, name: candidate.name, label: candidate.label, siid: candidate.siid, piid: candidate.piid, unit: candidate.unit, min: candidate.range.min, max: candidate.range.max, step: candidate.range.step, value: raw };
+        setProperty(next); setValue(raw);
+      }
+      if (warmthCandidate?.range) {
+        const warmthRaw = body.values?.[`${warmthCandidate.siid}.${warmthCandidate.piid}`];
+        if (typeof warmthRaw === "number") {
+          setWarmth({ key: warmthCandidate.key, name: warmthCandidate.name, label: "灯光冷暖", siid: warmthCandidate.siid, piid: warmthCandidate.piid, unit: warmthCandidate.unit ?? "K", min: warmthCandidate.range.min, max: warmthCandidate.range.max, step: warmthCandidate.range.step, value: warmthRaw });
+          setWarmthValue(warmthRaw);
+        }
+      }
     }).catch(() => { if (current) setNotice("快捷能力读取失败，可在设备详情中重试。"); }).finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
   }, [connected, device?.did, device?.detail, placement.id]);
@@ -477,12 +583,13 @@ function QuickPanel({ connected, placement, target, visualState, onClose, onOpen
   }
 
   const curtain = target.device?.kind === "curtain";
-  return <div className="spatial-quick"><button type="button" className="close" aria-label="关闭控制面板" onClick={onClose}>×</button><span>{placement.targetKind === "lighting" ? "照明目标" : "硬件设备"}</span><h3>{placement.name}</h3><p>{placement.room} · {statusLabel(target)}</p>
+  return <div className="spatial-quick"><button type="button" className="close" aria-label="关闭控制面板" onClick={onClose}>×</button><span>{target.isLight ? "照明目标" : "硬件设备"}</span><h3>{placement.name}</h3><p>{placement.room} · {statusLabel(target)}</p>
     {curtain && <dl className="spatial-position-readout"><div><dt>当前位置</dt><dd>{visualState.currentPosition === undefined ? "待读取" : `${Math.round(visualState.currentPosition * 100)}%`}</dd></div><div><dt>目标位置</dt><dd>{visualState.targetPosition === undefined ? "未报告" : `${Math.round(visualState.targetPosition * 100)}%`}</dd></div></dl>}
     {visualState.pending && <p role="status" className="spatial-pending-state">3D 预览正在等待设备同步</p>}
     {target.power && device && <button type="button" className="spatial-power" disabled={!connected || target.online === false || loading} onClick={() => void apply({ ...target.power!, value: target.on !== true, label: "电源", propertyKey: "power", isPower: true })}>{target.on === true ? "关闭" : "开启"}</button>}
     {motorActions.length > 0 && device && <fieldset className="spatial-motor-controls"><legend>电机控制</legend><div>{motorActions.map(action => <button type="button" key={action.action} className={action.action} disabled={!connected || target.online === false || loading} onClick={() => void apply({ did: device.did!, siid: action.siid, piid: action.piid, value: action.value, label: action.label, propertyKey: action.propertyKey })}>{action.label}</button>)}</div></fieldset>}
     {loading && <small role="status">正在读取或确认能力…</small>}
     {property && <fieldset><label htmlFor="spatial-range">{property.label}：{value}{property.unit ?? ""}</label><input id="spatial-range" type="range" min={property.min} max={property.max} step={property.step} value={value} disabled={!connected || loading} onChange={event => setValue(Number(event.target.value))} /><button type="button" disabled={!connected || loading || !device} onClick={() => void apply({ did: device!.did!, siid: property.siid, piid: property.piid, value, label: property.label, propertyKey: property.key })}>应用</button></fieldset>}
+    {warmth && <fieldset><label htmlFor="spatial-warmth">{warmth.label}：{warmthValue}{warmth.unit ?? ""}</label><input id="spatial-warmth" type="range" min={warmth.min} max={warmth.max} step={warmth.step} value={warmthValue} disabled={!connected || loading} onChange={event => setWarmthValue(Number(event.target.value))} /><small>低色温偏暖，高色温偏冷</small><button type="button" disabled={!connected || loading || !device} onClick={() => void apply({ did: device!.did!, siid: warmth.siid, piid: warmth.piid, value: warmthValue, label: warmth.label, propertyKey: warmth.key })}>应用</button></fieldset>}
     {notice && <p role="status" className="spatial-control-note">{notice}</p>}<button type="button" className="spatial-details" disabled={!device} onClick={onOpen}>打开设备详情</button>{!connected && <small>演示或未连接状态仅可查看，不能控制物理设备。</small>}</div>;
 }
