@@ -10,13 +10,14 @@ export function useSpatialFullscreen() {
 
   async function exit() {
     setFullscreen(false);
-    if (document.fullscreenElement === root.current) await document.exitFullscreen().catch(() => {});
+    if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
   }
 
   function enter() {
     setFullscreen(true);
-    // Browser fullscreen is optional; the viewport layout remains usable if denied.
-    void root.current?.requestFullscreen?.().catch(() => {});
+    // Use the document as the native fullscreen surface so overlays such as device
+    // details can open without tearing down the spatial view.
+    void document.documentElement.requestFullscreen?.().catch(() => {});
   }
 
   useEffect(() => {
@@ -25,6 +26,7 @@ export function useSpatialFullscreen() {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    document.body.classList.add("spatial-viewer-fullscreen");
     const hidden: { element: HTMLElement; inert: boolean; visibility: string }[] = [];
     for (let branch: HTMLElement | null = element; branch?.parentElement; branch = branch.parentElement) {
       for (const sibling of branch.parentElement.children) {
@@ -35,16 +37,17 @@ export function useSpatialFullscreen() {
       }
     }
     toggle.current?.focus();
-    let enteredNative = document.fullscreenElement === element;
+    let enteredNative = document.fullscreenElement === document.documentElement;
     const nativeChange = () => {
-      if (document.fullscreenElement === element) enteredNative = true;
+      if (document.fullscreenElement === document.documentElement) enteredNative = true;
       else if (enteredNative) setFullscreen(false);
     };
     const keydown = (event: KeyboardEvent) => {
+      if (document.querySelector(".device-modal")) return;
       if (event.key === "Escape") {
         event.preventDefault();
         setFullscreen(false);
-        if (document.fullscreenElement === element) void document.exitFullscreen().catch(() => {});
+        if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
       }
       if (event.key !== "Tab") return;
       const items = Array.from(element.querySelectorAll<HTMLElement>("button, select, input, a[href], [tabindex='0']"))
@@ -62,11 +65,12 @@ export function useSpatialFullscreen() {
       document.removeEventListener("fullscreenchange", nativeChange);
       document.removeEventListener("keydown", keydown);
       document.body.style.overflow = overflow;
+      document.body.classList.remove("spatial-viewer-fullscreen");
       for (const item of hidden) {
         item.element.inert = item.inert;
         item.element.style.visibility = item.visibility;
       }
-      if (document.fullscreenElement === element) void document.exitFullscreen().catch(() => {});
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
       if (previousFocus?.isConnected) previousFocus.focus();
     };
   }, [fullscreen]);

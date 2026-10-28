@@ -39,6 +39,20 @@ test("spatial targets retain switch-controlled lamps with endpoint power address
   assert.equal(targets[0].device.did, "main");
 });
 
+test("spatial targets keep a directly wired exhaust fan out of lighting", () => {
+  const devices = records([
+    { did: "bathroom", homeId: "fake-home", name: "卫生间开关", model: "linp.switch.t2dbw2", roomName: "卫生间" },
+    { did: "bathroom.s2", homeId: "fake-home", name: "排风扇", model: "linp.switch.t2dbw2", roomName: "卫生间" },
+  ], [runtime("fake-home", "bathroom", 2, "wired", true)]);
+  const targets = targetsFor(devices);
+  assert.equal(targets.length, 1);
+  assert.equal(targets[0].name, "排风扇");
+  assert.equal(targets[0].kind, "device");
+  assert.equal(targets[0].visualKind, "fan");
+  assert.equal(targets[0].isLight, false);
+  assert.deepEqual(targets[0].power, { did: "bathroom", siid: 2, piid: 1 });
+});
+
 function records(raw, states = [], controlObjects = []) {
   const runtimeStates = new Map(states.map(state => [deviceChannelStateKey(state.homeId, state.did, state.siid), state]));
   const topologies = buildDeviceTopology(raw, runtimeStates, controlObjects);

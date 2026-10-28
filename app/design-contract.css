@@ -287,6 +287,86 @@ body .dm-search-control input:not([type="checkbox"]):not([type="radio"]) { width
 .dm-filter-footer button:disabled { opacity: .55; }
 .dm-filter-empty { display: grid; justify-items: center; gap: 12px; }
 
+/* Fullscreen spatial device details keep the room visible and become a touch sheet. */
+.device-modal-toolbar { display: contents; }
+.spatial-viewer-fullscreen .modal-bg {
+  place-items: stretch end;
+  padding: 0;
+  background: rgb(23 32 43 / 32%);
+  backdrop-filter: blur(2px);
+}
+.spatial-viewer-fullscreen .device-modal {
+  width: min(520px, 48vw);
+  height: 100dvh;
+  max-height: none;
+  margin: 0;
+  padding: 0 24px calc(24px + env(safe-area-inset-bottom));
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 24px 0 0 24px;
+  box-shadow: -16px 0 48px rgb(23 32 43 / 18%);
+  scroll-padding-top: 104px;
+}
+.spatial-viewer-fullscreen .device-modal-toolbar {
+  position: sticky;
+  z-index: 4;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 88px;
+  margin: 0 -24px 16px;
+  padding: max(16px, env(safe-area-inset-top)) 24px 16px;
+  border-bottom: 1px solid var(--line);
+  background: rgb(255 255 255 / 96%);
+  backdrop-filter: blur(12px);
+}
+.spatial-viewer-fullscreen .device-modal-head { min-width: 0; flex: 1; padding-right: 0; }
+.spatial-viewer-fullscreen .device-modal-head > div { min-width: 0; }
+.spatial-viewer-fullscreen .device-modal-head h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spatial-viewer-fullscreen .device-modal-toolbar .close {
+  position: static;
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--control-border);
+  border-radius: 14px;
+  background: #f7f8fa;
+  color: var(--ink);
+  font-size: 28px;
+}
+.spatial-viewer-fullscreen .device-identity { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.spatial-viewer-fullscreen .device-identity > div { align-items: flex-start; flex-direction: column; gap: 4px; min-width: 0; }
+.spatial-viewer-fullscreen .device-identity > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.spatial-viewer-fullscreen .device-identity strong { width: 100%; text-align: left; }
+.spatial-viewer-fullscreen .spec-group > summary { min-height: 56px; padding: 12px; touch-action: manipulation; }
+.spatial-viewer-fullscreen .setting-row { min-height: 64px; padding: 12px 16px; }
+.spatial-viewer-fullscreen .setting-action,
+.spatial-viewer-fullscreen .setting-command > button,
+.spatial-viewer-fullscreen .channel-smart-target { min-width: 48px; min-height: 48px; }
+.spatial-viewer-fullscreen input[type="range"] { min-height: 48px; touch-action: pan-x; }
+
+@media (pointer: coarse) {
+  .spatial-viewer-fullscreen .device-modal button,
+  .spatial-viewer-fullscreen .device-modal select { min-height: 48px; }
+  .spatial-viewer-fullscreen .device-modal summary { -webkit-tap-highlight-color: transparent; }
+}
+
+@media (max-width: 760px), (orientation: portrait) {
+  .spatial-viewer-fullscreen .modal-bg { place-items: end stretch; }
+  .spatial-viewer-fullscreen .device-modal {
+    width: 100%;
+    height: auto;
+    max-height: min(82dvh, 860px);
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    border-radius: 24px 24px 0 0;
+    box-shadow: 0 -16px 48px rgb(23 32 43 / 18%);
+  }
+  .spatial-viewer-fullscreen .device-modal-toolbar { min-height: 80px; padding-top: 12px; }
+}
+
 @media (max-width: 1320px) { .overview-status { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) {
   .workspace { padding-bottom: calc(104px + env(safe-area-inset-bottom)); }

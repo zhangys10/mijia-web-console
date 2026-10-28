@@ -5,6 +5,7 @@ import test from "node:test";
 const source = await readFile(new URL("../app/spatial-room-view.tsx", import.meta.url), "utf8");
 const placementSource = await readFile(new URL("../app/spatial-device-placement-panel.tsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+const designStyles = await readFile(new URL("../app/design-contract.css", import.meta.url), "utf8");
 
 test("spatial UI exposes a dedicated top-level view, accessible markers, fallback and advanced details", async () => {
   const management = await readFile(new URL("../app/device-management.tsx", import.meta.url), "utf8");
@@ -27,9 +28,11 @@ test("editor and responsive UI include wall-free areas, side panel and mobile bo
   assert.match(styles, /spatial-zone-actions/); assert.match(styles, /spatial-placement-editor/); assert.match(styles, /spatial-placement-properties/); assert.match(styles, /spatial-device-picker/); assert.match(styles, /spatial-height-picker/); assert.match(styles, /spatial-scale-summary/); assert.match(styles, /spatial-placement circle\{pointer-events:auto;cursor:pointer\}/);
   assert.match(styles, /spatial-side-panel\.open/); assert.match(styles, /bottom:64px/); assert.match(styles, /prefers-reduced-motion/);
   assert.match(styles, /spatial-marker\.compact \.spatial-marker-icon\{width:28px;height:28px/);
-  assert.match(source, /marker\.matches\(":hover"\)/);
-  assert.match(source, /hoverEnded = marker\.dataset\.hovered === "true" && !hovered/);
-  assert.match(source, /aria-label", "3D 光照模式"/); assert.match(source, /applySpatialEnvironment/);
+  assert.match(source, /placementObjects\.current/); assert.match(source, /button\.onpointerenter/); assert.match(source, /button\.onpointerleave/);
+  assert.match(source, /aria-label", "3D 光照模式"/); assert.match(source, /\["auto", "自动"\]/); assert.match(source, /spatialEnvironmentAt/); assert.match(source, /applySpatialEnvironment/);
+  assert.match(source, /aria-label", "3D 渲染质量"/); assert.match(source, /\["smooth", "流畅"\]/); assert.match(source, /createSpatialFrameScheduler/); assert.match(source, /IntersectionObserver/); assert.match(source, /visibilitychange/);
+  assert.match(source, /antialias: renderQuality === "standard"/); assert.match(source, /powerPreference: renderQuality === "power" \? "low-power" : "high-performance"/);
+  assert.match(source, /renderer\.setSize\(width, height\);/); assert.match(source, /sameVisualValues\(current, updates\) \? current : updates/);
   assert.match(styles, /@media\(max-width:900px\)/); assert.match(styles, /@media\(max-width:560px\)/);
   assert.match(styles, /spatial-editor-grid>main\{align-self:start;position:sticky/); assert.match(styles, /spatial-editor-grid>main\{position:static;max-height:none\}/);
 });
@@ -39,7 +42,7 @@ test("quick controls are verified and unknown outcomes are explicitly pending wi
   assert.match(page, /result\.status==="outcome_unknown"\)return "pending"/);
   assert.match(page, /Object\.is\(state\.values/);
   assert.doesNotMatch(page.match(/async function applySpatialControl[\s\S]+?\n  }/)?.[0] ?? "", /while\s*\(|retry/i);
-  assert.match(source, /brightness/); assert.match(source, /target-position/); assert.match(source, /target-temperature/);
+  assert.match(source, /brightness/); assert.match(source, /target-position/); assert.match(source, /target-temperature/); assert.match(source, /color-temperature/); assert.match(source, /spatial-warmth/);
   assert.match(source, /spatialMotorActions\(properties\)/); assert.match(source, /spatial-motor-controls/); assert.match(source, /电机控制/);
   assert.match(source, /当前位置/); assert.match(source, /目标位置/); assert.match(source, /pending: true/); assert.match(source, /3D 为待同步预览/);
   const quickApply = source.match(/async function apply\(input: SpatialControlInput\)[\s\S]+?finally \{ setLoading\(false\); \}/)?.[0] ?? "";
@@ -49,13 +52,15 @@ test("quick controls are verified and unknown outcomes are explicitly pending wi
 
 test("fullscreen keeps controls reachable, isolates navigation and provides touch panels", async () => {
   const fullscreen = await readFile(new URL("../app/use-spatial-fullscreen.ts", import.meta.url), "utf8");
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(source, /全屏控制/);
   assert.match(source, /退出全屏/);
   assert.match(source, /aria-modal=\{fullscreen \|\| undefined\}/);
   assert.match(source, /aria-expanded=\{deviceListOpen\}/);
   assert.match(source, /deviceListOpen \|\| !webgl/);
-  assert.match(source, /exitFullscreen\(\).then/);
-  assert.match(fullscreen, /requestFullscreen\?\./);
+  assert.doesNotMatch(source, /onOpen=\{\(\) => \{ void exitFullscreen/);
+  assert.match(fullscreen, /document\.documentElement\.requestFullscreen\?\./);
+  assert.match(fullscreen, /document\.querySelector\("\.device-modal"\)/);
   assert.match(fullscreen, /sibling.inert = true/);
   assert.match(fullscreen, /item.element.inert = item.inert/);
   assert.match(fullscreen, /previousFocus.focus\(\)/);
@@ -66,4 +71,9 @@ test("fullscreen keeps controls reachable, isolates navigation and provides touc
   assert.match(styles, /min-height:48px;min-width:48px/);
   assert.match(styles, /max-height:45dvh/);
   assert.match(styles, /safe-area-inset-bottom/);
+  assert.match(page, /device-modal-toolbar/);
+  assert.match(designStyles, /spatial-viewer-fullscreen \.device-modal-toolbar/);
+  assert.match(designStyles, /place-items: stretch end/);
+  assert.match(designStyles, /max-height: min\(82dvh, 860px\)/);
+  assert.match(designStyles, /@media \(pointer: coarse\)/);
 });
