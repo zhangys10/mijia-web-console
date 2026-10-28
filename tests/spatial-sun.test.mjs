@@ -14,8 +14,8 @@ test("automatic environment follows local sunrise and sunset", () => {
   }).format(instant));
   assert.ok(hourInShanghai(sunrise) >= 5 && hourInShanghai(sunrise) <= 7);
   assert.ok(hourInShanghai(sunset) >= 17 && hourInShanghai(sunset) <= 19);
-  assert.equal(spatialEnvironmentAt(new Date(2026, 2, 20, 12), shanghai), "day");
-  assert.equal(spatialEnvironmentAt(new Date(2026, 2, 20, 2), shanghai), "night");
+  assert.equal(spatialEnvironmentAt(new Date("2026-03-20T04:00:00Z"), shanghai), "day");
+  assert.equal(spatialEnvironmentAt(new Date("2026-03-20T18:00:00Z"), shanghai), "night");
 });
 
 test("local solar coordinates use the browser timezone without requesting location", () => {

@@ -54,5 +54,11 @@ export function spatialSunEvent(date: Date, coordinates: SpatialCoordinates, sun
 export function spatialEnvironmentAt(date = new Date(), coordinates = spatialLocalCoordinates(date)): SpatialEnvironmentMode {
   const sunrise = spatialSunEvent(date, coordinates, true), sunset = spatialSunEvent(date, coordinates, false);
   if (!sunrise || !sunset) return date.getHours() >= 6 && date.getHours() < 18 ? "day" : "night";
-  return date >= sunrise && date < sunset ? "day" : "night";
+  // When the browser timezone differs from the supplied coordinates, the
+  // returned instants can straddle UTC midnight even though they belong to
+  // the same local solar date. Normalize that ordering before comparing.
+  const normalizedSunrise = sunrise > sunset
+    ? new Date(sunrise.getTime() - 86_400_000)
+    : sunrise;
+  return date >= normalizedSunrise && date < sunset ? "day" : "night";
 }
