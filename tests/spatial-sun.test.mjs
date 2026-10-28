@@ -7,8 +7,13 @@ test("automatic environment follows local sunrise and sunset", () => {
   const date = new Date(2026, 2, 20, 12);
   const sunrise = spatialSunEvent(date, shanghai, true), sunset = spatialSunEvent(date, shanghai, false);
   assert.ok(sunrise); assert.ok(sunset);
-  assert.ok(sunrise.getHours() >= 5 && sunrise.getHours() <= 7);
-  assert.ok(sunset.getHours() >= 17 && sunset.getHours() <= 19);
+  const hourInShanghai = (instant) => Number(new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Shanghai",
+  }).format(instant));
+  assert.ok(hourInShanghai(sunrise) >= 5 && hourInShanghai(sunrise) <= 7);
+  assert.ok(hourInShanghai(sunset) >= 17 && hourInShanghai(sunset) <= 19);
   assert.equal(spatialEnvironmentAt(new Date(2026, 2, 20, 12), shanghai), "day");
   assert.equal(spatialEnvironmentAt(new Date(2026, 2, 20, 2), shanghai), "night");
 });
