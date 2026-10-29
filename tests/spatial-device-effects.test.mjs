@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { createDeviceEffect, createLightFixture, createTransitioningDeviceEffect, interpolateVisualState, resolveLightFixture } from "../lib/spatial-device-effects.ts";
+import { createDeviceEffect, createLightFixture, createTransitioningDeviceEffect, interpolateVisualState, lightColorForTemperature, resolveLightFixture } from "../lib/spatial-device-effects.ts";
 
 test("floor status and activity rings are not rendered", () => {
   for (const state of [{ on: null }, { on: true, online: false }]) {
@@ -49,6 +49,19 @@ test("light brightness changes illumination and climate setpoint changes airflow
   const cool = createDeviceEffect({ kind: "climate", on: true, temperature: 18 });
   const mild = createDeviceEffect({ kind: "climate", on: true, temperature: 26 });
   assert.ok(cool.children[1].scale.x > mild.children[1].scale.x);
+});
+
+test("light output follows reported color temperature without excessive intensity", () => {
+  const warm = createDeviceEffect({ kind: "light", on: true, brightness: 1, colorTemperature: 2700 });
+  const cool = createDeviceEffect({ kind: "light", on: true, brightness: 1, colorTemperature: 6500 });
+  const warmLight = warm.children.find(child => child instanceof THREE.PointLight);
+  const coolLight = cool.children.find(child => child instanceof THREE.PointLight);
+  assert.ok(warmLight && coolLight);
+  assert.ok(warmLight.color.b < coolLight.color.b);
+  assert.ok(warmLight.color.r > warmLight.color.b);
+  assert.ok(warmLight.intensity <= 3.5);
+  assert.equal(warm.userData.colorTemperature, 2700);
+  assert.ok(lightColorForTemperature(2700).b < lightColorForTemperature(6500).b);
 });
 
 test("five fixture models resolve compatibly and never add floor geometry", () => {

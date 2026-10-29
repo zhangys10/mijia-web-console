@@ -44,6 +44,14 @@ test("visual reads prefer measured curtain position; failed and missing values r
   assert.deepEqual(visualParameters(properties, {}), {});
 });
 
+test("visual reads preserve the reported light color temperature", () => {
+  const properties = visualProperties([
+    { name: "color-temperature", siid: 2, piid: 3, readable: true, range: { min: 2700, max: 6500 } },
+  ]);
+  assert.deepEqual(visualParameters(properties, { "2.3": 3200 }), { colorTemperature: 3200 });
+  assert.deepEqual(visualParameters(properties, { "2.3": 7000 }), {});
+});
+
 test("wardrobe prefab has cabinet, two doors and handles", () => {
   const wardrobe = createFurniture({ id: "wardrobe", kind: "wardrobe", width: 2, depth: .6, height: 2.4, rotation: 90, point: { x: 0, y: 0 } });
   assert.equal(wardrobe.children.length, 5);

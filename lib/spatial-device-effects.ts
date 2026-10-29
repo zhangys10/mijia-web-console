@@ -7,6 +7,7 @@ export type SpatialVisualState = {
   online?: boolean | null;
   kind: "light" | "climate" | "curtain" | "other";
   brightness?: number;
+  colorTemperature?: number;
   temperature?: number;
   position?: number;
   currentPosition?: number;
@@ -20,16 +21,33 @@ export function resolveLightFixture(appearance?: SpatialPlacement["appearance"])
   return appearance?.fixture ?? (appearance?.type === "strip" ? "strip" : appearance?.type === "area" ? "panel" : "ceiling");
 }
 
-function lightMaterial(strength: number) {
-  const material = new THREE.MeshStandardMaterial({ color: 0xffe1a8, emissive: 0xffc96e, emissiveIntensity: strength * 2.2, roughness: .45 });
+export function lightColorForTemperature(kelvin = 3000) {
+  const temperature = Math.max(1000, Math.min(40000, kelvin)) / 100;
+  const red = temperature <= 66 ? 255 : 329.698727446 * ((temperature - 60) ** -.1332047592);
+  const green = temperature <= 66
+    ? 99.4708025861 * Math.log(temperature) - 161.1195681661
+    : 288.1221695283 * ((temperature - 60) ** -.0755148492);
+  const blue = temperature >= 66 ? 255 : temperature <= 19 ? 0 : 138.5177312231 * Math.log(temperature - 10) - 305.044792731;
+  const channel = (value: number) => Math.max(0, Math.min(255, value)) / 255;
+  return new THREE.Color().setRGB(channel(red), channel(green), channel(blue), THREE.SRGBColorSpace);
+}
+
+function lightStrength(strength: number) {
+  return Math.pow(Math.max(0, Math.min(1, strength)), 1.15);
+}
+
+function lightMaterial(strength: number, color: THREE.Color) {
+  const level = lightStrength(strength);
+  const material = new THREE.MeshStandardMaterial({ color: color.clone().lerp(new THREE.Color(0xffffff), .55), emissive: color, emissiveIntensity: level * .7, roughness: .5 });
   material.userData.luminous = true;
   return material;
 }
 
-export function createLightFixture(appearance: SpatialPlacement["appearance"] | undefined, elevation: number, strength: number) {
+export function createLightFixture(appearance: SpatialPlacement["appearance"] | undefined, elevation: number, strength: number, colorTemperature?: number) {
   const group = new THREE.Group(), fixture = resolveLightFixture(appearance), length = appearance?.length ?? 1.2, width = appearance?.width ?? 1;
+  const lightColor = lightColorForTemperature(colorTemperature), level = lightStrength(strength);
   const shell = new THREE.MeshStandardMaterial({ color: 0xf2f3f4, roughness: .72, metalness: .08 });
-  const luminous = lightMaterial(strength);
+  const luminous = lightMaterial(strength, lightColor);
   if (fixture === "strip") {
     const points = stripPoints(appearance?.segments ?? [{ length, angle: 0 }]);
     for (let index = 1; index < points.length; index++) {
@@ -38,7 +56,7 @@ export function createLightFixture(appearance: SpatialPlacement["appearance"] | 
       strip.material.userData.luminous = true; strip.position.set((start.x + end.x) / 2, elevation, (start.y + end.y) / 2); strip.rotation.y = -Math.atan2(end.y - start.y, end.x - start.x); group.add(strip);
       if (strength > 0) {
         const dx = (end.x - start.x) / segmentLength, dz = (end.y - start.y) / segmentLength;
-        const light = new THREE.RectAreaLight(0xffd28a, 7 * strength, segmentLength, .08); light.name = "strip-illumination";
+        const light = new THREE.RectAreaLight(lightColor, 2 * level, segmentLength, .08); light.name = "strip-illumination";
         light.position.set((start.x + end.x) / 2, elevation - .045, (start.y + end.y) / 2);
         light.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(dx, 0, dz), new THREE.Vector3(dz, 0, -dx), new THREE.Vector3(0, 1, 0)));
         group.add(light);
@@ -62,15 +80,15 @@ export function createLightFixture(appearance: SpatialPlacement["appearance"] | 
     const body = new THREE.Mesh(new THREE.CylinderGeometry(Math.max(.16, length / 2), Math.max(.16, length / 2), .08, 32), shell); body.position.y = elevation; group.add(body);
     const diffuser = new THREE.Mesh(new THREE.CylinderGeometry(Math.max(.13, length / 2 - .035), Math.max(.13, length / 2 - .035), .025, 32), luminous); diffuser.position.y = elevation - .052; group.add(diffuser);
   }
-  if (strength > 0 && fixture !== "strip") { const light = new THREE.PointLight(0xffd28a, 12 * strength, 6); light.position.y = elevation - .08; group.add(light); }
-  group.userData.fixture = fixture;
+  if (strength > 0 && fixture !== "strip") { const light = new THREE.PointLight(lightColor, 3.5 * level, 4.5); light.position.y = elevation - .08; group.add(light); }
+  group.userData.fixture = fixture; group.userData.colorTemperature = colorTemperature;
   return group;
 }
 
 export function createDeviceEffect(state: SpatialVisualState, appearance?: SpatialPlacement["appearance"], elevation = 1.8) {
   const group = new THREE.Group();
   if (state.online === false) return group;
-  if (state.kind === "light") return createLightFixture(appearance, elevation, state.on === true ? Math.max(0, Math.min(1, state.brightness ?? 1)) : 0);
+  if (state.kind === "light") return createLightFixture(appearance, elevation, state.on === true ? Math.max(0, Math.min(1, state.brightness ?? 1)) : 0, state.colorTemperature);
   if (state.kind === "curtain") {
     if (state.position === undefined || !Number.isFinite(state.position)) return group;
     const halfLength = (appearance?.length ?? 1.2) / 2;
