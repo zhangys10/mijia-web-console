@@ -40,7 +40,7 @@ function assetUrl(homeId: string, kind: "image" | "model", download = false) { r
 function wallSegment(start: SpatialPoint, end: SpatialPoint, thicknessPixels: number, confidence = 1): SpatialWall { return { id: id("wall"), start, end, thicknessPixels, confidence }; }
 function visibleWallThickness(zone: SpatialZone) { return Math.min(12, Math.max(4, zone.wallThicknessPixels ?? 8)); }
 function visibleSegmentThickness(wall: SpatialWall) { return Math.min(12, Math.max(4, wall.thicknessPixels)); }
-function visualStateKey(state: SpatialVisualState) { return JSON.stringify([state.kind, state.online, state.on, state.brightness, state.temperature, state.position, state.currentPosition, state.targetPosition, state.positionIsTarget, state.pending]); }
+function visualStateKey(state: SpatialVisualState) { return JSON.stringify([state.kind, state.online, state.on, state.brightness, state.colorTemperature, state.temperature, state.position, state.currentPosition, state.targetPosition, state.positionIsTarget, state.pending]); }
 function placementGeometryKey(placement: SpatialPlacement) { return JSON.stringify([placement.point.x, placement.point.y, placement.elevation, placement.rotationY, placement.appearance]); }
 function sameVisualValues(current: Record<string, Partial<SpatialVisualState>>, next: Record<string, Partial<SpatialVisualState>>) {
   const currentKeys = Object.keys(current), nextKeys = Object.keys(next);
@@ -550,7 +550,9 @@ function QuickPanel({ connected, placement, target, visualState, onClose, onOpen
 
   function preview(input: SpatialControlInput) {
     if (input.isPower) return { on: Boolean(input.value) };
-    if (!property || typeof input.value !== "number") return {};
+    if (typeof input.value !== "number") return {};
+    if (warmth && input.propertyKey === warmth.key) return { colorTemperature: input.value };
+    if (!property || input.propertyKey !== property.key) return {};
     const normalized = Math.max(0, Math.min(1, (input.value - property.min) / (property.max - property.min || 1)));
     if (property.name === "brightness") return { brightness: normalized };
     if (property.name === "target-temperature") return { temperature: input.value };
@@ -563,6 +565,7 @@ function QuickPanel({ connected, placement, target, visualState, onClose, onOpen
     const rollback: Partial<SpatialVisualState> = {
       on: target.on,
       brightness: visualState.brightness,
+      colorTemperature: visualState.colorTemperature,
       temperature: visualState.temperature,
       position: visualState.position,
       currentPosition: visualState.currentPosition,
