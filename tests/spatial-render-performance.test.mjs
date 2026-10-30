@@ -13,6 +13,10 @@ test("render quality defaults to power saving for touch-first devices and honors
   assert.equal(spatialPixelRatio("standard", 3, true), 2);
   assert.equal(spatialPixelRatio("smooth", 3, true), 1);
   assert.equal(spatialPixelRatio("smooth", 3, false), 1.5);
+  assert.equal(spatialPixelRatio("power", 2, true, true), .75);
+  assert.equal(spatialPixelRatio("smooth", 2, true, true), .85);
+  assert.equal(spatialPixelRatio("standard", 2, true, true), 1.25);
+  assert.equal(spatialPixelRatio("standard", 2, false, true), 2);
 });
 
 test("frame scheduler becomes idle, throttles frames, and pauses while inactive", () => {

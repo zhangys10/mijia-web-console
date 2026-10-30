@@ -18,7 +18,7 @@ import { FurniturePanel } from "./spatial-furniture-panel";
 import { furnitureCatalog, type FurnitureKind, type SpatialFurniture } from "../lib/spatial-furniture";
 import type { ManagedDevice } from "../lib/device-management";
 import { targetsFor, type Target } from "../lib/spatial-targets";
-import { createSpatialScene, exportSpatialGlb, fadeSpatialObject, spatialPointToWorld } from "../lib/spatial-layout-three";
+import { createSpatialScene, exportSpatialGlb, spatialPointToWorld, wireframeSpatialObject } from "../lib/spatial-layout-three";
 import { analyzeFloorPlanImage, type FloorPlanAnalysisOptions } from "../lib/floor-plan-analysis";
 import { pixelsPerMeter, pointInPolygon, type SpatialAsset, type SpatialLayoutV1, type SpatialOpening, type SpatialPlacement, type SpatialPoint, type SpatialWall, type SpatialZone } from "../lib/spatial-layout";
 import { alignWallGraphNode, buildWallGraphNodes, buildWallRenderPaths, findEnclosedWallFace, materializeWallJunctions, moveWallGraphNode, projectPointToWall, snapWallPoint } from "../lib/wall-editor-geometry";
@@ -309,7 +309,7 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
     let renderer: THREE.WebGLRenderer;
     try { renderer = new THREE.WebGLRenderer({ antialias: renderQuality === "standard", powerPreference: renderQuality === "power" ? "low-power" : "high-performance" }); } catch { queueMicrotask(() => setWebgl(false)); return; }
     const labels = new CSS2DRenderer();
-    let interacting = false, intersecting = true, pageVisible = document.visibilityState === "visible", pixelRatio = spatialPixelRatio(renderQuality, window.devicePixelRatio, false);
+    let interacting = false, intersecting = true, pageVisible = document.visibilityState === "visible", pixelRatio = spatialPixelRatio(renderQuality, window.devicePixelRatio, false, Boolean(focus));
     renderer.setPixelRatio(pixelRatio);
     renderer.domElement.className = "spatial-webgl"; renderer.domElement.tabIndex = 0;
     renderer.domElement.setAttribute("aria-label", "3D 空间：拖动旋转，双指滑动平移，捏合或加减键缩放");
@@ -338,7 +338,7 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
     else { controls.target.copy(center); camera.position.set(center.x + Math.max(extent.x, 5), center.y + 12, center.z + Math.max(extent.z, 5)); camera.zoom = Math.min(2.6, 10 / Math.max(extent.x, extent.z, 3)); }
     controls.update();
     let width = 1, height = 1;
-    const setPixelRatio = (moving: boolean) => { const next = spatialPixelRatio(renderQuality, window.devicePixelRatio, moving); if (next === pixelRatio) return; pixelRatio = next; renderer.setPixelRatio(next); };
+    const setPixelRatio = (moving: boolean) => { const next = spatialPixelRatio(renderQuality, window.devicePixelRatio, moving, Boolean(focus)); if (next === pixelRatio) return; pixelRatio = next; renderer.setPixelRatio(next); };
     const resize = () => {
       width = Math.max(1, element.clientWidth); height = Math.max(1, element.clientHeight);
       renderer.setSize(width, height); labels.setSize(width, height);
@@ -450,7 +450,7 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
         const renderedState = inFocus ? state : { ...state, on: state.kind === "light" ? false : state.on };
         const transition = createTransitioningDeviceEffect(previous, renderedState, placement.appearance, placement.elevation), effect = transition.group;
         effect.position.copy(world); effect.rotation.y = -placement.rotationY;
-        if (!inFocus) { if (state.kind === "light") fadeSpatialObject(effect); else effect.visible = false; }
+        if (!inFocus) { if (state.kind === "light") wireframeSpatialObject(effect); else effect.visible = false; }
         effects.remove(entry.effect); disposeSpatialObject(entry.effect); effects.add(effect); entry.effect = effect;
         const reducedMotion = !inFocus || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
         const duration = reducedMotion ? 0 : state.kind === "curtain" ? 1800 : state.kind === "light" ? 1400 : 0;

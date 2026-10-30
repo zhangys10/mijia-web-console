@@ -36,18 +36,28 @@ test("furniture survives layout validation and renders in calibrated coordinates
   assert.throws(() => parseSpatialLayout({ ...layout, furniture: [item, item] }), /SPATIAL_FURNITURE_INVALID/);
 });
 
-test("room focus fades surrounding geometry and restores full opacity for the whole home", async () => {
+test("room focus renders surrounding geometry as wireframes and restores solid materials for the whole home", async () => {
   const layout = parseSpatialLayout(await fixture("home-a", { furniture: [
     { id: "inside", kind: "table", point: { x: 100, y: 100 }, width: 1, depth: 1, height: .7, rotation: 0 },
     { id: "outside", kind: "table", point: { x: 500, y: 100 }, width: 1, depth: 1, height: .7, rotation: 0 },
   ] }));
   const focused = createSpatialScene(layout, "room_1");
+  const outsideFloor = focused.getObjectByName("zone:area_1:floor");
+  const outsideFloorOutline = focused.getObjectByName("zone:area_1:floor:focus-outline");
   assert.equal(focused.getObjectByName("zone:room_1:floor").material.opacity, 1);
-  assert.equal(focused.getObjectByName("zone:area_1:floor").material.opacity, .15);
+  assert.equal(focused.getObjectByName("zone:room_1:floor").material.wireframe, false);
+  assert.equal(outsideFloor.material.visible, false);
+  assert.equal(outsideFloor.material.userData.spatialOutlineHost, true);
+  assert.equal(outsideFloorOutline.type, "LineSegments");
+  assert.equal(outsideFloorOutline.material.userData.spatialWireframe, true);
+  assert.equal(outsideFloorOutline.geometry.attributes.position.count, layout.zones.find(zone => zone.id === "area_1").polygon.length * 2);
   assert.equal(focused.getObjectByName("furniture:inside").children[0].material.opacity, 1);
-  assert.equal(focused.getObjectByName("furniture:outside").children[0].material.opacity, .15);
+  assert.equal(focused.getObjectByName("furniture:outside").children[0].material.visible, false);
+  assert.equal(focused.getObjectByName("furniture:outside").children[0].children[0].type, "LineSegments");
   const restored = createSpatialScene(layout);
   assert.equal(restored.getObjectByName("zone:area_1:floor").material.opacity, 1);
+  assert.equal(restored.getObjectByName("zone:area_1:floor").material.wireframe, false);
+  assert.equal(restored.getObjectByName("zone:area_1:floor:focus-outline"), undefined);
 });
 
 test("room focus splits crossing structural walls without changing stored geometry", async () => {
@@ -56,7 +66,7 @@ test("room focus splits crossing structural walls without changing stored geomet
   const focused = createSpatialScene(layout, "room_1");
   const pieces = focused.children.filter(child => child.name.startsWith("zone:crossing:wall"));
   assert.equal(pieces.length, 3);
-  assert.equal(pieces.filter(piece => piece.material.opacity === 1).length, 1);
+  assert.equal(pieces.filter(piece => piece.material.visible).length, 1);
   assert.deepEqual(layout.walls, [wall]);
 });
 const glb = (() => { const value = new Uint8Array(12); value.set([0x67, 0x6c, 0x54, 0x46]); new DataView(value.buffer).setUint32(4, 2, true); new DataView(value.buffer).setUint32(8, 12, true); return value; })();

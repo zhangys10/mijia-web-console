@@ -7,7 +7,11 @@ export function resolveSpatialRenderQuality(stored: string | null, touchFirst: b
   return touchFirst ? "power" : "standard";
 }
 
-export function spatialPixelRatio(quality: SpatialRenderQuality, devicePixelRatio: number, moving: boolean) {
+export function spatialPixelRatio(quality: SpatialRenderQuality, devicePixelRatio: number, moving: boolean, focused = false) {
+  if (moving && focused) {
+    const focusedInteractionRatio = quality === "power" ? .75 : quality === "smooth" ? .85 : 1.25;
+    return Math.min(devicePixelRatio, focusedInteractionRatio);
+  }
   if (quality === "power" || quality === "smooth") return moving ? 1 : Math.min(devicePixelRatio, 1.5);
   return Math.min(devicePixelRatio, 2);
 }
