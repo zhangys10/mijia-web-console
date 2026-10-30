@@ -17,6 +17,8 @@ import { stripPoints, visualProperties, visualParameters, type VisualProperty } 
 import { FurniturePanel } from "./spatial-furniture-panel";
 import { furnitureCatalog, type FurnitureKind, type SpatialFurniture } from "../lib/spatial-furniture";
 import type { ManagedDevice } from "../lib/device-management";
+import type { ManualScene } from "../lib/xiaomi-scenes";
+import { sceneGlyph } from "../lib/scene-display";
 import { targetsFor, type Target } from "../lib/spatial-targets";
 import { createSpatialScene, exportSpatialGlb, spatialPointToWorld, wireframeSpatialObject } from "../lib/spatial-layout-three";
 import { analyzeFloorPlanImage, type FloorPlanAnalysisOptions } from "../lib/floor-plan-analysis";
@@ -24,7 +26,7 @@ import { pixelsPerMeter, pointInPolygon, type SpatialAsset, type SpatialLayoutV1
 import { alignWallGraphNode, buildWallGraphNodes, buildWallRenderPaths, findEnclosedWallFace, materializeWallJunctions, moveWallGraphNode, projectPointToWall, snapWallPoint } from "../lib/wall-editor-geometry";
 
 export type SpatialControlInput = { did: string; siid: number; piid: number; value: boolean | number | string; label: string; propertyKey: string; isPower?: boolean };
-type Props = { devices: ManagedDevice[]; homeId: string; connected: boolean; onOpenDevice: (device: ManagedDevice) => void; onQuickControl: (device: ManagedDevice, input: SpatialControlInput) => Promise<"confirmed" | "pending"> };
+type Props = { devices: ManagedDevice[]; homeId: string; connected: boolean; scenes: ManualScene[]; runningSceneId?: string; onRunScene: (scene: ManualScene) => void | Promise<void>; onOpenDevice: (device: ManagedDevice) => void; onQuickControl: (device: ManagedDevice, input: SpatialControlInput) => Promise<"confirmed" | "pending"> };
 type QuickProperty = { key: string; name: string; label: string; siid: number; piid: number; min: number; max: number; step: number; unit?: string; value: number };
 type PlacementLevel = "ground" | "middle" | "top";
 type PlacementRenderEntry = { effect: THREE.Group; label: CSS2DObject; button: HTMLButtonElement; icon: HTMLSpanElement; copy: HTMLSpanElement; stateKey: string; geometryKey: string; presentationKey: string };
@@ -172,7 +174,7 @@ function SpatialEditor({ homeId, initial, targets, onCancel, onSaved }: Props & 
   </div>;
 }
 
-function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQuickControl }: Props & { layout: SpatialLayoutV1; targets: Target[] }) {
+function SpatialViewer({ layout, homeId, targets, connected, scenes, runningSceneId, onRunScene, onOpenDevice, onQuickControl }: Props & { layout: SpatialLayoutV1; targets: Target[] }) {
   const { root: fullscreenRoot, toggle: fullscreenToggle, fullscreen, enter: enterFullscreen, exit: exitFullscreen } = useSpatialFullscreen();
   const [deviceListOpen, setDeviceListOpen] = useState(false);
   const [visualValues, setVisualValues] = useState<Record<string, Partial<SpatialVisualState>>>({});
@@ -225,10 +227,11 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
   const transitionTicks = useRef(new Map<string, (time: number) => boolean>());
   const invalidateRender = useRef<() => void>(() => {});
   const refreshMarkerPresentation = useRef<() => void>(() => {});
+  const sceneMenuRef = useRef<HTMLDivElement | null>(null);
   const cameraMemory = useRef<{ key: string; position: THREE.Vector3; target: THREE.Vector3; zoom: number } | null>(null);
   const renderedStates = useRef<Record<string, SpatialVisualState>>({});
   const visualTransitions = useRef<Record<string, { from: SpatialVisualState; to: SpatialVisualState; started: number; duration: number }>>({});
-  const host = useRef<HTMLDivElement | null>(null), [selected, setSelected] = useState(""), [focus, setFocus] = useState(""), [webgl, setWebgl] = useState(true), [environmentPreference, setEnvironmentPreference] = useState<"auto" | SpatialEnvironmentMode>("auto"), [automaticEnvironmentMode, setAutomaticEnvironmentMode] = useState<SpatialEnvironmentMode>(() => spatialEnvironmentAt());
+  const host = useRef<HTMLDivElement | null>(null), [selected, setSelected] = useState(""), [focus, setFocus] = useState(""), [webgl, setWebgl] = useState(true), [sceneMenuOpen, setSceneMenuOpen] = useState(false), [environmentPreference, setEnvironmentPreference] = useState<"auto" | SpatialEnvironmentMode>("auto"), [automaticEnvironmentMode, setAutomaticEnvironmentMode] = useState<SpatialEnvironmentMode>(() => spatialEnvironmentAt());
   const environmentMode: SpatialEnvironmentMode = environmentPreference === "auto" ? automaticEnvironmentMode : environmentPreference;
   const selectedRef = useRef(selected);
   const [renderQuality, setRenderQuality] = useState<SpatialRenderQuality>(() => typeof window === "undefined" ? "standard" : resolveSpatialRenderQuality(window.localStorage.getItem(spatialRenderQualityStorageKey), window.matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0));
@@ -245,6 +248,14 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", visibilityChange); };
   }, [environmentPreference]);
   useEffect(() => { window.localStorage.setItem(spatialRenderQualityStorageKey, renderQuality); }, [renderQuality]);
+  useEffect(() => {
+    if (!sceneMenuOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setSceneMenuOpen(false); };
+    const closeOnOutsidePress = (event: PointerEvent) => { if (!sceneMenuRef.current?.contains(event.target as Node)) setSceneMenuOpen(false); };
+    document.addEventListener("keydown", closeOnEscape);
+    document.addEventListener("pointerdown", closeOnOutsidePress, true);
+    return () => { document.removeEventListener("keydown", closeOnEscape); document.removeEventListener("pointerdown", closeOnOutsidePress, true); };
+  }, [sceneMenuOpen]);
   const [readings, setReadings] = useState<Record<string, boolean | null>>({});
   const confirmedReadings = useRef<Record<string, boolean | null>>({});
   const readGeneration = useRef(0);
@@ -488,7 +499,7 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
 
   const selection = layout.placements.find(item => item.id === selected), rawSelectedTarget = selection ? targetMap.get(`${selection.targetKind}:${selection.targetId}`) : undefined;
   const selectedTarget = rawSelectedTarget;
-  return <div ref={fullscreenRoot} className={`spatial-viewer-layout ${fullscreen ? "spatial-fullscreen" : ""}`} role={fullscreen ? "dialog" : undefined} aria-modal={fullscreen || undefined} aria-label={fullscreen ? "全屏空间控制" : undefined}><section className="spatial-stage"><p className="spatial-camera-help">拖动旋转 · 右键平移 · 双指滑动平移 · 捏合缩放 · 墙厚 {Math.round(layout.defaults.wallThickness * 100)} cm</p><div className="spatial-focus"><label>聚焦空间<select value={focus} onChange={event => { setFocus(event.target.value); setSelected(""); }}><option value="">全屋</option>{layout.zones.map(zone => <option key={zone.id} value={zone.id}>{zone.name}</option>)}</select></label><button type="button" onClick={() => { setFocus(""); setSelected(""); setResetVersion(value => value + 1); }}>重置视图</button>{fullscreen && <button type="button" aria-expanded={deviceListOpen} aria-controls="spatial-fullscreen-devices" onClick={() => { setDeviceListOpen(value => !value); setSelected(""); }}>设备列表</button>}<button type="button" ref={fullscreenToggle} onClick={() => { setDeviceListOpen(false); if (fullscreen) void exitFullscreen(); else enterFullscreen(); }}>{fullscreen ? "退出全屏" : "全屏控制"}</button></div>{fullscreen && homeId === "demo" && <span className="spatial-fullscreen-demo">演示数据 · 只读预览</span>}{webgl ? <div className="spatial-three" ref={host} data-focus={focus} /> : <div className="spatial-webgl-fallback"><strong>此浏览器无法显示 WebGL 空间</strong><p>仍可使用下方无障碍设备列表查看状态与打开详情。</p></div>}</section><aside className={`spatial-side-panel ${selection ? "open" : ""}`}>{selection && selectedTarget ? <QuickPanel key={selection.id} connected={connected && homeId !== "demo"} placement={selection} target={selectedTarget} visualState={visualValues[selection.id] ?? {}} onClose={() => setSelected("")} onOpen={() => { if (selectedTarget.device) onOpenDevice(selectedTarget.device); }} onControl={async (device, input) => { ++parameterGeneration.current; const result = await onQuickControl(device, input); if (!input.isPower) setParameterVersion(value => value + 1); return result; }} onVisualState={state => {
+  return <div ref={fullscreenRoot} className={`spatial-viewer-layout ${fullscreen ? "spatial-fullscreen" : ""}`} role={fullscreen ? "dialog" : undefined} aria-modal={fullscreen || undefined} aria-label={fullscreen ? "全屏空间控制" : undefined}><section className="spatial-stage"><p className="spatial-camera-help">拖动旋转 · 右键平移 · 双指滑动平移 · 捏合缩放 · 墙厚 {Math.round(layout.defaults.wallThickness * 100)} cm</p><div className="spatial-focus"><label>聚焦空间<select value={focus} onChange={event => { setFocus(event.target.value); setSelected(""); }}><option value="">全屋</option>{layout.zones.map(zone => <option key={zone.id} value={zone.id}>{zone.name}</option>)}</select></label><button type="button" onClick={() => { setFocus(""); setSelected(""); setResetVersion(value => value + 1); }}>重置视图</button><div ref={sceneMenuRef} className="spatial-scene-menu"><button type="button" className="spatial-scene-menu-toggle" aria-label="打开场景快捷菜单" aria-expanded={sceneMenuOpen} aria-controls="spatial-scene-menu" onClick={() => setSceneMenuOpen(value => !value)}>✦</button>{sceneMenuOpen && <div id="spatial-scene-menu" className="spatial-scene-menu-popover" role="menu" aria-label="快捷场景"><strong>快捷场景</strong>{scenes.length ? scenes.map(scene => <button key={scene.id} type="button" role="menuitem" disabled={!scene.enabled || Boolean(runningSceneId)} onClick={() => { setSceneMenuOpen(false); void onRunScene(scene); }}><span className="spatial-scene-glyph" aria-hidden="true">{sceneGlyph(scene)}</span><span className="spatial-scene-label">{runningSceneId === scene.id ? "执行中…" : scene.name}</span><small>{scene.actionCount} 项</small></button>) : <p>暂无可执行场景</p>}</div>}</div>{fullscreen && <button type="button" aria-expanded={deviceListOpen} aria-controls="spatial-fullscreen-devices" onClick={() => { setSceneMenuOpen(false); setDeviceListOpen(value => !value); setSelected(""); }}>设备列表</button>}<button type="button" ref={fullscreenToggle} onClick={() => { setSceneMenuOpen(false); setDeviceListOpen(false); if (fullscreen) void exitFullscreen(); else enterFullscreen(); }}>{fullscreen ? "退出全屏" : "全屏控制"}</button></div>{fullscreen && homeId === "demo" && <span className="spatial-fullscreen-demo">演示数据 · 只读预览</span>}{webgl ? <div className="spatial-three" ref={host} data-focus={focus} /> : <div className="spatial-webgl-fallback"><strong>此浏览器无法显示 WebGL 空间</strong><p>仍可使用下方无障碍设备列表查看状态与打开详情。</p></div>}</section><aside className={`spatial-side-panel ${selection ? "open" : ""}`}>{selection && selectedTarget ? <QuickPanel key={selection.id} connected={connected && homeId !== "demo"} placement={selection} target={selectedTarget} visualState={visualValues[selection.id] ?? {}} onClose={() => setSelected("")} onOpen={() => { if (selectedTarget.device) onOpenDevice(selectedTarget.device); }} onControl={async (device, input) => { ++parameterGeneration.current; const result = await onQuickControl(device, input); if (!input.isPower) setParameterVersion(value => value + 1); return result; }} onVisualState={state => {
       ++parameterGeneration.current;
       if (state.on !== undefined) {
         ++readGeneration.current;

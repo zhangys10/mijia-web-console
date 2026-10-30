@@ -10,6 +10,7 @@ import { classifyDeviceKind, findPhysicalDevice, inferHardwareRole, isControlDev
 import { buildBindingActionParameters, listSwitchBindingTargets, type BindingAction, type SwitchBindingCapability, type SwitchBindingTarget } from "../lib/switch-bindings";
 import { findSwitchGroupChannel, switchGroupConnection, switchGroupMatches } from "../lib/switch-channel-mode";
 import type { ManualScene } from "../lib/xiaomi-scenes";
+import { sceneGlyph } from "../lib/scene-display";
 import { groupManualSceneActions, type ManualSceneActionItem } from "../lib/scene-action-groups";
 import SceneEditor from "./scene-editor";
 import AutomationCenter from "./automation-center";
@@ -428,6 +429,9 @@ export default function Home({ initialTab = "首页" }: { initialTab?: string } 
         devices={homeDevices}
         homeId={selectedHome}
         connected={connection.connected}
+        scenes={currentScenes}
+        runningSceneId={sceneOperating}
+        onRunScene={runScene}
         onOpenDevice={device=>void openDevice(device)}
         onQuickControl={applySpatialControl}
       />
@@ -707,7 +711,6 @@ function EnvironmentTrendChart({chart}:{chart:{metric:string;label:string;unit:s
 
 function formatSyncTime(value:string){const date=new Date(value);return Number.isNaN(date.getTime())?"刚刚":date.toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"})}
 function syncWarningSummary(warnings:SyncWarning[]){const scopes=new Set(warnings.map(warning=>warning.scope));if(scopes.has("devices"))return"部分家庭设备未更新";if(scopes.has("properties"))return"部分设备状态待确认";if(scopes.has("scenes"))return"当前家庭场景未更新";return"部分设备能力未更新"}
-function sceneGlyph(scene:ManualScene){return scene.icon&&scene.icon.length<=2?scene.icon:"✦"}
 function sceneActionDetailGlyph(detail:ManualScene["actions"][number]["details"][number]){
   if(detail.kind==="power")return "⏻";
   if(detail.kind==="brightness")return "☀";
