@@ -30,6 +30,7 @@ test("editor and responsive UI include wall-free areas, side panel and mobile bo
   assert.match(styles, /spatial-marker\.compact \.spatial-marker-icon\{width:28px;height:28px/);
   assert.match(source, /placementObjects\.current/); assert.match(source, /button\.onpointerenter/); assert.match(source, /button\.onpointerleave/);
   assert.match(source, /aria-label", "3D 光照模式"/); assert.match(source, /\["auto", "自动"\]/); assert.match(source, /spatialEnvironmentAt/); assert.match(source, /applySpatialEnvironment/);
+  assert.match(source, /打开场景快捷菜单/); assert.match(source, /spatial-scene-menu-popover/); assert.match(source, /onRunScene\(scene\)/); assert.match(source, /role="menuitem"/); assert.match(source, /closeOnOutsidePress/); assert.match(styles, /spatial-scene-menu-popover/); assert.match(styles, /max-height:min\(60dvh,360px\)/);
   assert.match(source, /aria-label", "3D 渲染质量"/); assert.match(source, /\["smooth", "流畅"\]/); assert.match(source, /createSpatialFrameScheduler/); assert.match(source, /IntersectionObserver/); assert.match(source, /visibilitychange/);
   assert.match(source, /antialias: renderQuality === "standard"/); assert.match(source, /powerPreference: renderQuality === "power" \? "low-power" : "high-performance"/);
   const frame = source.match(/onFrame: time => \{[\s\S]+?return interacting \|\| controlsChanged \|\| transitioning;/)?.[0] ?? "";
