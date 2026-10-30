@@ -32,7 +32,10 @@ test("editor and responsive UI include wall-free areas, side panel and mobile bo
   assert.match(source, /aria-label", "3D 光照模式"/); assert.match(source, /\["auto", "自动"\]/); assert.match(source, /spatialEnvironmentAt/); assert.match(source, /applySpatialEnvironment/);
   assert.match(source, /aria-label", "3D 渲染质量"/); assert.match(source, /\["smooth", "流畅"\]/); assert.match(source, /createSpatialFrameScheduler/); assert.match(source, /IntersectionObserver/); assert.match(source, /visibilitychange/);
   assert.match(source, /antialias: renderQuality === "standard"/); assert.match(source, /powerPreference: renderQuality === "power" \? "low-power" : "high-performance"/);
+  const frame = source.match(/onFrame: time => \{[\s\S]+?return interacting \|\| controlsChanged \|\| transitioning;/)?.[0] ?? "";
+  assert.ok(frame.indexOf("setPixelRatio(false)") < frame.indexOf("renderer.render(scene, camera)"));
   assert.match(source, /renderer\.setSize\(width, height\);/); assert.match(source, /sameVisualValues\(current, updates\) \? current : updates/);
+  assert.match(styles, /\.spatial-stage\{isolation:isolate\}/); assert.match(styles, /\.spatial-label-layer\{z-index:1\}/); assert.match(styles, /\.spatial-fullscreen \.spatial-side-panel\{[^}]*z-index:4/);
   assert.match(styles, /@media\(max-width:900px\)/); assert.match(styles, /@media\(max-width:560px\)/);
   assert.match(styles, /spatial-editor-grid>main\{align-self:start;position:sticky/); assert.match(styles, /spatial-editor-grid>main\{position:static;max-height:none\}/);
 });
