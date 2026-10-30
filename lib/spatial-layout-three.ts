@@ -28,16 +28,25 @@ export function spatialPointToWorld(layout: Pick<SpatialLayoutV1, "calibration" 
   return new THREE.Vector3((point.x - layout.imageWidth / 2) * scale, elevation, (point.y - layout.imageHeight / 2) * scale);
 }
 
-export function fadeSpatialObject(object: THREE.Object3D, opacity = .15) {
+export function wireframeSpatialObject(object: THREE.Object3D) {
   object.traverse(child => {
     if (!(child instanceof THREE.Mesh)) return;
-    const materials = (Array.isArray(child.material) ? child.material : [child.material]).map(material => {
-      const faded = material.clone(); faded.transparent = true; faded.opacity *= opacity; faded.depthWrite = false;
-      if (faded instanceof THREE.MeshStandardMaterial && faded.userData.luminous) faded.emissiveIntensity = 0;
-      return faded;
+    const originalMaterials = Array.isArray(child.material) ? child.material : [child.material];
+    const hiddenMaterials = originalMaterials.map(material => {
+      const hidden = new THREE.MeshBasicMaterial({ visible: false });
+      hidden.name = `${material.name || material.type}:focus-outline-host`;
+      hidden.userData = { ...material.userData, spatialOutlineHost: true };
+      return hidden;
     });
-    child.userData.detachedMaterials = Array.isArray(child.material) ? child.material : [child.material];
-    child.material = Array.isArray(child.material) ? materials : materials[0];
+    const outlineMaterial = new THREE.LineBasicMaterial({ color: 0x8291a6 });
+    outlineMaterial.name = "focus-outline";
+    outlineMaterial.userData.spatialWireframe = true;
+    const outline = new THREE.LineSegments(new THREE.EdgesGeometry(child.geometry), outlineMaterial);
+    outline.name = `${child.name || "mesh"}:focus-outline`;
+    outline.userData.spatialWireframe = true;
+    child.userData.detachedMaterials = originalMaterials;
+    child.material = Array.isArray(child.material) ? hiddenMaterials : hiddenMaterials[0];
+    child.add(outline);
   });
   return object;
 }
@@ -52,7 +61,7 @@ export function createSpatialScene(layout: Pick<SpatialLayoutV1, "calibration" |
     const geometry = new THREE.ShapeGeometry(shape);
     geometry.rotateX(Math.PI / 2);
     const material = new THREE.MeshStandardMaterial({ color: floorColors[index % floorColors.length], roughness: 0.85, metalness: 0, side: THREE.DoubleSide });
-    const mesh = new THREE.Mesh(geometry, material); mesh.name = `zone:${floor.zoneId}:floor`; mesh.receiveShadow = true; if (focusZoneId && floor.zoneId !== focusZoneId) fadeSpatialObject(mesh); root.add(mesh);
+    const mesh = new THREE.Mesh(geometry, material); mesh.name = `zone:${floor.zoneId}:floor`; mesh.receiveShadow = true; if (focusZoneId && floor.zoneId !== focusZoneId) wireframeSpatialObject(mesh); root.add(mesh);
   });
   const wallMaterial = new THREE.MeshStandardMaterial({ color: 0xf8f8f7, roughness: 0.82 });
   for (const wall of plan.walls) {
@@ -67,7 +76,7 @@ export function createSpatialScene(layout: Pick<SpatialLayoutV1, "calibration" |
       mesh.position.set((pieceSx + pieceEx) / 2 - originX, wall.base + wall.height / 2, (pieceSz + pieceEz) / 2 - originZ);
       mesh.rotation.y = -Math.atan2(dz, dx); mesh.name = `zone:${wall.zoneId}:wall:${wall.edge}${pieces.length > 1 ? `:${pieceIndex}` : ""}`; mesh.castShadow = true; mesh.receiveShadow = true;
       const midpoint = { x: (piece.start.x + piece.end.x) / 2, y: (piece.start.y + piece.end.y) / 2 };
-      if (focusZoneId && wall.zoneId !== focusZoneId && (!focusedZone || !pointInPolygon(midpoint, focusedZone.polygon))) fadeSpatialObject(mesh);
+      if (focusZoneId && wall.zoneId !== focusZoneId && (!focusedZone || !pointInPolygon(midpoint, focusedZone.polygon))) wireframeSpatialObject(mesh);
       root.add(mesh);
     });
   }
@@ -86,7 +95,7 @@ export function createSpatialScene(layout: Pick<SpatialLayoutV1, "calibration" |
       const geometry = new THREE.ExtrudeGeometry(shape, { depth: layout.defaults.wallHeight, bevelEnabled: false }); geometry.rotateX(-Math.PI / 2);
       const mesh = new THREE.Mesh(geometry, wallMaterial); mesh.name = `wall-junction:${path.wallIds[index - 1]}:${path.wallIds[index]}`; mesh.castShadow = true; mesh.receiveShadow = true;
       const focusedZone = layout.zones.find(zone => zone.id === focusZoneId);
-      if (focusZoneId && (!focusedZone || !pointInPolygon(joint, focusedZone.polygon))) fadeSpatialObject(mesh);
+      if (focusZoneId && (!focusedZone || !pointInPolygon(joint, focusedZone.polygon))) wireframeSpatialObject(mesh);
       root.add(mesh);
     }
   }
@@ -99,10 +108,10 @@ export function createSpatialScene(layout: Pick<SpatialLayoutV1, "calibration" |
     const material = new THREE.MeshStandardMaterial({ color: opening.kind === "door" ? 0xa77a59 : 0x9ed8ef, transparent: opening.kind === "window", opacity: opening.kind === "window" ? .62 : 1, roughness: opening.kind === "window" ? .2 : .75, metalness: opening.kind === "window" ? .08 : 0 });
     const mesh = new THREE.Mesh(geometry, material); mesh.name = `opening:${opening.id}`; mesh.position.set(center.x, opening.sill + opening.height / 2, center.z); mesh.rotation.y = -Math.atan2(direction.z, direction.x);
     const focusedZone = layout.zones.find(item => item.id === focusZoneId), midpoint = wall ? { x: (wall.start.x + wall.end.x) / 2, y: (wall.start.y + wall.end.y) / 2 } : zone?.polygon[opening.edge];
-    if (focusZoneId && opening.zoneId !== focusZoneId && (!focusedZone || !midpoint || !pointInPolygon(midpoint, focusedZone.polygon))) fadeSpatialObject(mesh);
+    if (focusZoneId && opening.zoneId !== focusZoneId && (!focusedZone || !midpoint || !pointInPolygon(midpoint, focusedZone.polygon))) wireframeSpatialObject(mesh);
     root.add(mesh);
   }
-  for (const item of layout.furniture ?? []) { const mesh = createFurniture(item); mesh.position.copy(spatialPointToWorld(layout, item.point)); const focusedZone = layout.zones.find(zone => zone.id === focusZoneId); if (focusZoneId && (!focusedZone || !pointInPolygon(item.point, focusedZone.polygon))) fadeSpatialObject(mesh); root.add(mesh); }
+  for (const item of layout.furniture ?? []) { const mesh = createFurniture(item); mesh.position.copy(spatialPointToWorld(layout, item.point)); const focusedZone = layout.zones.find(zone => zone.id === focusZoneId); if (focusZoneId && (!focusedZone || !pointInPolygon(item.point, focusedZone.polygon))) wireframeSpatialObject(mesh); root.add(mesh); }
   return root;
 }
 

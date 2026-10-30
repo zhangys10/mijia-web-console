@@ -173,7 +173,7 @@ export function createTransitioningDeviceEffect(from: SpatialVisualState, to: Sp
 export function disposeSpatialObject(object: THREE.Object3D) {
   object.traverse(child => {
     for (const material of (child.userData.detachedMaterials ?? []) as THREE.Material[]) material.dispose();
-    if (child instanceof THREE.Mesh) {
+    if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
       child.geometry.dispose();
       for (const material of Array.isArray(child.material) ? child.material : [child.material]) material.dispose();
     }
