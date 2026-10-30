@@ -386,9 +386,9 @@ function SpatialViewer({ layout, homeId, targets, connected, onOpenDevice, onQui
         const controlsChanged = controls.update();
         let transitioning = false;
         for (const [id, tick] of sceneTransitionTicks) { if (tick(time)) transitioning = true; else sceneTransitionTicks.delete(id); }
+        if (!interacting && !controlsChanged && !transitioning) setPixelRatio(false);
         updateMarkers(); renderer.render(scene, camera); labels.render(scene, camera);
         cameraMemory.current = { key: cameraKey, position: camera.position.clone(), target: controls.target.clone(), zoom: camera.zoom };
-        if (!interacting && !controlsChanged && !transitioning) setPixelRatio(false);
         return interacting || controlsChanged || transitioning;
       },
     });
