@@ -16,6 +16,7 @@ import SceneEditor from "./scene-editor";
 import AutomationCenter from "./automation-center";
 import AiAssistantButton from "./components/ai-assistant/ai-assistant-button";
 import AssistantExposureSettings from "./components/ai-assistant/assistant-exposure-settings";
+import AdaptiveClimateProfiles from "./components/ai-assistant/adaptive-climate-profiles";
 import AutomationTokenForm from "./ai/settings/automation-token-form";
 import PrincipalIdCard from "./ai/settings/principal-id-card";
 import { dashboardAccountLabel, dashboardGreeting, formatDashboardDate } from "../lib/dashboard-display";
@@ -290,7 +291,7 @@ export default function Home({ initialTab = "首页" }: { initialTab?: string } 
         params=parsed as SettingValue[];
       }
       const body=setting.type==="action"?{did:device.did,action:true,siid:setting.siid,aiid:setting.aiid,params}:{did:device.did,siid:setting.siid,piid:setting.piid,value};
-      const response=await fetch("/api/xiaomi/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      const response=await fetch("/api/xiaomi/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...body,homeId:selectedHome})});
       const result=await response.json();
       if(!response.ok||!result.ok)throw new Error(result.error);
       if(result.status==="outcome_unknown"){message(`${device.name}：操作请求已发送，执行结果待确认，请刷新状态核实`);return}
@@ -307,7 +308,7 @@ export default function Home({ initialTab = "首页" }: { initialTab?: string } 
     const operation=`spatial:${input.did}:${input.siid}.${input.piid}`;
     setOperating(operation);
     try{
-      const response=await fetch("/api/xiaomi/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({did:input.did,siid:input.siid,piid:input.piid,value:input.value})});
+      const response=await fetch("/api/xiaomi/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({did:input.did,siid:input.siid,piid:input.piid,value:input.value,homeId:selectedHome})});
       const result=await response.json();
       if(!response.ok||!result.ok)throw new Error(result.error||"XIAOMI_CONTROL_FAILED");
       if(result.status==="outcome_unknown")return "pending";
@@ -334,7 +335,7 @@ export default function Home({ initialTab = "首页" }: { initialTab?: string } 
     if(!item.powerControl){message(`${item.name} 未公开可写电源属性`);return}
     setOperating(operation);
     try{
-      const response=await fetch("/api/xiaomi/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...item.powerControl,value:false})});
+      const response=await fetch("/api/xiaomi/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...item.powerControl,value:false,homeId:selectedHome})});
       const result=await response.json();
       if(!response.ok||!result.ok)throw new Error(result.error);
       if(result.status==="outcome_unknown"){message(`${item.name}：关闭请求已发送，执行结果待确认，请刷新状态核实`);return}
@@ -442,7 +443,7 @@ export default function Home({ initialTab = "首页" }: { initialTab?: string } 
       <Title title="当前运行" sub={`${currentHome?.name??"当前家庭"} · ${activeDeviceCount} 台设备正在运行`} action="管理设备 →" onAction={()=>setTab("设备")}/>
       <ActiveDeviceList groups={activeDeviceGroups} connected={connection.connected} operating={operating} onOpen={(device,mappedDevice)=>void openDevice(device,mappedDevice)} onClose={item=>void closeActiveDevice(item)} onManage={()=>setTab("设备")}/>
       <Title title="快捷场景" sub={connection.connected?"当前家庭的真实手动场景":"演示场景 · 连接米家后显示真实数据"} action="管理场景 →" onAction={()=>setTab("场景")}/><SceneStateMessage loading={connection.connected&&sceneState.loading} error={connection.connected?sceneState.error:undefined}/><section className="scenes">{quickScenes.map((scene,index)=><SceneCard key={scene.id} scene={scene} tone={["orange","blue","violet","indigo"][index%4]} connected={connection.connected} running={sceneOperating===scene.id} blocked={Boolean(sceneOperating)} compact onOpen={()=>openScene(scene)} onRun={item=>void runScene(item)}/>)}</section>{!sceneState.loading&&!sceneState.error&&quickScenes.length===0&&<SceneStateMessage empty/>}
-    </>:tab==="设备"?<DeviceManagement key={selectedHome} devices={homeDevices} room={room} connected={connection.connected} onSelectRoom={setRoom} onOpenDevice={(device,mappedDevice)=>void openDevice(device,mappedDevice)}/>:tab==="环境"?<EnvironmentDashboard snapshot={environment} history={environmentHistory} loading={environmentLoading} error={environmentError?friendlyError(environmentError):undefined} connected={connection.connected} homeName={currentHome?.name??"当前家庭"} onRefresh={()=>{if(connection.connected&&selectedHome&&selectedHome!=="demo")void loadEnvironment(selectedHome)}}/>:tab==="场景"?sceneEditor?<SceneEditor homeId={selectedHome} homeName={homes.find(home=>home.id===selectedHome)?.name||"当前家庭"} devices={homeDevices} sceneId={sceneEditor.sceneId} onClose={()=>setSceneEditor(null)} onSaved={sceneSaved}/>:selectedScene?<SceneDetailPage scene={selectedScene} homeName={homes.find(home=>home.id===selectedScene.homeId)?.name||"当前家庭"} devices={homeDevices} connected={connection.connected} running={sceneOperating===selectedScene.id} blocked={Boolean(sceneOperating)} onBack={()=>setSelectedScene(null)} onEdit={()=>setSceneEditor({sceneId:selectedScene.id})} onRun={()=>void runScene(selectedScene)}/>:<Panel title="场景中心" text={connection.connected?"查看、执行并管理当前家庭的真实手动场景。":"当前为演示数据；连接米家后才能新建和编辑。"}><div className="scene-center-toolbar"><span>{connection.connected?`${currentHome?.name||"当前家庭"} · ${currentScenes.length} 个场景`:"演示模式下不会写入米家云"}</span><button type="button" disabled={!connection.connected||selectedHome==="demo"} onClick={()=>{setSelectedScene(null);setSceneEditor({})}}>＋ 新建场景</button></div><SceneStateMessage loading={connection.connected&&sceneState.loading} error={connection.connected?sceneState.error:undefined} empty={!sceneState.loading&&currentScenes.length===0}/><div className="panel-grid scene-list">{currentScenes.map((scene,index)=><SceneCard key={scene.id} scene={scene} tone={["orange","blue","violet","indigo"][index%4]} connected={connection.connected} running={sceneOperating===scene.id} blocked={Boolean(sceneOperating)} onOpen={()=>openScene(scene)} onRun={item=>void runScene(item)}/>)}</div></Panel>:tab==="自动化"?<AutomationCenter key={`${selectedHome}:${connection.connected}`} homeId={selectedHome} homeName={currentHome?.name??"当前家庭"} devices={homeDevices} connected={connection.connected} onMessage={message}/>:tab==="设置"?<SettingsView onOpenLogin={openLogin} homes={homes.filter(h=>h.id!=="demo")} selectedHomeId={selectedHome!=="demo"?selectedHome:undefined} selectedHomeName={currentHome?.name}/>:<Panel title="家庭能耗" text="当前尚无可用的家庭能耗历史数据。"><div className="empty-data"><span aria-hidden="true">ϟ</span><strong>暂无能耗数据</strong><p>连接米家并接入可用的用电历史数据后，这里会展示真实趋势。</p></div></Panel>}
+    </>:tab==="设备"?<DeviceManagement key={selectedHome} devices={homeDevices} room={room} connected={connection.connected} onSelectRoom={setRoom} onOpenDevice={(device,mappedDevice)=>void openDevice(device,mappedDevice)}/>:tab==="环境"?<ClimateDashboard snapshot={environment} history={environmentHistory} loading={environmentLoading} error={environmentError?friendlyError(environmentError):undefined} connected={connection.connected} homeId={selectedHome!=="demo"?selectedHome:undefined} homeName={currentHome?.name??"当前家庭"} onRefresh={()=>{if(connection.connected&&selectedHome&&selectedHome!=="demo")void loadEnvironment(selectedHome)}}/>:tab==="场景"?sceneEditor?<SceneEditor homeId={selectedHome} homeName={homes.find(home=>home.id===selectedHome)?.name||"当前家庭"} devices={homeDevices} sceneId={sceneEditor.sceneId} onClose={()=>setSceneEditor(null)} onSaved={sceneSaved}/>:selectedScene?<SceneDetailPage scene={selectedScene} homeName={homes.find(home=>home.id===selectedScene.homeId)?.name||"当前家庭"} devices={homeDevices} connected={connection.connected} running={sceneOperating===selectedScene.id} blocked={Boolean(sceneOperating)} onBack={()=>setSelectedScene(null)} onEdit={()=>setSceneEditor({sceneId:selectedScene.id})} onRun={()=>void runScene(selectedScene)}/>:<Panel title="场景中心" text={connection.connected?"查看、执行并管理当前家庭的真实手动场景。":"当前为演示数据；连接米家后才能新建和编辑。"}><div className="scene-center-toolbar"><span>{connection.connected?`${currentHome?.name||"当前家庭"} · ${currentScenes.length} 个场景`:"演示模式下不会写入米家云"}</span><button type="button" disabled={!connection.connected||selectedHome==="demo"} onClick={()=>{setSelectedScene(null);setSceneEditor({})}}>＋ 新建场景</button></div><SceneStateMessage loading={connection.connected&&sceneState.loading} error={connection.connected?sceneState.error:undefined} empty={!sceneState.loading&&currentScenes.length===0}/><div className="panel-grid scene-list">{currentScenes.map((scene,index)=><SceneCard key={scene.id} scene={scene} tone={["orange","blue","violet","indigo"][index%4]} connected={connection.connected} running={sceneOperating===scene.id} blocked={Boolean(sceneOperating)} onOpen={()=>openScene(scene)} onRun={item=>void runScene(item)}/>)}</div></Panel>:tab==="自动化"?<AutomationCenter key={`${selectedHome}:${connection.connected}`} homeId={selectedHome} homeName={currentHome?.name??"当前家庭"} devices={homeDevices} connected={connection.connected} onMessage={message}/>:tab==="设置"?<SettingsView onOpenLogin={openLogin} homes={homes.filter(h=>h.id!=="demo")} selectedHomeId={selectedHome!=="demo"?selectedHome:undefined} selectedHomeName={currentHome?.name}/>:<Panel title="家庭能耗" text="当前尚无可用的家庭能耗历史数据。"><div className="empty-data"><span aria-hidden="true">ϟ</span><strong>暂无能耗数据</strong><p>连接米家并接入可用的用电历史数据后，这里会展示真实趋势。</p></div></Panel>}
       {icpFiling.enabled&&<footer className="site-footer"><a href={icpFiling.url} target="_blank" rel="noreferrer">{icpFiling.icpNumber}</a></footer>}
     </section>
 
@@ -577,6 +578,13 @@ function EnvironmentDashboard({snapshot,history,loading,error,connected,homeName
     {loading&&!snapshot&&<div className="spec-loading"><span/>正在从米家读取环境读数…</div>}
     {snapshot&&<EnvironmentSnapshotView snapshot={snapshot}/>}
     {snapshot&&<EnvironmentTrendSection snapshot={snapshot} history={history} loading={loading}/>}
+  </section>;
+}
+
+function ClimateDashboard({snapshot,history,loading,error,connected,homeId,homeName,onRefresh}:{snapshot:EnvironmentSnapshot|null;history:EnvironmentHistory;loading:boolean;error?:string;connected:boolean;homeId?:string;homeName:string;onRefresh:()=>void}){
+  return <section aria-label="家庭气候">
+    <EnvironmentDashboard snapshot={snapshot} history={history} loading={loading} error={error} connected={connected} homeName={homeName} onRefresh={onRefresh}/>
+    <AdaptiveClimateProfiles homeId={homeId} homeName={homeName}/>
   </section>;
 }
 

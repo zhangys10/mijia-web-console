@@ -21,7 +21,7 @@ test("environment dashboard renders unit-honest formaldehyde values and session 
   assert.match(source, /environment-chart-table/, "charts must offer a table view");
   assert.match(source, /environment-chart-legend/);
   assert.match(source, /environment-crosshair/);
-  // Auto-refresh only runs while the environment tab is open.
+  // General sensor auto-refresh only runs while the environment tab is open.
   assert.match(source, /tab!=="环境"\|\|!connection\.connected\|\|!selectedHome\|\|selectedHome==="demo"\)return/, "auto-refresh must be gated on the environment tab");
   assert.match(source, /window\.setInterval\(\(\)=>\{if\(!environmentLoading\)void loadEnvironment\(selectedHome\)\},120_000\)/);
 });

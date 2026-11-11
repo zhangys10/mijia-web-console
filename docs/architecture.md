@@ -58,3 +58,44 @@ realm 固定为 `production`；各部署环境用不同的 token Secret 隔离�
 
 设备和场景领域细节见 [设备管理设计](device-management-design.md)。本地跨仓库
 联调见 [联调指南](local-integration-test.md)。
+
+## Adaptive climate profiles (Phase 1)
+
+The authenticated 3D view runs a visible/online observer with one request in flight,
+two-minute jittered sampling, and 5/15-minute backoff. `/api/ai/climate/v1/*` authorizes
+the selected home, resolves configured MIoT properties server-side, and stores private
+bindings and 90-day history in `mijia-ai-climate-memory-v1`. Browser payloads contain only
+opaque references. Stable external changes need two samples; Console changes need a
+successful write and matching readback. The Console sends bounded identifier-free
+observations to the Agent for deterministic derivation. These routes have no device-write,
+scene, automation, or executor dependency; the settings UI is review-only.
+
+Each profiled room has one explicitly selected ambient sensor and one or more climate
+controllers. Controllers are selected from the whole home, not restricted to the sensor's
+room, and the same controller may be reused by several rooms. Sampling, stabilization and
+derived cells are keyed by the opaque room/controller pair, so a shared boiler does not
+collapse local thermostat evidence.
+Controllers with a writable target-temperature but no enumerated mode are supported as
+setpoint-only devices; mode remains null and is never inferred.
+Setpoint, mode and on/off are selected from the same MIoT climate service. A boiler is
+eligible only when it exposes an explicit thermostat or room-heating service. Its setpoint,
+mode and on/off must all come from that service; domestic-hot-water, water-heater and
+boiler-controller fallbacks are forbidden.
+On/off is retained as observation context and history, but is not a learned output.
+The capability revision includes the selection-policy version. When a configured
+controller's revision changes, Console removes that room/controller pair's samples,
+manual observations and derived cells before sampling again; values captured from an old
+MIoT meaning must never remain visible as thermostat history.
+
+Configuration, status history, profile matrices and manual-change review live on the
+Environment page rather than AI settings. Both the Environment page and the 3D page run
+the same visibility-aware observer. Every valid poll is eligible for a deduplicated
+15-minute status point even when no setting changed; only confirmed manual-change
+observations are sent into preference derivation.
+The Environment page combines the general sensor snapshot/trend surface with climate
+history and recommendations. There is no separate Climate navigation tab.
+For each room/controller pair, Climate shows recent periodic history and a single
+"recommended now" result selected from the Agent-derived cell matching the current local
+time window and latest ambient-temperature band. Explicit reviewed preferences override
+the derived value for display. Missing evidence produces no recommendation, and the result
+never grants execution authority.
