@@ -12,6 +12,7 @@ import { spatialEnvironmentAt } from "../lib/spatial-sun";
 import { spatialMotorActions, type SpatialMotorAction } from "../lib/spatial-motor-control";
 import { createSpatialFrameScheduler, resolveSpatialRenderQuality, spatialPixelRatio, spatialRenderQualityStorageKey, type SpatialRenderQuality } from "../lib/spatial-render-performance";
 import { useSpatialFullscreen } from "./use-spatial-fullscreen";
+import { useClimateObserver } from "./use-climate-observer";
 import { DevicePlacementPanel } from "./spatial-device-placement-panel";
 import { stripPoints, visualProperties, visualParameters, type VisualProperty } from "../lib/spatial-appearance";
 import { FurniturePanel } from "./spatial-furniture-panel";
@@ -65,6 +66,7 @@ function demoLayout(targets: Target[] = []): SpatialLayoutV1 {
 
 export default function SpatialRoomView(props: Props) {
   const { devices, homeId, connected } = props;
+  const observer = useClimateObserver(homeId, connected && homeId !== "demo");
   const targets = useMemo(() => targetsFor(devices), [devices]);
   const [layout, setLayout] = useState<SpatialLayoutV1 | null>(() => homeId === "demo" ? demoLayout(targets) : null);
   const [loading, setLoading] = useState(homeId !== "demo"), [error, setError] = useState(""), [editing, setEditing] = useState(false);
@@ -80,7 +82,7 @@ export default function SpatialRoomView(props: Props) {
   if (loading) return <div className="spatial-empty" role="status">正在读取 3D 空间…</div>;
   if (editing) return <SpatialEditor {...props} targets={targets} initial={layout} onCancel={() => setEditing(false)} onSaved={next => { setLayout(next); setError(""); setEditing(false); }} />;
   return <div className="spatial-shell">
-    <div className="spatial-toolbar"><div><strong>3D 空间</strong><small>{layout ? `${layout.walls?.length ?? 0} 面墙 · ${layout.zones.length} 个空间 · ${layout.placements.filter(item => targets.some(target => target.kind === item.targetKind && target.id === item.targetId)).length} 个标记` : "尚未创建空间模型"}</small></div><div>{layout && homeId !== "demo" && <a className="spatial-button secondary" href={assetUrl(homeId, "model", true)}>下载 GLB</a>}<button type="button" className="spatial-button" disabled={homeId === "demo" || !connected} onClick={() => setEditing(true)}>{layout ? "编辑空间" : "开始绘制"}</button></div></div>
+    <div className="spatial-toolbar"><div><strong>3D 空间</strong><small>{layout ? `${layout.walls?.length ?? 0} 面墙 · ${layout.zones.length} 个空间 · ${layout.placements.filter(item => targets.some(target => target.kind === item.targetKind && target.id === item.targetId)).length} 个标记` : "尚未创建空间模型"}</small><small className={`climate-observer ${observer.state}`}>气候采样：{observer.label}</small></div><div>{layout && homeId !== "demo" && <a className="spatial-button secondary" href={assetUrl(homeId, "model", true)}>下载 GLB</a>}<button type="button" className="spatial-button" disabled={homeId === "demo" || !connected} onClick={() => setEditing(true)}>{layout ? "编辑空间" : "开始绘制"}</button></div></div>
     {error && <p className="spatial-alert" role="alert">读取失败：{error}</p>}
     {layout ? <SpatialViewer {...props} layout={layout} targets={targets} /> : <div className="spatial-empty"><span aria-hidden="true">◇</span><h3>从户型图建立空间</h3><p>上传平面图，校准一段实际长度，再勾画房间或无墙区域并放置设备。</p><button type="button" disabled={!connected} onClick={() => setEditing(true)}>创建 3D 空间</button></div>}
     {homeId === "demo" && <p className="spatial-demo-note">演示空间使用虚构数据，设备控制为只读。</p>}

@@ -1,7 +1,9 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { miotActionPayload, readXiaomiSession, xiaomiRequest } from "../../../../lib/xiaomi-cloud";
+import { listHomes, miotActionPayload, readXiaomiSession, xiaomiRequest } from "../../../../lib/xiaomi-cloud";
 import { interpretPropertyWriteResponse } from "../../../../lib/xiaomi-control-result";
+import { noteConsoleClimateWrite, sampleClimate } from "../../../../lib/ai/climate/climate-store";
+import { localClimateStore } from "../../../../lib/ai/climate/local-climate-store";
 
 function propertyResult(response: Record<string, unknown>) {
   const items = response.result;
@@ -64,8 +66,17 @@ export async function POST(request: NextRequest) {
     if (!["boolean", "number", "string"].includes(typeof body.value) || (typeof body.value === "number" && !Number.isFinite(body.value))) return NextResponse.json({ error: "INVALID_DEVICE_COMMAND" }, { status: 400 });
     const piid = Number(body.piid ?? 1);
     if (!Number.isInteger(piid) || piid < 1) return NextResponse.json({ error: "INVALID_PROPERTY_MAPPING" }, { status: 400 });
-    const response = await xiaomiRequest(await readXiaomiSession(value, process.env.XIAOMI_SESSION_SECRET), "/app/miotspec/prop/set", { params: [{ did: body.did, siid, piid, value: body.value }] });
+    const session = await readXiaomiSession(value, process.env.XIAOMI_SESSION_SECRET);
+    if (typeof body.homeId === "string" && !(await listHomes(session)).some(home => home.id === body.homeId)) return NextResponse.json({ error: "XIAOMI_HOME_FORBIDDEN" }, { status: 403 });
+    const response = await xiaomiRequest(session, "/app/miotspec/prop/set", { params: [{ did: body.did, siid, piid, value: body.value }] });
     const outcome = interpretPropertyWriteResponse(response);
+    if (outcome.status !== "outcome_unknown" && typeof body.homeId === "string" && body.homeId) {
+      try {
+        const climateStore = process.env.AI_ENVIRONMENT === "development" ? localClimateStore : undefined;
+        await noteConsoleClimateWrite(body.homeId, body.did, siid, piid, body.value, climateStore, process.env);
+        await sampleClimate(session, body.homeId, climateStore, process.env);
+      } catch { console.warn("[climate-profile] confirmed write was not recorded"); }
+    }
     return NextResponse.json({ ok: true, status: outcome.status, did: body.did, value: body.value,
       result: outcome.result }, { status: outcome.status === "outcome_unknown" ? 202 : 200 });
   } catch (error) {
