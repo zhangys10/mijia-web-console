@@ -454,6 +454,42 @@ export async function listDevices(
   const homeByDevice = new Map<string, { id: string; name: string; room: string }>();
   let successfulHomeCount = 0;
   let failedHomeCount = 0;
+  const loadThirdCloudDevices = async () => {
+    const devices: Array<Record<string, unknown>> = [];
+    let startDid = "";
+    const seenCursors = new Set<string>();
+    while (true) {
+      const response = await trackedRequest(session, "/app/v2/home/device_list_page", {
+        limit: 200,
+        get_split_device: true,
+        get_third_device: true,
+        dids: [],
+        ...(startDid ? { start_did: startDid } : {}),
+      });
+      const result = response.result as Record<string, unknown> | undefined;
+      const entries = (result?.list ?? result?.device_info ?? result?.devices ?? []) as Array<Record<string, unknown>>;
+      for (const device of entries) {
+        const assignment = homeByDevice.get(String(device.did));
+        const candidate = homes.find(home => String(home.home_id ?? home.id ?? "") === String(device.home_id ?? ""));
+        const fallbackHome = homes[0];
+        devices.push({
+          ...device,
+          homeId: String(device.home_id ?? assignment?.id ?? fallbackHome?.home_id ?? fallbackHome?.id ?? "default"),
+          homeName: device.home_name ?? assignment?.name ?? candidate?.name ?? candidate?.home_name ?? fallbackHome?.name ?? "我的家",
+          roomName: device.room_name ?? assignment?.room ?? "未分配",
+        });
+      }
+      const hasMore = result?.has_more === true || result?.has_more === 1;
+      const nextCursor = typeof result?.next_start_did === "string" || typeof result?.next_start_did === "number"
+        ? String(result.next_start_did)
+        : "";
+      if (!hasMore) break;
+      if (!nextCursor || seenCursors.has(nextCursor)) throw new XiaomiCloudError("XIAOMI_DEVICE_PAGE_CURSOR_INVALID", "protocol", false);
+      seenCursors.add(nextCursor);
+      startDid = nextCursor;
+    }
+    return devices;
+  };
   try {
     const homesResponse = await trackedRequest(session, "/app/v2/homeroom/gethome", { fg: true, fetch_share: true, fetch_share_dev: true, limit: 300, app_ver: 7 });
     homesLoaded = true;
@@ -495,7 +531,22 @@ export async function listDevices(
         }
       }
       const mappedHomes = homes.map((home) => ({ id: String(home.home_id ?? home.id ?? ""), name: String(home.name ?? home.home_name ?? "我的家") }));
-      if (!firstError) return deviceList(mappedHomes, primaryDevices, { completeness: "complete", warnings: [], successfulHomeCount, failedHomeCount: 0, requestAttemptCount });
+      if (!firstError) {
+        try {
+          const thirdCloudDevices = await loadThirdCloudDevices();
+          const devices = mergeXiaomiDeviceRecords(thirdCloudDevices, primaryDevices);
+          return deviceList(mappedHomes, devices, { completeness: "complete", warnings: [], successfulHomeCount, failedHomeCount: 0, requestAttemptCount });
+        } catch (error) {
+          const failure = xiaomiErrorInfo(error);
+          return deviceList(mappedHomes, primaryDevices, {
+            completeness: "partial",
+            warnings: [{ code: "XIAOMI_DEVICE_COMPATIBILITY_PARTIAL", scope: "devices", retryable: failure.retryable, ...(failure.retryAfterSeconds ? { retryAfterSeconds: failure.retryAfterSeconds } : {}) }],
+            successfulHomeCount,
+            failedHomeCount: 0,
+            requestAttemptCount,
+          });
+        }
+      }
       if (successfulHomeCount > 0 || primaryDevices.length > 0) {
         const failure = xiaomiErrorInfo(firstError);
         return deviceList(mappedHomes, primaryDevices, {

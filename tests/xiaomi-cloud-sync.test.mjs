@@ -37,7 +37,7 @@ test("keeps a home owner id server-side for instance-scoped automation discovery
   ]);
 });
 
-test("normal device discovery performs one home request and one request per home", async () => {
+test("normal device discovery requests Xiaomi's third-cloud device list", async () => {
   const calls = [];
   const result = await listDevices(session, { request: async (_session, path, data) => {
     calls.push({ path, data });
@@ -48,11 +48,45 @@ test("normal device discovery performs one home request and one request per home
   assert.deepEqual(calls.map(call => call.path), [
     "/app/v2/homeroom/gethome",
     "/app/v2/home/home_device_list",
+    "/app/v2/home/device_list_page",
   ]);
+  assert.equal(calls[2].data.get_third_device, true);
+  assert.deepEqual(calls[2].data.dids, []);
   assert.equal(result.completeness, "complete");
   assert.equal(result.successfulHomeCount, 1);
   assert.equal(result.failedHomeCount, 0);
-  assert.equal(result.requestAttemptCount, 2);
+  assert.equal(result.requestAttemptCount, 3);
+});
+
+test("discovers a third-cloud appliance omitted from the home-scoped device endpoint", async () => {
+  const calls = [];
+  const result = await listDevices(session, { request: async (_session, path) => {
+    calls.push(path);
+    if (path.endsWith("/gethome")) return { result: { homelist: [{
+      id: "home-1",
+      name: "测试家庭",
+      dids: ["kitchen-switch", "kitchen-boiler"],
+      roomlist: [{ id: "kitchen", name: "厨房", dids: ["kitchen-switch", "kitchen-boiler"] }],
+    }] } };
+    if (path.endsWith("/home_device_list")) return { result: { device_info: [
+      { did: "kitchen-switch", name: "厨房开关", model: "fake.switch.v1" },
+    ] } };
+    assert.equal(path, "/app/v2/home/device_list_page");
+    return { result: { list: [
+      { did: "kitchen-boiler", name: "测试壁挂炉", model: "fake.heater.v1" },
+    ] } };
+  } });
+
+  assert.deepEqual(calls, [
+    "/app/v2/homeroom/gethome",
+    "/app/v2/home/home_device_list",
+    "/app/v2/home/device_list_page",
+  ]);
+  assert.equal(result.completeness, "complete");
+  assert.deepEqual(result.devices.map(device => [device.name, device.homeId, device.roomName]), [
+    ["测试壁挂炉", "home-1", "厨房"],
+    ["厨房开关", "home-1", "厨房"],
+  ]);
 });
 
 test("device discovery paginates with max_did and processes homes beyond the first ten", async () => {
@@ -65,6 +99,7 @@ test("device discovery paginates with max_did and processes homes beyond the fir
   const deviceCalls = [];
   const result = await listDevices(session, { request: async (_session, path, data) => {
     if (path.endsWith("/gethome")) return { result: { homelist: homeList } };
+    if (path.endsWith("/device_list_page")) return { result: { list: [], has_more: false } };
     deviceCalls.push(data);
     assert.equal(data.home_owner, `owner-${String(data.home_id).slice(5)}`);
     if (data.home_id === "home-1" && data.start_did === "") {
@@ -84,7 +119,7 @@ test("device discovery paginates with max_did and processes homes beyond the fir
   assert.equal(result.completeness, "complete");
   assert.equal(result.successfulHomeCount, 11);
   assert.equal(result.failedHomeCount, 0);
-  assert.equal(result.requestAttemptCount, 13);
+  assert.equal(result.requestAttemptCount, 14);
 });
 
 test("a later device page failure keeps earlier pages and marks the home partial", async () => {
