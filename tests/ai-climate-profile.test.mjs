@@ -129,6 +129,8 @@ test("each room shows periodic history and the Agent final recommendation", asyn
   assert.match(component, /模式 \{final\.mode/);
   assert.match(component, /function modeLabel/);
   assert.match(component, /modeLabels/);
+  assert.match(component, /!value\.draftProfile/);
+  assert.match(component, /profiles:derive/);
   assert.match(component, /配置已保存/);
   assert.match(component, /操作失败（\$\{code\}）/);
   assert.match(component, /历史状态/);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useClimateObserver } from "../../use-climate-observer";
 
 type Option = { ref: string; name: string; room: string };
@@ -29,10 +29,21 @@ function recommendation(profile: Profile["rooms"][number] | undefined, sample: S
 export default function AdaptiveClimateProfiles({ homeId, homeName }: { homeId?: string; homeName?: string }) {
   const [data, setData] = useState<State | null>(null), [busy, setBusy] = useState(""), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [mappings, setMappings] = useState<Array<{ roomName: string; sensorRef: string; actuatorRefs: string[] }>>([]);
+  const autoDeriveAttempt = useRef("");
   const load = useCallback(async () => {
     if (!homeId) return;
     setError("");
-    try { const response = await fetch(`/api/ai/climate/v1/config?homeId=${encodeURIComponent(homeId)}`, { cache: "no-store" }); if (!response.ok) throw new Error("无法读取气候档案"); const value = await response.json() as State; setData(value); setMappings(value.rooms.map(room => ({ roomName: room.roomName, sensorRef: room.sensorRef, actuatorRefs: room.actuators.map(actuator => actuator.actuatorRef) }))); }
+    try { const response = await fetch(`/api/ai/climate/v1/config?homeId=${encodeURIComponent(homeId)}`, { cache: "no-store" }); if (!response.ok) throw new Error("无法读取气候档案"); const value = await response.json() as State; setData(value); setMappings(value.rooms.map(room => ({ roomName: room.roomName, sensorRef: room.sensorRef, actuatorRefs: room.actuators.map(actuator => actuator.actuatorRef) })));
+      const latestSample = value.samples.at(-1)?.sampleRef ?? "";
+      const attemptKey = `${homeId}:${latestSample}`;
+      if (value.samples.length && !value.draftProfile && latestSample && autoDeriveAttempt.current !== attemptKey) {
+        autoDeriveAttempt.current = attemptKey;
+        const deriveResponse = await fetch("/api/ai/climate/v1/profiles:derive", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ homeId }) });
+        const derived = await deriveResponse.json().catch(() => null) as State | { code?: string } | null;
+        if (!deriveResponse.ok) throw new Error(`历史建议推导失败（${derived && "code" in derived && typeof derived.code === "string" ? derived.code : `HTTP_${deriveResponse.status}`}）`);
+        setData({ ...derived, inventory: value.inventory } as State);
+      }
+    }
     catch (reason) { setError(reason instanceof Error ? reason.message : "无法读取气候档案"); }
   }, [homeId]);
   const observer = useClimateObserver(homeId ?? "", Boolean(homeId), load);
