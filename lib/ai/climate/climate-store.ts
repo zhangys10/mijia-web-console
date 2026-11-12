@@ -12,6 +12,7 @@ type ConfiguredActuator = {
   actuatorRef: string; actuatorName: string; actuatorRoom: string;
   target: PropertyPlan; mode?: PropertyPlan; power?: PropertyPlan;
   range: { min: number; max: number; step: number }; modes?: Array<number | string | boolean>;
+  modeLabels?: Record<string, string>;
   capabilityRevision: string;
 };
 type ConfiguredRoom = {
@@ -27,7 +28,7 @@ export type ClimateObservation = {
 };
 export type ClimateCell = {
   timeWindow: string; ambientBand: string; ambientRange: [number | null, number | null];
-  status: "learned" | "insufficient_evidence"; derivedTargetTemperature: number | null;
+  status: "learned" | "suggested" | "insufficient_evidence"; derivedTargetTemperature: number | null;
   derivedMode: string | null; confidence: number; supportCount: number; distinctDates: number;
   contributingFrom: string | null; contributingTo: string | null; explanation: string;
   explicitTargetTemperature?: number; explicitMode?: string;
@@ -51,6 +52,7 @@ type SensorInventoryItem = DeviceOption & { plan: PropertyPlan };
 type ActuatorInventoryItem = DeviceOption & {
   target: PropertyPlan; mode?: PropertyPlan; power?: PropertyPlan; revision: string;
   range: { min: number; max: number; step: number }; modes?: Array<number | string | boolean>;
+  modeLabels?: Record<string, string>;
 };
 type ClimateDiscoveryInventory = { sensors: SensorInventoryItem[]; actuators: ActuatorInventoryItem[] };
 
@@ -132,12 +134,15 @@ export function selectClimateProperties(groups: Array<{ name: string; label?: st
   return { target: selected.target, mode, power, serviceName: selected.group.name, selectionPolicy: null };
 }
 function plan(did: string, property: MiotCapabilityProperty): PropertyPlan { return { did, siid: property.siid, piid: property.piid }; }
+function choiceLabels(property: MiotCapabilityProperty | undefined) {
+  return property?.choices ? Object.fromEntries(property.choices.map(choice => [String(choice.value), choice.label])) : undefined;
+}
 function powerValue(value: unknown) { return typeof value === "boolean" ? value : value === 1 || value === "1" ? true : value === 0 || value === "0" ? false : null; }
 
 export async function climateInventory(session: XiaomiSession, homeId: string): Promise<ClimateDiscoveryInventory> {
   const discovery = await listDevices(session);
   const devices = discovery.devices.filter(device => text(device.homeId ?? device.home_id) === homeId && text(device.did) && text(device.model));
-  const sensors: Array<DeviceOption & { plan: PropertyPlan }> = [], actuators: Array<DeviceOption & { target: PropertyPlan; mode?: PropertyPlan; power?: PropertyPlan; revision: string; range: { min: number; max: number; step: number }; modes?: Array<number | string | boolean> }> = [];
+  const sensors: SensorInventoryItem[] = [], actuators: ActuatorInventoryItem[] = [];
   for (const device of devices.slice(0, 200)) {
     const did = text(device.did), model = text(device.model), name = text(device.name) || "未命名设备", room = text(device.roomName ?? device.room_name) || "未分配";
     try {
@@ -150,7 +155,7 @@ export async function climateInventory(session: XiaomiSession, homeId: string): 
         const revisionParts = [model, serviceName, target.siid, target.piid, target.range, usableMode?.siid, usableMode?.piid, usableMode?.choices, power?.siid, power?.piid];
         if (selectionPolicy) revisionParts.unshift(selectionPolicy);
         const revision = `rev_${(await digest(JSON.stringify(revisionParts))).slice(0, 24)}`;
-        actuators.push({ ref: await deviceRef(homeId, did, "actuator"), name, room, target: plan(did, target), ...(usableMode ? { mode: plan(did, usableMode), modes: usableMode.choices!.map(choice => choice.value) } : {}), ...(power ? { power: plan(did, power) } : {}), revision, range: target.range! });
+        actuators.push({ ref: await deviceRef(homeId, did, "actuator"), name, room, target: plan(did, target), ...(usableMode ? { mode: plan(did, usableMode), modes: usableMode.choices!.map(choice => choice.value), modeLabels: choiceLabels(usableMode) } : {}), ...(power ? { power: plan(did, power) } : {}), revision, range: target.range! });
       }
     } catch { /* Missing specifications are unavailable, never guessed. */ }
   }
@@ -169,17 +174,8 @@ export function reconcileClimateConfig(state: ClimateState, inventory: ClimateDi
     }
     room.actuators = room.actuators.map(actuator => {
       const discovered = inventory.actuators.find(item => item.ref === actuator.actuatorRef);
-      if (!discovered || discovered.revision === actuator.capabilityRevision) return actuator;
-      const samePair = (item: { roomRef: string; actuatorRef: string }) => item.roomRef === room.roomRef && item.actuatorRef === actuator.actuatorRef;
-      delete state.runtime[`${room.roomRef}:${actuator.actuatorRef}`];
-      state.samples = state.samples.filter(item => !samePair(item));
-      state.observations = state.observations.filter(item => !samePair(item));
-      if (state.draftProfile) state.draftProfile.rooms = state.draftProfile.rooms.filter(item => !samePair(item));
-      for (const profile of state.profileRevisions) profile.rooms = profile.rooms.filter(item => !samePair(item));
-      state.reviewedRevision = null;
-      state.reviewedAt = null;
-      changed = true;
-      return {
+      if (!discovered) return actuator;
+      const replacement: ConfiguredActuator = {
         actuatorRef: discovered.ref,
         actuatorName: discovered.name,
         actuatorRoom: discovered.room,
@@ -188,8 +184,23 @@ export function reconcileClimateConfig(state: ClimateState, inventory: ClimateDi
         ...(discovered.power ? { power: discovered.power } : {}),
         range: discovered.range,
         ...(discovered.modes ? { modes: discovered.modes } : {}),
+        ...(discovered.modeLabels ? { modeLabels: discovered.modeLabels } : {}),
         capabilityRevision: discovered.revision,
       };
+      if (JSON.stringify(actuator) === JSON.stringify(replacement)) return actuator;
+      const semanticsChanged = discovered.revision !== actuator.capabilityRevision;
+      const samePair = (item: { roomRef: string; actuatorRef: string }) => item.roomRef === room.roomRef && item.actuatorRef === actuator.actuatorRef;
+      if (semanticsChanged) {
+        delete state.runtime[`${room.roomRef}:${actuator.actuatorRef}`];
+        state.samples = state.samples.filter(item => !samePair(item));
+        state.observations = state.observations.filter(item => !samePair(item));
+        if (state.draftProfile) state.draftProfile.rooms = state.draftProfile.rooms.filter(item => !samePair(item));
+        for (const profile of state.profileRevisions) profile.rooms = profile.rooms.filter(item => !samePair(item));
+        state.reviewedRevision = null;
+        state.reviewedAt = null;
+      }
+      changed = true;
+      return replacement;
     });
   }
   return changed;
@@ -208,7 +219,7 @@ export async function updateClimateConfig(session: XiaomiSession, homeId: string
     const roomName = text(item.roomName), sensor = inventory.sensors.find(value => value.ref === item.sensorRef && value.room === roomName);
     const actuators = item.actuatorRefs.map(ref => inventory.actuators.find(value => value.ref === ref));
     if (!roomName || !sensor || actuators.some(value => !value)) throw new ClimateError("AI_INVALID_REQUEST");
-    rooms.push({ roomRef: await roomRef(homeId, roomName), roomName, sensorRef: sensor.ref, sensor: sensor.plan, sensorName: sensor.name, actuators: actuators.map(value => ({ actuatorRef: value!.ref, actuatorName: value!.name, actuatorRoom: value!.room, target: value!.target, mode: value!.mode, ...(value!.power ? { power: value!.power } : {}), range: value!.range, modes: value!.modes, capabilityRevision: value!.revision })) });
+    rooms.push({ roomRef: await roomRef(homeId, roomName), roomName, sensorRef: sensor.ref, sensor: sensor.plan, sensorName: sensor.name, actuators: actuators.map(value => ({ actuatorRef: value!.ref, actuatorName: value!.name, actuatorRoom: value!.room, target: value!.target, mode: value!.mode, ...(value!.power ? { power: value!.power } : {}), range: value!.range, modes: value!.modes, modeLabels: value!.modeLabels, capabilityRevision: value!.revision })) });
   }
   const current = await readClimateState(homeId, supplied, env);
   const state = { ...current, enabled: body.enabled, rooms, updatedAt: new Date().toISOString() };
@@ -218,7 +229,7 @@ export async function updateClimateConfig(session: XiaomiSession, homeId: string
 
 export async function sampleClimate(session: XiaomiSession, homeId: string, supplied?: ClimateStore, env: Record<string, string | undefined> = {}, now = new Date(), requester: typeof xiaomiRequest = xiaomiRequest) {
   const state = await readClimateState(homeId, supplied, env);
-  if (!state.enabled || !state.rooms.length) return { state, sampled: false, acceptedOverrides: 0 };
+  if (!state.enabled || !state.rooms.length) return { state, sampled: false, newSamples: 0, acceptedOverrides: 0 };
   const plans = new Map<string, PropertyPlan>();
   for (const room of state.rooms) for (const item of [room.sensor, ...room.actuators.flatMap(actuator => [actuator.target, actuator.mode, actuator.power])].filter(Boolean) as PropertyPlan[]) plans.set(propertyKey(item), item);
   const values = new Map<string, unknown>();
@@ -230,7 +241,7 @@ export async function sampleClimate(session: XiaomiSession, homeId: string, supp
   const capturedAt = now.toISOString(), cutoff = now.getTime() - 90 * 86400000;
   state.samples = state.samples.filter(item => Date.parse(item.capturedAt) >= cutoff);
   state.observations = state.observations.filter(item => Date.parse(item.capturedAt) >= cutoff);
-  let acceptedOverrides = 0;
+  let newSamples = 0, acceptedOverrides = 0;
   for (const room of state.rooms) for (const actuator of room.actuators) {
     const runtimeKey = `${room.roomRef}:${actuator.actuatorRef}`;
     const ambient = values.get(propertyKey(room.sensor)), target = values.get(propertyKey(actuator.target)), rawMode = actuator.mode ? values.get(propertyKey(actuator.mode)) : null;
@@ -242,7 +253,10 @@ export async function sampleClimate(session: XiaomiSession, homeId: string, supp
     if (typeof ambient !== "number" || !Number.isFinite(ambient) || !validTarget || !validMode) { state.runtime[runtimeKey] = { ...runtime, lastSampleAt: capturedAt }; continue; }
     const mode = actuator.mode ? String(rawMode) : null, bucket = Math.floor(now.getTime() / 900000), sampleRef = `sample_${(await digest(`${room.roomRef}:${actuator.actuatorRef}:${bucket}`)).slice(0, 24)}`;
     const powerOn = powerValue(power);
-    if (!state.samples.some(item => item.sampleRef === sampleRef)) state.samples.push({ sampleRef, roomRef: room.roomRef, actuatorRef: actuator.actuatorRef, ambientTemperature: ambient, targetTemperature: target, mode, power: powerOn, capturedAt });
+    if (!state.samples.some(item => item.sampleRef === sampleRef)) {
+      state.samples.push({ sampleRef, roomRef: room.roomRef, actuatorRef: actuator.actuatorRef, ambientTemperature: ambient, targetTemperature: target, mode, power: powerOn, capturedAt });
+      newSamples++;
+    }
     const current = { targetTemperature: target, mode };
     if (!runtime.confirmed) runtime.confirmed = { ...current, observedAt: capturedAt };
     else if (runtime.confirmed.targetTemperature === target && runtime.confirmed.mode === mode) runtime.candidate = undefined;
@@ -263,7 +277,7 @@ export async function sampleClimate(session: XiaomiSession, homeId: string, supp
   }
   state.updatedAt = capturedAt;
   await writeClimateState(homeId, state, supplied, env);
-  return { state, sampled: true, acceptedOverrides };
+  return { state, sampled: true, newSamples, acceptedOverrides };
 }
 
 /** Records intent only; sampleClimate must observe the matching device readback before accepting it. */
@@ -285,7 +299,7 @@ export async function noteConsoleClimateWrite(homeId: string, did: string, siid:
 export function publicClimateState(state: ClimateState, inventory?: ClimateInventory) {
   return {
     enabled: state.enabled, timezone: state.timezone, updatedAt: state.updatedAt,
-    rooms: state.rooms.map(({ roomRef, roomName, sensorRef, sensorName, actuators }) => ({ roomRef, roomName, sensorRef, sensorName, actuators: actuators.map(({ actuatorRef, actuatorName, actuatorRoom, capabilityRevision }) => ({ actuatorRef, actuatorName, actuatorRoom, capabilityRevision, lastSampleAt: state.runtime[`${roomRef}:${actuatorRef}`]?.lastSampleAt ?? null })) })),
+    rooms: state.rooms.map(({ roomRef, roomName, sensorRef, sensorName, actuators }) => ({ roomRef, roomName, sensorRef, sensorName, actuators: actuators.map(({ actuatorRef, actuatorName, actuatorRoom, capabilityRevision, modeLabels }) => ({ actuatorRef, actuatorName, actuatorRoom, capabilityRevision, modeLabels, lastSampleAt: state.runtime[`${roomRef}:${actuatorRef}`]?.lastSampleAt ?? null })) })),
     inventory, observations: state.observations, samples: state.samples.slice(-1000), draftProfile: state.draftProfile,
     reviewedProfile: state.profileRevisions.find(item => item.revision === state.reviewedRevision) ?? null,
     reviewedRevision: state.reviewedRevision, reviewedAt: state.reviewedAt,

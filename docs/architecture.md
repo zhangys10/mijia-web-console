@@ -90,12 +90,17 @@ MIoT meaning must never remain visible as thermostat history.
 Configuration, status history, profile matrices and manual-change review live on the
 Environment page rather than AI settings. Both the Environment page and the 3D page run
 the same visibility-aware observer. Every valid poll is eligible for a deduplicated
-15-minute status point even when no setting changed; only confirmed manual-change
-observations are sent into preference derivation.
+15-minute status point even when no setting changed. Bounded periodic points are sent to
+deterministic derivation and may produce a low-confidence provisional target/mode
+suggestion; confirmed manual changes remain the higher-weight evidence required for a
+cell to become learned.
 The Environment page combines the general sensor snapshot/trend surface with climate
 history and recommendations. There is no separate Climate navigation tab.
 For each room/controller pair, Climate shows recent periodic history and a single
 "recommended now" result selected from the Agent-derived cell matching the current local
 time window and latest ambient-temperature band. Explicit reviewed preferences override
-the derived value for display. Missing evidence produces no recommendation, and the result
-never grants execution authority.
+the derived value for display. For mode-capable ACs, the recommendation includes the
+observed mode as well as target temperature. Raw MIoT enum values remain stable evidence,
+while sanitized capability choice labels are stored with the controller and used on every
+UI surface; numeric AC modes are never presented when a published label exists. Missing
+evidence produces no recommendation, and the result never grants execution authority.
