@@ -7,7 +7,9 @@
   Console-write attribution, 90-day retention, and home-isolated Blob keys.
 - Verify periodic ambient/setpoint/mode points can produce a provisional recommendation
   without manual changes. Confirm AC recommendations include mode, while manual changes
-  remain higher-weight evidence and are required for a learned cell.
+  remain higher-weight evidence and are required for a learned cell. Published AC mode
+  names must appear in recommendations, history, timelines and matrices instead of enum
+  numbers; adding labels to an existing mapping must preserve its history.
 - For a multi-service boiler, verify only an explicit thermostat/room-heating setpoint and
   the on/off property on that same service are used. A boiler without that setpoint is not
   offered; domestic-hot-water and boiler-controller fallbacks are never used.

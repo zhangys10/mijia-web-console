@@ -100,5 +100,7 @@ For each room/controller pair, Climate shows recent periodic history and a singl
 "recommended now" result selected from the Agent-derived cell matching the current local
 time window and latest ambient-temperature band. Explicit reviewed preferences override
 the derived value for display. For mode-capable ACs, the recommendation includes the
-observed mode as well as target temperature. Missing evidence produces no recommendation,
-and the result never grants execution authority.
+observed mode as well as target temperature. Raw MIoT enum values remain stable evidence,
+while sanitized capability choice labels are stored with the controller and used on every
+UI surface; numeric AC modes are never presented when a published label exists. Missing
+evidence produces no recommendation, and the result never grants execution authority.
