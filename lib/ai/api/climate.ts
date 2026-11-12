@@ -5,6 +5,7 @@ import { ClimateError, climateInventory, deleteClimateState, publicClimateState,
 type Action = "config" | "sample" | "observations" | "profiles" | "derive" | "review" | "memory";
 type Dependencies = { store?: ClimateStore; homes?: typeof listHomes; fetch?: typeof fetch };
 const MAX_BODY = 64 * 1024;
+const MAX_DERIVATION_EVIDENCE = 160;
 
 function homeIdOf(request: Request, body?: unknown) {
   const candidate = body && typeof body === "object" && !Array.isArray(body)
@@ -14,6 +15,29 @@ function homeIdOf(request: Request, body?: unknown) {
   return candidate;
 }
 
+function localContext(capturedAt: string, timezone: string) {
+  const value = new Date(capturedAt);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: timezone, hour: "numeric", hourCycle: "h23", weekday: "short" }).formatToParts(value);
+  const weekday = parts.find(item => item.type === "weekday")?.value ?? "Mon";
+  return { localHour: Number(parts.find(item => item.type === "hour")?.value ?? value.getUTCHours()), dayOfWeek: Math.max(1, ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(weekday) + 1) };
+}
+
+export function climateDerivationPayload(state: Awaited<ReturnType<typeof readClimateState>>) {
+  const observations = state.observations.slice(-Math.min(80, MAX_DERIVATION_EVIDENCE));
+  const historyPoints = state.samples.slice(-(MAX_DERIVATION_EVIDENCE - observations.length)).map(sample => ({
+    sampleRef: sample.sampleRef,
+    roomRef: sample.roomRef,
+    actuatorRef: sample.actuatorRef,
+    ambientTemperature: sample.ambientTemperature,
+    targetTemperature: sample.targetTemperature,
+    mode: sample.mode,
+    powerOn: sample.power,
+    capturedAt: sample.capturedAt,
+    ...localContext(sample.capturedAt, state.timezone),
+  }));
+  return { timezone: state.timezone, observations, historyPoints };
+}
+
 async function derive(homeId: string, context: AiWebContext, dependencies: Dependencies) {
   const state = await readClimateState(homeId, dependencies.store, context.env);
   const base = context.env.AI_AGENT_BASE_URL?.replace(/\/$/, "");
@@ -21,7 +45,7 @@ async function derive(homeId: string, context: AiWebContext, dependencies: Depen
   if (!base || !secret) throw new ClimateError("AI_CLIMATE_DERIVATION_UNAVAILABLE", 503);
   const response = await (dependencies.fetch ?? fetch)(`${base}/climate-profile`, {
     method: "POST", headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ timezone: state.timezone, observations: state.observations }),
+    body: JSON.stringify(climateDerivationPayload(state)),
   });
   if (!response.ok) throw new ClimateError("AI_CLIMATE_DERIVATION_UNAVAILABLE", 502);
   const profile = await response.json() as typeof state.draftProfile;
@@ -58,8 +82,8 @@ export async function climateRequest(context: AiWebContext, action: Action, depe
     if (action === "sample") {
       const result = await sampleClimate(session, homeId, dependencies.store, context.env);
       let derivationPending = false;
-      if (result.acceptedOverrides) try { result.state = await derive(homeId, context, dependencies); } catch { derivationPending = true; }
-      return jsonResponse({ ...publicClimateState(result.state), sampled: result.sampled, acceptedOverrides: result.acceptedOverrides, derivationPending }, 200);
+      if (result.newSamples || result.acceptedOverrides) try { result.state = await derive(homeId, context, dependencies); } catch { derivationPending = true; }
+      return jsonResponse({ ...publicClimateState(result.state), sampled: result.sampled, newSamples: result.newSamples, acceptedOverrides: result.acceptedOverrides, derivationPending }, 200);
     }
     if (action === "observations") {
       const state = await readClimateState(homeId, dependencies.store, context.env);
@@ -80,7 +104,7 @@ export async function climateRequest(context: AiWebContext, action: Action, depe
         const profile = state.draftProfile;
         if (!profile) throw new ClimateError("AI_INVALID_REQUEST");
         const edit = value.edit as Record<string, unknown>;
-        if (Object.keys(edit).some(key => !["roomRef", "actuatorRef", "timeWindow", "ambientBand", "targetTemperature", "mode"].includes(key)) || typeof edit.roomRef !== "string" || typeof edit.actuatorRef !== "string" || typeof edit.timeWindow !== "string" || typeof edit.ambientBand !== "string" || (edit.targetTemperature !== undefined && (typeof edit.targetTemperature !== "number" || edit.targetTemperature < 5 || edit.targetTemperature > 40)) || (edit.mode !== undefined && (typeof edit.mode !== "string" || edit.mode.length > 40))) throw new ClimateError("AI_INVALID_REQUEST");
+        if (Object.keys(edit).some(key => !["roomRef", "actuatorRef", "timeWindow", "ambientBand", "targetTemperature", "mode"].includes(key)) || typeof edit.roomRef !== "string" || typeof edit.actuatorRef !== "string" || typeof edit.timeWindow !== "string" || typeof edit.ambientBand !== "string" || (edit.targetTemperature !== undefined && (typeof edit.targetTemperature !== "number" || edit.targetTemperature < 5 || edit.targetTemperature > 80)) || (edit.mode !== undefined && (typeof edit.mode !== "string" || edit.mode.length > 40))) throw new ClimateError("AI_INVALID_REQUEST");
         const cell = profile.rooms.find(room => room.roomRef === edit.roomRef && room.actuatorRef === edit.actuatorRef)?.cells.find(item => item.timeWindow === edit.timeWindow && item.ambientBand === edit.ambientBand);
         if (!cell) throw new ClimateError("AI_INVALID_REQUEST");
         if (typeof edit.targetTemperature === "number") cell.explicitTargetTemperature = edit.targetTemperature;

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { deleteClimateState, publicClimateState, readClimateState, reconcileClimateConfig, sampleClimate, selectClimateProperties, writeClimateState } from "../lib/ai/climate/climate-store.ts";
+import { climateDerivationPayload } from "../lib/ai/api/climate.ts";
 
 function memoryStore() {
   const values = new Map();
@@ -41,7 +42,7 @@ test("periodic valid status creates points without creating preference observati
   await writeClimateState(homeId, state, store);
   const requester = async (_session, _path, body) => ({ result: body.params.map(item => ({ ...item, code: 0, value: item.did === "sensor" ? 21 : item.piid === 1 ? true : 24 })) });
   const session = { userId: "fake", cUserId: "fake", ssecurity: "fake", serviceToken: "fake", region: "cn", deviceId: "fake", userAgent: "fake", createdAt: 0 };
-  await sampleClimate(session, homeId, store, {}, new Date("2026-01-01T00:00:00Z"), requester);
+  const firstResult = await sampleClimate(session, homeId, store, {}, new Date("2026-01-01T00:00:00Z"), requester);
   await sampleClimate(session, homeId, store, {}, new Date("2026-01-01T00:02:00Z"), requester);
   await sampleClimate(session, homeId, store, {}, new Date("2026-01-01T00:16:00Z"), requester);
   const saved = await readClimateState(homeId, store);
@@ -50,6 +51,12 @@ test("periodic valid status creates points without creating preference observati
   assert.equal(saved.samples[0].ambientTemperature, 21);
   assert.equal(saved.samples[0].targetTemperature, 24);
   assert.equal(saved.samples[0].power, true);
+  assert.equal(firstResult.newSamples, 1);
+  const payload = climateDerivationPayload(saved);
+  assert.equal(payload.historyPoints.length, 2);
+  assert.equal(payload.historyPoints[0].mode, null);
+  assert.equal(payload.historyPoints[0].localHour, 8);
+  assert.doesNotMatch(JSON.stringify(payload), /\"did\"|\"siid\"|\"piid\"/);
 });
 
 test("boiler capability selection uses only the thermostat setpoint and thermostat power", () => {
@@ -108,6 +115,10 @@ test("each room shows periodic history and the Agent final recommendation", asyn
   const component = await readFile(new URL("../app/components/ai-assistant/adaptive-climate-profiles.tsx", import.meta.url), "utf8");
   assert.match(component, /function RoomClimateReview/);
   assert.match(component, /Agent 当前建议/);
+  assert.match(component, /基于周期历史的临时建议/);
+  assert.match(component, /模式 \{final\.mode/);
+  assert.match(component, /配置已保存/);
+  assert.match(component, /操作失败（\$\{code\}）/);
   assert.match(component, /历史状态/);
   assert.match(component, /currentTimeWindow\(\).*ambientBand\(sample\.ambientTemperature\)/s);
   assert.match(component, /仅供审阅/);

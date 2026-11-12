@@ -27,7 +27,7 @@ export type ClimateObservation = {
 };
 export type ClimateCell = {
   timeWindow: string; ambientBand: string; ambientRange: [number | null, number | null];
-  status: "learned" | "insufficient_evidence"; derivedTargetTemperature: number | null;
+  status: "learned" | "suggested" | "insufficient_evidence"; derivedTargetTemperature: number | null;
   derivedMode: string | null; confidence: number; supportCount: number; distinctDates: number;
   contributingFrom: string | null; contributingTo: string | null; explanation: string;
   explicitTargetTemperature?: number; explicitMode?: string;
@@ -218,7 +218,7 @@ export async function updateClimateConfig(session: XiaomiSession, homeId: string
 
 export async function sampleClimate(session: XiaomiSession, homeId: string, supplied?: ClimateStore, env: Record<string, string | undefined> = {}, now = new Date(), requester: typeof xiaomiRequest = xiaomiRequest) {
   const state = await readClimateState(homeId, supplied, env);
-  if (!state.enabled || !state.rooms.length) return { state, sampled: false, acceptedOverrides: 0 };
+  if (!state.enabled || !state.rooms.length) return { state, sampled: false, newSamples: 0, acceptedOverrides: 0 };
   const plans = new Map<string, PropertyPlan>();
   for (const room of state.rooms) for (const item of [room.sensor, ...room.actuators.flatMap(actuator => [actuator.target, actuator.mode, actuator.power])].filter(Boolean) as PropertyPlan[]) plans.set(propertyKey(item), item);
   const values = new Map<string, unknown>();
@@ -230,7 +230,7 @@ export async function sampleClimate(session: XiaomiSession, homeId: string, supp
   const capturedAt = now.toISOString(), cutoff = now.getTime() - 90 * 86400000;
   state.samples = state.samples.filter(item => Date.parse(item.capturedAt) >= cutoff);
   state.observations = state.observations.filter(item => Date.parse(item.capturedAt) >= cutoff);
-  let acceptedOverrides = 0;
+  let newSamples = 0, acceptedOverrides = 0;
   for (const room of state.rooms) for (const actuator of room.actuators) {
     const runtimeKey = `${room.roomRef}:${actuator.actuatorRef}`;
     const ambient = values.get(propertyKey(room.sensor)), target = values.get(propertyKey(actuator.target)), rawMode = actuator.mode ? values.get(propertyKey(actuator.mode)) : null;
@@ -242,7 +242,10 @@ export async function sampleClimate(session: XiaomiSession, homeId: string, supp
     if (typeof ambient !== "number" || !Number.isFinite(ambient) || !validTarget || !validMode) { state.runtime[runtimeKey] = { ...runtime, lastSampleAt: capturedAt }; continue; }
     const mode = actuator.mode ? String(rawMode) : null, bucket = Math.floor(now.getTime() / 900000), sampleRef = `sample_${(await digest(`${room.roomRef}:${actuator.actuatorRef}:${bucket}`)).slice(0, 24)}`;
     const powerOn = powerValue(power);
-    if (!state.samples.some(item => item.sampleRef === sampleRef)) state.samples.push({ sampleRef, roomRef: room.roomRef, actuatorRef: actuator.actuatorRef, ambientTemperature: ambient, targetTemperature: target, mode, power: powerOn, capturedAt });
+    if (!state.samples.some(item => item.sampleRef === sampleRef)) {
+      state.samples.push({ sampleRef, roomRef: room.roomRef, actuatorRef: actuator.actuatorRef, ambientTemperature: ambient, targetTemperature: target, mode, power: powerOn, capturedAt });
+      newSamples++;
+    }
     const current = { targetTemperature: target, mode };
     if (!runtime.confirmed) runtime.confirmed = { ...current, observedAt: capturedAt };
     else if (runtime.confirmed.targetTemperature === target && runtime.confirmed.mode === mode) runtime.candidate = undefined;
@@ -263,7 +266,7 @@ export async function sampleClimate(session: XiaomiSession, homeId: string, supp
   }
   state.updatedAt = capturedAt;
   await writeClimateState(homeId, state, supplied, env);
-  return { state, sampled: true, acceptedOverrides };
+  return { state, sampled: true, newSamples, acceptedOverrides };
 }
 
 /** Records intent only; sampleClimate must observe the matching device readback before accepting it. */
