@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { deleteClimateState, publicClimateState, readClimateState, reconcileClimateConfig, sampleClimate, selectClimateProperties, writeClimateState } from "../lib/ai/climate/climate-store.ts";
-import { climateDerivationPayload } from "../lib/ai/api/climate.ts";
+import { climateDerivationHeaders, climateDerivationPayload } from "../lib/ai/api/climate.ts";
 
 function memoryStore() {
   const values = new Map();
@@ -32,6 +32,14 @@ test("all phase 1 API route modules delegate only to the climate read/derive ser
   const service = await readFile(new URL("../lib/ai/api/climate.ts", import.meta.url), "utf8");
   assert.doesNotMatch(service, /prop\/set|miotspec\/action|scene.*run|automation.*write|executor/i);
   assert.match(service, /sampleClimate/);
+});
+
+test("climate derivation supplies the Makers conversation header required by Agent ingress", () => {
+  const headers = climateDerivationHeaders("fake-internal-secret", "request_0123456789abcdefghijklmnop");
+  assert.equal(headers.Authorization, "Bearer fake-internal-secret");
+  assert.equal(headers["Content-Type"], "application/json");
+  assert.match(headers["Makers-Conversation-Id"], /^[0-9A-Za-z_.-]{6,36}$/);
+  assert.equal(headers["Makers-Conversation-Id"], "climate-request_0123456789abcdef");
 });
 
 test("periodic valid status creates points without creating preference observations", async () => {

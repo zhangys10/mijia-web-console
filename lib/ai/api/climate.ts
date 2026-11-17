@@ -38,13 +38,22 @@ export function climateDerivationPayload(state: Awaited<ReturnType<typeof readCl
   return { timezone: state.timezone, observations, historyPoints };
 }
 
+export function climateDerivationHeaders(secret: string, requestId = crypto.randomUUID()) {
+  const suffix = requestId.replace(/[^0-9A-Za-z_.-]/g, "").slice(0, 24) || "request";
+  return {
+    Authorization: `Bearer ${secret}`,
+    "Content-Type": "application/json",
+    "Makers-Conversation-Id": `climate-${suffix}`,
+  };
+}
+
 async function derive(homeId: string, context: AiWebContext, dependencies: Dependencies) {
   const state = await readClimateState(homeId, dependencies.store, context.env);
   const base = context.env.AI_AGENT_BASE_URL?.replace(/\/$/, "");
   const secret = context.env.AI_AGENT_INTERNAL_SECRET;
   if (!base || !secret) throw new ClimateError("AI_CLIMATE_DERIVATION_UNAVAILABLE", 503);
   const response = await (dependencies.fetch ?? fetch)(`${base}/climate-profile`, {
-    method: "POST", headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
+    method: "POST", headers: climateDerivationHeaders(secret),
     body: JSON.stringify(climateDerivationPayload(state)),
   });
   if (!response.ok) throw new ClimateError("AI_CLIMATE_DERIVATION_UNAVAILABLE", 502);
