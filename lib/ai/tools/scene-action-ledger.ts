@@ -1,4 +1,5 @@
 import { getStore } from "@edgeone/pages-blob";
+import { logStoreError } from "../../store-error-diagnostics.ts";
 
 export type SceneActionLedgerStore = {
   get(key: string, options?: { type?: "json"; consistency?: "strong" | "eventual" }): Promise<unknown>;
@@ -50,23 +51,24 @@ async function digest(value: string) {
 
 export async function claimAction(
   input: { principalId: string; homeId: string; idempotencyKey: string; requestHash: string; actionRevision: string },
-  store = ledgerStore(),
+  store?: SceneActionLedgerStore,
 ): Promise<SceneActionClaim> {
   const scope = await digest(`${input.principalId}\u0000${input.homeId}\u0000${input.idempotencyKey}`);
   const claimKey = `actions/${scope}.claim.json`;
   const outcomeKey = `actions/${scope}.outcome.json`;
   const claim: Claim = { version: 1, claimId: crypto.randomUUID(), requestHash: input.requestHash, actionRevision: input.actionRevision, claimedAt: new Date().toISOString() };
   try {
-    try { await store.setJSON(claimKey, claim, { onlyIfNew: true }); }
+    const target = store ?? ledgerStore();
+    try { await target.setJSON(claimKey, claim, { onlyIfNew: true }); }
     catch { /* The strong read below decides whether this process owns the claim. */ }
-    const existing = await store.get(claimKey, { type: "json", consistency: "strong" });
+    const existing = await target.get(claimKey, { type: "json", consistency: "strong" });
     if (!existing || typeof existing !== "object") throw new Error("invalid action claim");
     const record = existing as Record<string, unknown>;
     const actionRevision = typeof record.actionRevision === "string" ? record.actionRevision : record.sceneRevision;
     if (record.version !== 1 || typeof record.claimId !== "string" || typeof record.requestHash !== "string" || typeof actionRevision !== "string") throw new Error("invalid action claim");
     if (record.claimId === claim.claimId) return { kind: "claimed", claim, claimKey, outcomeKey };
     if (record.requestHash !== input.requestHash || actionRevision !== input.actionRevision) return { kind: "conflict" };
-    const rawOutcome = await store.get(outcomeKey, { type: "json", consistency: "strong" });
+    const rawOutcome = await target.get(outcomeKey, { type: "json", consistency: "strong" });
     if (rawOutcome && typeof rawOutcome === "object") {
       const outcome = rawOutcome as Record<string, unknown>;
       if (outcome.version === 1 && outcome.requestHash === input.requestHash && (outcome.status === "success" || outcome.status === "failed" || outcome.status === "outcome_unknown") && typeof outcome.completedAt === "string") {
@@ -77,7 +79,8 @@ export async function claimAction(
     // A claim without a terminal receipt may have crossed the physical dispatch boundary.
     // Treat it as unknown and never let a replay dispatch the scene again.
     return { kind: "unknown" };
-  } catch {
+  } catch (error) {
+    logStoreError({ component: "action_ledger", operation: "claim_action" }, error);
     throw new SceneActionLedgerError("AI_ACTION_LEDGER_UNAVAILABLE");
   }
 }
@@ -85,7 +88,7 @@ export async function claimAction(
 export async function recordActionOutcome(
   claim: Extract<SceneActionClaim, { kind: "claimed" }>,
   status: Outcome["status"],
-  store = ledgerStore(),
+  store?: SceneActionLedgerStore,
 ) {
   const outcome: Outcome = {
     version: 1,
@@ -94,10 +97,11 @@ export async function recordActionOutcome(
     completedAt: new Date().toISOString(),
   };
   try {
-    await store.setJSON(claim.outcomeKey, outcome, { onlyIfNew: true });
-  } catch {
+    await (store ?? ledgerStore()).setJSON(claim.outcomeKey, outcome, { onlyIfNew: true });
+  } catch (error) {
     // An existing receipt or a Blob outage cannot establish a fresh outcome.
     // The caller must surface uncertainty and must not retry the physical action.
+    logStoreError({ component: "action_ledger", operation: "record_outcome" }, error);
     throw new SceneActionLedgerError("AI_ACTION_LEDGER_UNAVAILABLE");
   }
 }
