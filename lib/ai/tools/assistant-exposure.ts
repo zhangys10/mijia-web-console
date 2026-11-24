@@ -1,4 +1,5 @@
 import { getStore } from "@edgeone/pages-blob";
+import { logStoreError } from "../../store-error-diagnostics.ts";
 import type { XiaomiSession } from "../../xiaomi-cloud.ts";
 import { listDevices, listHomes } from "../../xiaomi-cloud.ts";
 import { collectHomeEnvironment, type EnvironmentMetric, type EnvironmentSnapshot } from "../../home-environment.ts";
@@ -131,6 +132,7 @@ export async function readAssistantExposure(homeId: string, store?: AssistantExp
     };
   } catch (error) {
     if (error instanceof AssistantExposureError) throw error;
+    logStoreError({ component: "assistant_exposure", operation: "read_exposure" }, error);
     throw new AssistantExposureError("AI_EXPOSURE_STORE_UNAVAILABLE", 503);
   }
 }
@@ -357,15 +359,7 @@ export async function updateAssistantExposure(
     storageStage = "write_exposure";
     await store.setJSON(baseKey, next);
   } catch (error) {
-    const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" && /^[A-Z0-9_]{1,32}$/.test(error.code)
-      ? error.code
-      : undefined;
-    console.error(JSON.stringify({
-      event: "assistant_exposure_storage_write_failed",
-      stage: storageStage,
-      store: dependencies.store ? "injected" : "blob",
-      ...(code ? { code } : {}),
-    }));
+    logStoreError({ component: "assistant_exposure", operation: storageStage }, error);
     throw new AssistantExposureError("AI_EXPOSURE_STORE_UNAVAILABLE", 503);
   }
   return {

@@ -1,5 +1,6 @@
 import { getStore } from "@edgeone/pages-blob";
 import { getMiotCapabilities, type MiotCapabilityProperty } from "../../miot-spec.ts";
+import { logStoreError } from "../../store-error-diagnostics.ts";
 import { listDevices, xiaomiRequest, type XiaomiSession } from "../../xiaomi-cloud.ts";
 
 export type ClimateStore = {
@@ -87,15 +88,24 @@ export async function readClimateState(homeId: string, supplied?: ClimateStore, 
     }
     state.profileRevisions ??= state.draftProfile ? [state.draftProfile] : [];
     return state;
-  } catch { throw new ClimateError("AI_CLIMATE_STORE_UNAVAILABLE", 503); }
+  } catch (error) {
+    logStoreError({ component: "climate_memory", operation: "read_state" }, error);
+    throw new ClimateError("AI_CLIMATE_STORE_UNAVAILABLE", 503);
+  }
 }
 export async function writeClimateState(homeId: string, state: ClimateState, supplied?: ClimateStore, env: Record<string, string | undefined> = {}) {
   try { await (supplied ?? storeFor(env)).setJSON(await homeKey(homeId), state); }
-  catch { throw new ClimateError("AI_CLIMATE_STORE_UNAVAILABLE", 503); }
+  catch (error) {
+    logStoreError({ component: "climate_memory", operation: "write_state" }, error);
+    throw new ClimateError("AI_CLIMATE_STORE_UNAVAILABLE", 503);
+  }
 }
 export async function deleteClimateState(homeId: string, supplied?: ClimateStore, env: Record<string, string | undefined> = {}) {
   try { await (supplied ?? storeFor(env)).delete?.(await homeKey(homeId)); }
-  catch { throw new ClimateError("AI_CLIMATE_STORE_UNAVAILABLE", 503); }
+  catch (error) {
+    logStoreError({ component: "climate_memory", operation: "delete_state" }, error);
+    throw new ClimateError("AI_CLIMATE_STORE_UNAVAILABLE", 503);
+  }
 }
 
 async function deviceRef(homeId: string, did: string, kind: "sensor" | "actuator") { return `${kind}_${(await digest(`${homeId}:${did}`)).slice(0, 24)}`; }

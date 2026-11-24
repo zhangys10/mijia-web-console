@@ -1,5 +1,6 @@
 import { getStore } from "@edgeone/pages-blob";
 import { imageMagic, isGlb, parseSpatialLayout, SpatialLayoutError, type SpatialLayoutV1 } from "./spatial-layout.ts";
+import { logStoreError } from "./store-error-diagnostics.ts";
 
 export type SpatialLayoutStore = {
   get(key: string, options?: { type?: "json" | "arrayBuffer"; consistency?: "strong" | "eventual" }): Promise<unknown>;
@@ -20,9 +21,14 @@ export function spatialBlobStore(runtimeEnv: Environment = {}): SpatialLayoutSto
   const name = runtimeEnv.SPATIAL_LAYOUT_STORE?.trim() || "mijia-spatial-layout-v1";
   const projectId = runtimeEnv.PAGES_PROJECT_ID?.trim();
   const token = runtimeEnv.PAGES_BLOB_API_TOKEN?.trim();
-  return projectId && token
-    ? getStore({ name, projectId, token }) as SpatialLayoutStore
-    : getStore(name) as SpatialLayoutStore;
+  try {
+    return projectId && token
+      ? getStore({ name, projectId, token }) as SpatialLayoutStore
+      : getStore(name) as SpatialLayoutStore;
+  } catch (error) {
+    logStoreError({ component: "spatial_layout", operation: "initialize_store" }, error);
+    throw error;
+  }
 }
 
 export async function spatialHomeHash(homeId: string) {
@@ -50,6 +56,7 @@ export async function readSpatialLayout(homeId: string, supplied?: SpatialLayout
     return parseSpatialLayout(raw, `${prefix}uploads/`);
   } catch (error) {
     if (error instanceof SpatialLayoutError) throw error;
+    logStoreError({ component: "spatial_layout", operation: "read_layout" }, error);
     throw new SpatialLayoutError("SPATIAL_STORE_UNAVAILABLE", 503);
   }
 }
@@ -62,19 +69,20 @@ async function bytes(store: SpatialLayoutStore, key: string) {
 
 export async function saveSpatialLayout(homeId: string, input: unknown, supplied?: SpatialLayoutStore): Promise<SpatialLayoutV1> {
   const store = supplied ?? spatialBlobStore();
-  const { prefix, revision: currentRevision } = await readPointer(store, homeId);
-  const layout = parseSpatialLayout(input, `${prefix}uploads/`);
-  if (layout.baseRevision !== currentRevision) throw new SpatialLayoutError("SPATIAL_REVISION_CONFLICT", 409);
-  const [image, model] = await Promise.all([bytes(store, layout.image.key), bytes(store, layout.model.key)]);
-  if (image.byteLength !== layout.image.byteLength || imageMagic(image) !== layout.image.contentType) throw new SpatialLayoutError("SPATIAL_IMAGE_INVALID", 400);
-  if (model.byteLength !== layout.model.byteLength || !isGlb(model)) throw new SpatialLayoutError("SPATIAL_MODEL_INVALID", 400);
-  const next = { ...layout, updatedAt: new Date().toISOString() };
   try {
+    const { prefix, revision: currentRevision } = await readPointer(store, homeId);
+    const layout = parseSpatialLayout(input, `${prefix}uploads/`);
+    if (layout.baseRevision !== currentRevision) throw new SpatialLayoutError("SPATIAL_REVISION_CONFLICT", 409);
+    const [image, model] = await Promise.all([bytes(store, layout.image.key), bytes(store, layout.model.key)]);
+    if (image.byteLength !== layout.image.byteLength || imageMagic(image) !== layout.image.contentType) throw new SpatialLayoutError("SPATIAL_IMAGE_INVALID", 400);
+    if (model.byteLength !== layout.model.byteLength || !isGlb(model)) throw new SpatialLayoutError("SPATIAL_MODEL_INVALID", 400);
+    const next = { ...layout, updatedAt: new Date().toISOString() };
     await store.setJSON(`${prefix}revisions/${next.revision}.json`, next, { onlyIfNew: true });
     await store.setJSON(`${prefix}current.json`, { version: 1, revision: next.revision, updatedAt: next.updatedAt });
     return next;
   } catch (error) {
     if (error instanceof SpatialLayoutError) throw error;
+    logStoreError({ component: "spatial_layout", operation: "save_layout" }, error);
     throw new SpatialLayoutError("SPATIAL_STORE_UNAVAILABLE", 503);
   }
 }
@@ -89,6 +97,7 @@ export async function deleteSpatialLayout(homeId: string, expectedRevision?: str
     await Promise.all(result.blobs.map(blob => store.delete(blob.key)));
   } catch (error) {
     if (error instanceof SpatialLayoutError) throw error;
+    logStoreError({ component: "spatial_layout", operation: "delete_layout" }, error);
     throw new SpatialLayoutError("SPATIAL_STORE_UNAVAILABLE", 503);
   }
 }
@@ -97,10 +106,16 @@ export async function readSpatialAsset(homeId: string, kind: "image" | "model", 
   const store = supplied ?? spatialBlobStore();
   const layout = await readSpatialLayout(homeId, store);
   if (!layout) throw new SpatialLayoutError("SPATIAL_LAYOUT_NOT_FOUND", 404);
-  const asset = layout[kind];
-  const value = await store.get(asset.key, { type: "arrayBuffer", consistency: "strong" });
-  if (!(value instanceof ArrayBuffer)) throw new SpatialLayoutError("SPATIAL_ASSET_MISSING", 404);
-  return { asset, value };
+  try {
+    const asset = layout[kind];
+    const value = await store.get(asset.key, { type: "arrayBuffer", consistency: "strong" });
+    if (!(value instanceof ArrayBuffer)) throw new SpatialLayoutError("SPATIAL_ASSET_MISSING", 404);
+    return { asset, value };
+  } catch (error) {
+    if (error instanceof SpatialLayoutError) throw error;
+    logStoreError({ component: "spatial_layout", operation: "read_asset" }, error);
+    throw new SpatialLayoutError("SPATIAL_STORE_UNAVAILABLE", 503);
+  }
 }
 
 export async function createSpatialUpload(homeId: string, kind: "image" | "model", contentType: string, byteLength: number, origin: string, supplied?: SpatialLayoutStore) {
@@ -113,7 +128,14 @@ export async function createSpatialUpload(homeId: string, kind: "image" | "model
   const prefix = await spatialHomePrefix(homeId);
   const extension = contentType === "image/png" ? "png" : contentType === "image/jpeg" ? "jpg" : contentType === "image/webp" ? "webp" : "glb";
   const key = `${prefix}uploads/${crypto.randomUUID()}.${extension}`;
-  if (store.createUploadUrl) return { ...(await store.createUploadUrl(key, { expireSeconds: 600, contentType })), contentType, byteLength, local: false };
+  if (store.createUploadUrl) {
+    try {
+      return { ...(await store.createUploadUrl(key, { expireSeconds: 600, contentType })), contentType, byteLength, local: false };
+    } catch (error) {
+      logStoreError({ component: "spatial_layout", operation: "create_upload_url" }, error);
+      throw new SpatialLayoutError("SPATIAL_STORE_UNAVAILABLE", 503);
+    }
+  }
   return { url: `${origin}/api/xiaomi/spatial-layout/uploads?homeId=${encodeURIComponent(homeId)}&key=${encodeURIComponent(key)}`, key, expiresAt: Math.floor(Date.now() / 1000) + 600, contentType, byteLength, local: true };
 }
 
