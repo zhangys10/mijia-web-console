@@ -32,6 +32,9 @@ type QuickProperty = { key: string; name: string; label: string; siid: number; p
 type PlacementLevel = "ground" | "middle" | "top";
 type PlacementRenderEntry = { effect: THREE.Group; label: CSS2DObject; button: HTMLButtonElement; icon: HTMLSpanElement; copy: HTMLSpanElement; stateKey: string; geometryKey: string; presentationKey: string };
 
+const spatialRefreshIntervalMs = 60_000;
+const spatialVisualPropertyCache = new Map<string, VisualProperty[]>();
+
 const placementLevels: Array<{ value: PlacementLevel; label: string; elevation: number }> = [{ value: "ground", label: "地面", elevation: .2 }, { value: "middle", label: "中部", elevation: 1.2 }, { value: "top", label: "顶部", elevation: 2.35 }];
 function placementLevelFor(elevation: number): PlacementLevel { return placementLevels.reduce((best, level) => Math.abs(level.elevation - elevation) < Math.abs(placementLevels.find(item => item.value === best)!.elevation - elevation) ? level.value : best, "middle" as PlacementLevel); }
 function elevationForPlacementLevel(level: PlacementLevel) { return placementLevels.find(item => item.value === level)!.elevation; }
@@ -182,46 +185,125 @@ function SpatialViewer({ layout, homeId, targets, connected, scenes, runningScen
   const [visualValues, setVisualValues] = useState<Record<string, Partial<SpatialVisualState>>>({});
   const confirmedVisualValues = useRef<Record<string, Partial<SpatialVisualState>>>({});
   const parameterGeneration = useRef(0);
-  const [parameterVersion, setParameterVersion] = useState(0);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [readings, setReadings] = useState<Record<string, boolean | null>>({});
+  const confirmedReadings = useRef<Record<string, boolean | null>>({});
+  const readGeneration = useRef(0);
+  const powerTargets = useMemo(() => targets.filter(target => target.power && layout.placements.some(item => item.targetId === target.id)), [targets, layout.placements]);
   useEffect(() => {
     if (!connected || homeId === "demo") return;
-    let active = true, timer: ReturnType<typeof setTimeout>;
-    const controller = new AbortController();
-    const cache = new Map<string, VisualProperty[]>();
-    const refresh = async () => {
-      const generation = parameterGeneration.current;
-      const updates: Record<string, Partial<SpatialVisualState>> = {};
-      for (const placement of layout.placements) {
-        if (!active) return;
-        const target = targets.find(item => item.kind === placement.targetKind && item.id === placement.targetId), device = target?.device;
-        updates[placement.id] = confirmedVisualValues.current[placement.id] ?? {};
-        if (!device?.did || !device.detail || target?.online === false || placement.targetKind === "lighting") continue;
-        try {
-          const specKey = `${device.detail}:${device.urn ?? ""}`;
-          let properties = cache.get(specKey);
-          if (!properties) {
-            const response = await fetch(`/api/xiaomi/spec?model=${encodeURIComponent(device.detail)}${device.urn ? `&urn=${encodeURIComponent(device.urn)}` : ""}`, { signal: controller.signal });
-            const data = await response.json();
-            if (!response.ok) throw new Error("SPEC_FAILED");
-            properties = visualProperties((data.groups ?? []).flatMap((group: { properties: VisualProperty[] }) => group.properties));
-            cache.set(specKey, properties);
-          }
-          if (!properties.length) continue;
-          const query = [...new Set(properties.map(property => `${property.siid}.${property.piid}`))].join(",");
-          const response = await fetch(`/api/xiaomi/control?did=${encodeURIComponent(device.did)}&properties=${query}`, { cache: "no-store", signal: controller.signal });
-          const data = await response.json();
-          if (response.ok) {
-            updates[placement.id] = visualParameters(properties, data.values ?? {});
-            confirmedVisualValues.current[placement.id] = updates[placement.id];
-          }
-        } catch { /* Failed reads clear the corresponding visual parameters. */ }
-      }
-      if (active && generation === parameterGeneration.current) setVisualValues(current => sameVisualValues(current, updates) ? current : updates);
-      if (active) timer = setTimeout(refresh, 10000);
+    let active = true, refreshing = false, timer: number | undefined, requestController: AbortController | null = null;
+    const schedule = () => {
+      if (!active || document.visibilityState !== "visible" || !navigator.onLine) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(refresh, spatialRefreshIntervalMs);
     };
+    const refresh = async () => {
+      if (!active || refreshing || document.visibilityState !== "visible" || !navigator.onLine) return;
+      refreshing = true;
+      const controller = new AbortController();
+      requestController = controller;
+      const visualGeneration = parameterGeneration.current, generation = ++readGeneration.current;
+      const updates: Record<string, Partial<SpatialVisualState>> = {};
+      const values: Record<string, boolean | null> = {};
+      for (const target of powerTargets) values[`${target.kind}:${target.id}`] = confirmedReadings.current[`${target.kind}:${target.id}`] ?? null;
+      const requests = new Map<string, Map<string, { siid: number; piid: number }>>();
+      const visualPlans = new Map<string, { did: string; properties: VisualProperty[] }>();
+      const addRequest = (did: string, siid: number, piid: number) => {
+        const properties = requests.get(did) ?? new Map<string, { siid: number; piid: number }>();
+        properties.set(`${siid}.${piid}`, { siid, piid });
+        requests.set(did, properties);
+      };
+      try {
+        for (const placement of layout.placements) {
+          if (!active) return;
+          const target = targets.find(item => item.kind === placement.targetKind && item.id === placement.targetId), device = target?.device;
+          updates[placement.id] = confirmedVisualValues.current[placement.id] ?? {};
+          if (!device?.did || !device.detail || target?.online === false || placement.targetKind === "lighting") continue;
+          try {
+            const specKey = `${device.detail}:${device.urn ?? ""}`;
+            let properties = spatialVisualPropertyCache.get(specKey);
+            if (!properties) {
+              const response = await fetch(`/api/xiaomi/spec?model=${encodeURIComponent(device.detail)}${device.urn ? `&urn=${encodeURIComponent(device.urn)}` : ""}`, { signal: controller.signal });
+              const data = await response.json();
+              if (!response.ok) throw new Error("SPEC_FAILED");
+              properties = visualProperties((data.groups ?? []).flatMap((group: { properties: VisualProperty[] }) => group.properties));
+              spatialVisualPropertyCache.set(specKey, properties);
+            }
+            if (!properties.length) continue;
+            visualPlans.set(placement.id, { did: device.did, properties });
+            for (const property of properties) addRequest(device.did, property.siid, property.piid);
+          } catch (error) {
+            if (error instanceof DOMException && error.name === "AbortError") throw error;
+            // A failed specification only leaves this placement at its last confirmed state.
+          }
+        }
+        const powerGroups = new Map<string, Target[]>();
+        for (const target of powerTargets) {
+          powerGroups.set(target.power!.did, [...(powerGroups.get(target.power!.did) ?? []), target]);
+          addRequest(target.power!.did, target.power!.siid, target.power!.piid);
+        }
+        const body = { requests: [...requests].map(([did, properties]) => ({ did, properties: [...properties.values()] })) };
+        let devices: Record<string, { values?: Record<string, unknown> }> = {};
+        if (body.requests.length) {
+          const response = await fetch("/api/xiaomi/control/read", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store", signal: controller.signal });
+          const data = await response.json();
+          if (!response.ok) throw new Error("PROPERTY_BATCH_FAILED");
+          devices = data.devices ?? {};
+        }
+        if (!active || document.visibilityState !== "visible" || generation !== readGeneration.current || visualGeneration !== parameterGeneration.current) return;
+        for (const [placementId, plan] of visualPlans) {
+          const deviceValues = devices[plan.did]?.values;
+          if (!deviceValues || !plan.properties.some(property => `${property.siid}.${property.piid}` in deviceValues)) continue;
+          updates[placementId] = { ...updates[placementId], ...visualParameters(plan.properties, deviceValues) };
+          confirmedVisualValues.current[placementId] = updates[placementId];
+        }
+        const confirmedPowerKeys = new Set<string>();
+        for (const [did, items] of powerGroups) {
+          const deviceValues = devices[did]?.values;
+          for (const item of items) {
+            const key = `${item.kind}:${item.id}`, raw = deviceValues?.[`${item.power!.siid}.${item.power!.piid}`];
+            if (typeof raw !== "boolean") continue;
+            values[key] = raw;
+            confirmedPowerKeys.add(key);
+          }
+        }
+        confirmedReadings.current = values;
+        setReadings(current => sameReadings(current, values) ? current : values);
+        const readPlacementIds = new Set(layout.placements.filter(item => confirmedPowerKeys.has(`${item.targetKind}:${item.targetId}`)).map(item => item.id));
+        setVisualValues(current => {
+          const merged = { ...current, ...updates };
+          let changed = !sameVisualValues(current, merged);
+          for (const id of readPlacementIds) {
+            if (!merged[id]?.pending) continue;
+            merged[id] = { ...merged[id], pending: false };
+            changed = true;
+          }
+          return changed ? merged : current;
+        });
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) { /* Retain the last confirmed state and retry later. */ }
+      } finally {
+        if (requestController === controller) requestController = null;
+        refreshing = false;
+        schedule();
+      }
+    };
+    const resume = () => { window.clearTimeout(timer); if (document.visibilityState === "visible" && navigator.onLine) void refresh(); };
+    const suspend = () => { if (document.visibilityState !== "visible" || !navigator.onLine) { window.clearTimeout(timer); requestController?.abort(); } else resume(); };
+    document.addEventListener("visibilitychange", suspend);
+    window.addEventListener("online", resume);
+    window.addEventListener("offline", suspend);
     void refresh();
-    return () => { active = false; controller.abort(); clearTimeout(timer); };
-  }, [connected, homeId, layout.placements, targets, parameterVersion]);
+    return () => {
+      active = false;
+      requestController?.abort();
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", suspend);
+      window.removeEventListener("online", resume);
+      window.removeEventListener("offline", suspend);
+    };
+  }, [connected, homeId, layout.placements, targets, powerTargets, refreshVersion]);
   const [resetVersion, setResetVersion] = useState(0);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const effectsRef = useRef<THREE.Group | null>(null);
@@ -258,50 +340,6 @@ function SpatialViewer({ layout, homeId, targets, connected, scenes, runningScen
     document.addEventListener("pointerdown", closeOnOutsidePress, true);
     return () => { document.removeEventListener("keydown", closeOnEscape); document.removeEventListener("pointerdown", closeOnOutsidePress, true); };
   }, [sceneMenuOpen]);
-  const [readings, setReadings] = useState<Record<string, boolean | null>>({});
-  const confirmedReadings = useRef<Record<string, boolean | null>>({});
-  const readGeneration = useRef(0);
-  const powerTargets = useMemo(() => targets.filter(target => target.power && layout.placements.some(item => item.targetId === target.id)), [targets, layout.placements]);
-  useEffect(() => {
-    if (!connected || homeId === "demo") return;
-    let active = true, timer: ReturnType<typeof setTimeout>;
-    const controller = new AbortController();
-    const refresh = async () => {
-      const generation = ++readGeneration.current;
-      const values: Record<string, boolean | null> = {};
-      const groups = new Map<string, Target[]>();
-      for (const target of powerTargets) groups.set(target.power!.did, [...(groups.get(target.power!.did) ?? []), target]);
-      for (const [did, items] of groups) {
-        if (!active) return;
-        try {
-          const properties = [...new Set(items.map(item => `${item.power!.siid}.${item.power!.piid}`))].join(",");
-          const response = await fetch(`/api/xiaomi/control?did=${encodeURIComponent(did)}&properties=${properties}`, { cache: "no-store", signal: controller.signal });
-          const data = await response.json();
-          for (const item of items) {
-            const raw = data.values?.[`${item.power!.siid}.${item.power!.piid}`];
-            const key = `${item.kind}:${item.id}`;
-            values[key] = response.ok && typeof raw === "boolean" ? raw : confirmedReadings.current[key] ?? null;
-          }
-        } catch { for (const item of items) { const key = `${item.kind}:${item.id}`; values[key] = confirmedReadings.current[key] ?? null; } }
-      }
-      if (active && generation === readGeneration.current) {
-        confirmedReadings.current = values;
-        setReadings(current => sameReadings(current, values) ? current : values);
-        const readPlacementIds = new Set(layout.placements.filter(item => powerTargets.some(target => target.id === item.targetId && `${target.kind}:${target.id}` in values)).map(item => item.id));
-        setVisualValues(current => {
-          let changed = false;
-          const next = Object.fromEntries(Object.entries(current).map(([id, state]) => {
-            if (!readPlacementIds.has(id) || !state.pending) return [id, state];
-            changed = true; return [id, { ...state, pending: false }];
-          }));
-          return changed ? next : current;
-        });
-      }
-      if (active) timer = setTimeout(refresh, 10000);
-    };
-    void refresh();
-    return () => { active = false; ++readGeneration.current; controller.abort(); clearTimeout(timer); };
-  }, [connected, homeId, powerTargets]);
   const targetMap = useMemo(() => {
     const result = new Map<string, Target>();
     for (const target of targets) {
@@ -501,7 +539,7 @@ function SpatialViewer({ layout, homeId, targets, connected, scenes, runningScen
 
   const selection = layout.placements.find(item => item.id === selected), rawSelectedTarget = selection ? targetMap.get(`${selection.targetKind}:${selection.targetId}`) : undefined;
   const selectedTarget = rawSelectedTarget;
-  return <div ref={fullscreenRoot} className={`spatial-viewer-layout ${fullscreen ? "spatial-fullscreen" : ""}`} role={fullscreen ? "dialog" : undefined} aria-modal={fullscreen || undefined} aria-label={fullscreen ? "全屏空间控制" : undefined}><section className="spatial-stage"><p className="spatial-camera-help">拖动旋转 · 右键平移 · 双指滑动平移 · 捏合缩放 · 墙厚 {Math.round(layout.defaults.wallThickness * 100)} cm</p><div className="spatial-focus"><label>聚焦空间<select value={focus} onChange={event => { setFocus(event.target.value); setSelected(""); }}><option value="">全屋</option>{layout.zones.map(zone => <option key={zone.id} value={zone.id}>{zone.name}</option>)}</select></label><button type="button" onClick={() => { setFocus(""); setSelected(""); setResetVersion(value => value + 1); }}>重置视图</button><div ref={sceneMenuRef} className="spatial-scene-menu"><button type="button" className="spatial-scene-menu-toggle" aria-label="打开场景快捷菜单" aria-expanded={sceneMenuOpen} aria-controls="spatial-scene-menu" onClick={() => setSceneMenuOpen(value => !value)}>✦</button>{sceneMenuOpen && <div id="spatial-scene-menu" className="spatial-scene-menu-popover" role="menu" aria-label="快捷场景"><strong>快捷场景</strong>{scenes.length ? scenes.map(scene => <button key={scene.id} type="button" role="menuitem" disabled={!scene.enabled || Boolean(runningSceneId)} onClick={() => { setSceneMenuOpen(false); void onRunScene(scene); }}><span className="spatial-scene-glyph" aria-hidden="true">{sceneGlyph(scene)}</span><span className="spatial-scene-label">{runningSceneId === scene.id ? "执行中…" : scene.name}</span><small>{scene.actionCount} 项</small></button>) : <p>暂无可执行场景</p>}</div>}</div>{fullscreen && <button type="button" aria-expanded={deviceListOpen} aria-controls="spatial-fullscreen-devices" onClick={() => { setSceneMenuOpen(false); setDeviceListOpen(value => !value); setSelected(""); }}>设备列表</button>}<button type="button" ref={fullscreenToggle} onClick={() => { setSceneMenuOpen(false); setDeviceListOpen(false); if (fullscreen) void exitFullscreen(); else enterFullscreen(); }}>{fullscreen ? "退出全屏" : "全屏控制"}</button></div>{fullscreen && homeId === "demo" && <span className="spatial-fullscreen-demo">演示数据 · 只读预览</span>}{webgl ? <div className="spatial-three" ref={host} data-focus={focus} /> : <div className="spatial-webgl-fallback"><strong>此浏览器无法显示 WebGL 空间</strong><p>仍可使用下方无障碍设备列表查看状态与打开详情。</p></div>}</section><aside className={`spatial-side-panel ${selection ? "open" : ""}`}>{selection && selectedTarget ? <QuickPanel key={selection.id} connected={connected && homeId !== "demo"} placement={selection} target={selectedTarget} visualState={visualValues[selection.id] ?? {}} onClose={() => setSelected("")} onOpen={() => { if (selectedTarget.device) onOpenDevice(selectedTarget.device); }} onControl={async (device, input) => { ++parameterGeneration.current; const result = await onQuickControl(device, input); if (!input.isPower) setParameterVersion(value => value + 1); return result; }} onVisualState={state => {
+  return <div ref={fullscreenRoot} className={`spatial-viewer-layout ${fullscreen ? "spatial-fullscreen" : ""}`} role={fullscreen ? "dialog" : undefined} aria-modal={fullscreen || undefined} aria-label={fullscreen ? "全屏空间控制" : undefined}><section className="spatial-stage"><p className="spatial-camera-help">拖动旋转 · 右键平移 · 双指滑动平移 · 捏合缩放 · 墙厚 {Math.round(layout.defaults.wallThickness * 100)} cm</p><div className="spatial-focus"><label>聚焦空间<select value={focus} onChange={event => { setFocus(event.target.value); setSelected(""); }}><option value="">全屋</option>{layout.zones.map(zone => <option key={zone.id} value={zone.id}>{zone.name}</option>)}</select></label><button type="button" onClick={() => { setFocus(""); setSelected(""); setResetVersion(value => value + 1); }}>重置视图</button><div ref={sceneMenuRef} className="spatial-scene-menu"><button type="button" className="spatial-scene-menu-toggle" aria-label="打开场景快捷菜单" aria-expanded={sceneMenuOpen} aria-controls="spatial-scene-menu" onClick={() => setSceneMenuOpen(value => !value)}>✦</button>{sceneMenuOpen && <div id="spatial-scene-menu" className="spatial-scene-menu-popover" role="menu" aria-label="快捷场景"><strong>快捷场景</strong>{scenes.length ? scenes.map(scene => <button key={scene.id} type="button" role="menuitem" disabled={!scene.enabled || Boolean(runningSceneId)} onClick={() => { setSceneMenuOpen(false); void onRunScene(scene); }}><span className="spatial-scene-glyph" aria-hidden="true">{sceneGlyph(scene)}</span><span className="spatial-scene-label">{runningSceneId === scene.id ? "执行中…" : scene.name}</span><small>{scene.actionCount} 项</small></button>) : <p>暂无可执行场景</p>}</div>}</div>{fullscreen && <button type="button" aria-expanded={deviceListOpen} aria-controls="spatial-fullscreen-devices" onClick={() => { setSceneMenuOpen(false); setDeviceListOpen(value => !value); setSelected(""); }}>设备列表</button>}<button type="button" ref={fullscreenToggle} onClick={() => { setSceneMenuOpen(false); setDeviceListOpen(false); if (fullscreen) void exitFullscreen(); else enterFullscreen(); }}>{fullscreen ? "退出全屏" : "全屏控制"}</button></div>{fullscreen && homeId === "demo" && <span className="spatial-fullscreen-demo">演示数据 · 只读预览</span>}{webgl ? <div className="spatial-three" ref={host} data-focus={focus} /> : <div className="spatial-webgl-fallback"><strong>此浏览器无法显示 WebGL 空间</strong><p>仍可使用下方无障碍设备列表查看状态与打开详情。</p></div>}</section><aside className={`spatial-side-panel ${selection ? "open" : ""}`}>{selection && selectedTarget ? <QuickPanel key={selection.id} connected={connected && homeId !== "demo"} placement={selection} target={selectedTarget} visualState={visualValues[selection.id] ?? {}} onClose={() => setSelected("")} onOpen={() => { if (selectedTarget.device) onOpenDevice(selectedTarget.device); }} onControl={async (device, input) => { ++parameterGeneration.current; const result = await onQuickControl(device, input); setRefreshVersion(value => value + 1); return result; }} onVisualState={state => {
       ++parameterGeneration.current;
       if (state.on !== undefined) {
         ++readGeneration.current;
