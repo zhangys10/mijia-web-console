@@ -62,6 +62,11 @@ test("reading or changing device settings requires an authenticated Xiaomi sessi
   for (const request of [
     new Request("http://localhost/api/xiaomi/control?did=123&siid=2&piid=1"),
     new Request("http://localhost/api/xiaomi/control?did=123&properties=2.1,3.1,4.1"),
+    new Request("http://localhost/api/xiaomi/control/read", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ requests: [{ did: "123", properties: [{ siid: 2, piid: 1 }] }] }),
+    }),
     new Request("http://localhost/api/xiaomi/control", {
       method: "POST",
       headers: { "content-type": "application/json" },
